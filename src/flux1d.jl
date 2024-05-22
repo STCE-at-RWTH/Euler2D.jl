@@ -150,9 +150,11 @@ Compute the HLL numerical flux across the L-R boundary and correct for the super
 - `uL`, `uR`: States on either side of the boundary
 - `fL`, `fR`: value of the flux function on either side of the boundary, if known.
 - `sL`, `sR`: left and right signal speeds at the boundary, if known.
+
+_Equation **2.20** from Vides et al._
 """
 function ϕ_hll(uL, uR, fL, fR, sL, sR)
     slm = xminus(sL)
     srp = xplus(sR)
-    return (srp * fL - slm * fR + slm * srp * (uL - uR)) / (srp - slm)
+    return (srp * fL - slm * fR + slm * srp * (uR - uL)) / (srp - slm)
 end
