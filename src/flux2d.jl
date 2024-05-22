@@ -65,14 +65,14 @@ end
 Evaluates ``f(u_L, u_R, dim)`` across each interface in the 2-dimensional Riemann problem. 
 """
 function evaluate_across_ifaces(f, data::CellData2D)
-    const _cell_ifaces =
+    _cell_ifaces =
         (N = (:NE, :NW, 1), S = (:SE, :SW, 1), E = (:SE, :NE, 2), W = (:SW, :NE, 2))
     return map(_cell_ifaces) do left, right, dim
         f(getproperty(data, left), getproperty(data, right), dim)
     end
 end
 
-function interface_signal_speeds(data::CellData2D{T}; gas::CaloricallyPerfectGas)
+function interface_signal_speeds(data::CellData2D; gas::CaloricallyPerfectGas)
     return evaluate_across_ifaces(data) do uL, uR, dim
         interface_signal_speeds(uL, uR, dim; gas = gas)
     end

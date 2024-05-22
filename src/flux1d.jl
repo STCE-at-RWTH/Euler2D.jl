@@ -108,11 +108,16 @@ function interface_signal_speeds(uL, uR, dim; gas::CaloricallyPerfectGas)
 end
 
 # ReLu and... whatever its minimum version is called
-xplus(x::T)::T where {T} = max(zero(T), x)
-xminus(x::T)::T where {T} = min(zero(T), x)
+function xplus(x::T)::T where {T}
+    return max(zero(T), x)
+end
+
+function xminus(x::T)::T where {T}
+    return min(zero(T), x)
+end
 
 """
-    ϕ_hLL(uL, uR, dim; gas)
+    ϕ_hll(uL, uR, dim; gas)
 
 Compute the HLL numerical flux across the L-R boundary.
 - `uL`, `uR`: States on either side of the boundary
@@ -126,7 +131,7 @@ function ϕ_hll(uL, uR, dim; gas::CaloricallyPerfectGas)
 end
 
 """
-    ϕ_hLL(uL, uR, fL, fR, dim; gas)
+    ϕ_hll(uL, uR, fL, fR, dim; gas)
 
 Compute the HLL numerical flux across the L-R boundary.
 - `uL`, `uR`: States on either side of the boundary
@@ -135,11 +140,11 @@ Compute the HLL numerical flux across the L-R boundary.
 """
 function ϕ_hll(uL, uR, fL, fR, dim; gas::CaloricallyPerfectGas)
     sL, sR = interface_signal_speeds(uL, uR, dim; gas = gas)
-    return ϕ_hll(uL, uR, @view fL[:, dim], @view fR[:, dim], sL, sR)
+    return ϕ_hll(uL, uR, @view(fL[:, dim]), @view(fR[:, dim]), sL, sR)
 end
 
 """
-    ϕ_hLL(uL, uR, fL, fR, sL, sR, dim; gas)
+    ϕ_hll(uL, uR, fL, fR, sL, sR, dim; gas)
 
 Compute the HLL numerical flux across the L-R boundary and correct for the supersonic case.
 - `uL`, `uR`: States on either side of the boundary
