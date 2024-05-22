@@ -58,6 +58,7 @@ function bulk_step!(
                 ϕ_hll(u[:, i], u[:, i+1], 1; gas = gas)
             )
         )
+    
 end
 
 """

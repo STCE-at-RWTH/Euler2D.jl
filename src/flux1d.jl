@@ -154,7 +154,15 @@ Compute the HLL numerical flux across the L-R boundary and correct for the super
 _Equation **2.20** from Vides et al._
 """
 function ϕ_hll(uL, uR, fL, fR, sL, sR)
-    slm = xminus(sL)
-    srp = xplus(sR)
-    return (srp * fL - slm * fR + slm * srp * (uR - uL)) / (srp - slm)
+    @assert sL < sR 
+    if sR < 0
+        #flow only into left cell
+        return fR
+    elseif sL > 0
+        #flow only into right cell
+        return fL 
+    else
+        # shared flow
+        return (sR * fL - sL * fR + sR * sL * (uR - uL)) / (sR - sL)
+    end
 end
