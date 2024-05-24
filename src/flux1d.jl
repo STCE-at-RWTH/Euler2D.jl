@@ -34,7 +34,7 @@ function F(u; gas::CaloricallyPerfectGas)
     ρv = @view u[2:end-1]
     v = ρv / u[1]
     P = pressure_u(u; gas = gas)
-    return vcat(ρv', ρv .* v' + I * P, (v .* (u[end] + P))')
+    return vcat(ρv', ρv * v' + I * P, (v * (u[end] + P))')
 end
 
 """
@@ -64,6 +64,9 @@ end
     roe_parameter_vector(u; gas)
 
 Switch from conservation properties `u` to ``[√ρ, √ρ ⋅ v..., √ρ ⋅ H ]``.
+We compute enthalphy density `ρH` as the sum of internal energy density and pressure.
+
+See Equations 10 and 11 in Roe.
 """
 function roe_parameter_vector(u; gas::CaloricallyPerfectGas)
     rhoH = u[end] + pressure_u(u; gas = gas)
@@ -78,10 +81,11 @@ Find the eigenvalues of the Roe matrix at the boundary determined by ``uL`` and 
 function roe_matrix_eigenvalues(uL, uR, dims; gas::CaloricallyPerfectGas)
     wL = roe_parameter_vector(uL; gas = gas)
     wR = roe_parameter_vector(uR; gas = gas)
+    # take arithmetic mean of the left and right states
     w̄ = (wL + wR) / 2
     v = w̄[2:end-1] / w̄[1]
     H = w̄[end] / w̄[1]
-    a = sqrt((gas.γ - 1) * (H - v ⋅ v / 2))
+    a = sqrt((gas.γ - 1) * (H - (v ⋅ v) / 2))
     out = reduce(vcat, (v[dims]' for i ∈ 1:length(w̄)))
     @. out[1, :] -= a
     @. out[end, :] += a
@@ -102,8 +106,10 @@ function interface_signal_speeds(uL, uR, dim; gas::CaloricallyPerfectGas)
     λ_L = eigenvalues_∇F(uL, dim; gas = gas)
     λ_R = eigenvalues_∇F(uR, dim; gas = gas)
     # 2.24 from Vides, et al.
-    s_L = minimum((min(λs...) for λs ∈ zip(λ_L, λ_roe)))
-    s_R = maximum((max(λs...) for λs ∈ zip(λ_roe, λ_R)))
+    #s_L = minimum((min(λs...) for λs ∈ zip(λ_L, λ_roe)))
+    #s_R = maximum((max(λs...) for λs ∈ zip(λ_roe, λ_R)))
+    s_L = min(minimum(λ_L), minimum(λ_R))
+    s_R = max(maximum(λ_R), maximum(λ_R))
     return s_L, s_R
 end
 
@@ -154,13 +160,13 @@ Compute the HLL numerical flux across the L-R boundary and correct for the super
 _Equation **2.20** from Vides et al._
 """
 function ϕ_hll(uL, uR, fL, fR, sL, sR)
-    @assert sL < sR 
+    @assert sL < sR
     if sR < 0
         #flow only into left cell
         return fR
     elseif sL > 0
         #flow only into right cell
-        return fL 
+        return fL
     else
         # shared flow
         return (sR * fL - sL * fR + sR * sL * (uR - uL)) / (sR - sL)
