@@ -4,40 +4,142 @@ using ShockwaveProperties
 
 ##
 
+"""
+    BoundaryCondition
+
+Abstract supertype for all boundary conditions.
+"""
 abstract type BoundaryCondition end
+
+"""
+    PeriodicAxis
+
+Indicates that this axis should "wrap" back onto itself --
+i.e. the right edge of the last cell is the same as the left edge of the first.
+"""
 struct PeriodicAxis <: BoundaryCondition end
 
-abstract type SolidWall end
-struct StrongWall <: SolidWall end
-struct WeakWallReflect <: SolidWall end
-struct WeakWallExtrapolate <: SolidWall end
+"""
+    EdgeBoundary{L, R}
 
-struct WallBoundary{L,R} <: BoundaryCondition
+Indicates that this axis has some prescribed left and right edge boundary conditions.
+"""
+struct EdgeBoundary{L,R} <: BoundaryCondition
     left::L
     right::R
 end
 
-struct Inflow <: BoundaryCondition end
-struct Outflow <: BoundaryCondition end
+"""
+    PhantomEdge{N}
+
+Supertype for all edge conditions that generate a phantom cell 
+from `N` neighbors inside the computational domain.
+"""
+abstract type PhantomEdge{N} end
+
+"""
+    FluxEdge{N}
+
+Supertype for all edge conditions that generate an edge flux
+from `N` cells inside the computational domain.
+"""
+abstract type FluxEdge{N} end
+
+"""
+    StrongWall
+
+This edge is a hard wall where the no-penetration condition
+is enforced by using a phantom cell.
+"""
+struct StrongWall <: PhantomEdge{1} end
+function phantom_cell(
+    ::StrongWall,
+    u::AbstractArray{T,2},
+    dim;
+    gas::CaloricallyPerfectGas,
+) where {T}
+    phantom = u
+    phantom[1+dim, :] *= -1
+    return phantom
+end
+
+struct WeakWallReflect <: FluxEdge{1} end
+# struct WeakWallExtrapolate <: FluxEdge{2} end
+
+"""
+    SupersonicInflow
+
+Fields
+---
+ - `prescribed_state`: the prescribed inflow state. 
+ Must have a velocity that points _into_ the domain.
+"""
+struct SupersonicInflow <: PhantomEdge{1}
+    prescribed_state::ConservedState
+end
+
+function SupersonicInflow(s::PrimitiveState; gas::CaloricallyPerfectGas)
+    @assert all(>(1.0), s.M) "Cannot construct a supersonic inflow boundary with M_∞ ≤ 1.0!"
+    return SupersonicInflow(ConservedState(s; gas = gas))
+end
+
+function phantom_cell(
+    bc::SupersonicInflow,
+    u::AbstractArray{T,2},
+    dim;
+    gas::CaloricallyPerfectGas,
+) where {T}
+    return bc.prescribed_state
+end
+
+struct FixedPressureOutflow <: PhantomEdge{1}
+    P
+end
+
+function speed_of_sound(s::FixedPressureOutflow; gas::CaloricallyPerfectGas)
+    return sqrt(gas.γ * s.P^((gas.γ - 1 / gas.γ)))
+end
+
+"""
+    phantom_cell(bc::FixedPressureOutflow, ...)
+
+We take this from the NASA report on Fun3D and fixed-pressure boundary conditions.
+Essentially, if the flow is subsonic at the boundary, we fix the pressure 
+  and compute density in the phantom.
+Otherwise, we assume information gets projected out of the domain.
+
+Note: This will break if the flow becomes supersonic away from the boundary. 
+That seems reasonable to me.
+"""
+function phantom_cell(
+    bc::FixedPressureOutflow,
+    u::AbstractArray{T,2},
+    dim;
+    gas::CaloricallyPerfectGas,
+) where {T}
+    v_i = u[dim+1, 1] / u[1, 1]
+    M_i = v_i / speed_of_sound_u(u[:, 1]; gas = gas)
+    # return early if the flow is supersonic
+    if abs(M_i) > 1.0
+        return u
+    end
+
+    P_i = pressure_u(u[:, 1]; gas = gas)
+    ## subsonic flow -> enforce BC, otherwise extrapolate
+    P_b = bc.P
+    ρ_b = P_b / P_i * u[1, 1]
+    # internal energy is c_v⋅T
+    T_b = P_b / (u[1, 1] * ustrip(gas.R))
+    e_b = T_b / ustrip(gas.c_v)
+    ρE_b = ρ_b * (e_b + v_i ⋅ v_i / 2)
+
+    phantom = vcat(ρ_b, ρv_b, ρE_b)
+    return phantom
+end
+
+# struct FixedMassFlow end
 
 ##
-
-"""
-Extrapolates the pressure at the wall by using the neighbor cell on the other side.
-"""
-function ϕ_extrapolate_wall(u1, u2, dim; gas::CaloricallyPerfectGas)
-    return (1.5 * pressure_u(u1; gas = gas) - 0.5 * pressure_u(u2; gas = gas)) *
-           I[1:length(u), dim+1]
-end
-
-"""
-Computes the numerical flux when the boundary of a cell is a wall.
-
-We know that "weakly" enforcing the boundary condition sets the flux at the wall to `[0 0; P 0; 0 P; 0 0]`.
-"""
-function ϕ_wall(::WeakWallReflect, u, dim; gas::CaloricallyPerfectGas)
-    return pressure_u(u; gas = gas) * I[1:length(u), dim+1]
-end
 
 """
     bulk_step!(u_next, u, Δt, Δx; gas)
@@ -99,6 +201,7 @@ end
 ## when rhoE is negative
 ## i'm so confused.
 ## 
+
 function enforce_boundary!(
     ::PeriodicAxis,
     u_next::AbstractArray{T,2},
@@ -115,51 +218,78 @@ function enforce_boundary!(
         u[:, end] - (Δt / Δx * (ϕ_periodic - ϕ_hll(u[:, end-1], u[:, end], 1; gas = gas)))
 end
 
+## I could break this into boundary conditions that set phantoms
+#    and boundary conditions that set fluxes
+
 function enforce_boundary!(
-    bcs::WallBoundary{L,R},
+    bcs::EdgeBoundary{L,R},
     u_next::AbstractArray{T,2},
     u::AbstractArray{T,2},
     Δx::T,
     Δt::T;
     gas::CaloricallyPerfectGas,
-) where {L<:SolidWall,R<:SolidWall,T}
+) where {L,R,T}
     u_next[:, 1] =
         u[:, 1] - (
             Δt / Δx * (
                 ϕ_hll(u[:, 1], u[:, 2], 1; gas = gas) -
-                left_wall_ϕ(bcs.left, u, 1; gas = gas)
+                left_edge_ϕ(bcs.left, u, 1; gas = gas)
             )
         )
 
     u_next[:, end] =
         u[:, end] - (
             Δt / Δx * (
-                right_wall_ϕ(bcs.right, u, 1; gas = gas) -
+                right_edge_ϕ(bcs.right, u, 1; gas = gas) -
                 ϕ_hll(u[:, end-1], u[:, end], 1; gas = gas)
             )
         )
 end
 
-function left_wall_ϕ(
-    ::StrongWall,
+function left_edge_ϕ(
+    bc::PhantomEdge{N},
     u::AbstractArray{T,2},
     dim;
     gas::CaloricallyPerfectGas,
-) where {T}
-    phantom = u[:, 1]
-    phantom[2] *= -1
-    return ϕ_hll(phantom, @view(u[:, 1]), dim; gas = gas)
+) where {T,N}
+    return ϕ_hll(
+        phantom_cell(bc, @view(u[:, 1:N]), dim; gas = gas),
+        @view(u[:, 1]),
+        dim;
+        gas = gas,
+    )
 end
 
-function right_wall_ϕ(
-    ::StrongWall,
+function right_edge_ϕ(
+    bc::PhantomEdge{N},
     u::AbstractArray{T,2},
     dim;
     gas::CaloricallyPerfectGas,
 ) where {T}
-    phantom = u[:, end]
-    phantom[2] *= -1
-    return ϕ_hll(@view(u[:, end]), phantom, dim; gas = gas)
+    return ϕ_hll(
+        @view(u[:, end]),
+        phantom_cell(bc, @view(u[:, end:-1:end-N]), dim; gas = gas),
+        dim;
+        gas = gas,
+    )
+end
+
+function right_edge_ϕ(
+    bc::FluxEdge{N},
+    u::AbstractArray{T,2},
+    dim;
+    gas::CaloricallyPerfectGas,
+) where {T,N}
+    return edge_flux(bc, @view(u[:, 1:N]), dim; gas = gas)
+end
+
+function left_edge_ϕ(
+    bc::FluxEdge{N},
+    u::AbstractArray{T,2},
+    dim;
+    gas::CaloricallyPerfectGas,
+) where {T,N}
+    return edge_flux(bc, @view(u[:, end:-1:end-N], dim; gas = gas))
 end
 
 ##
@@ -182,7 +312,7 @@ function maximum_Δt(::PeriodicAxis, u, Δx, CFL, dim; gas::CaloricallyPerfectGa
     return Δt
 end
 
-function maximum_Δt(::WallBoundary, u, Δx, CFL, dim; gas::CaloricallyPerfectGas)
+function maximum_Δt(::EdgeBoundary, u, Δx, CFL, dim; gas::CaloricallyPerfectGas)
     a = mapreduce(
         max,
         zip(eachcol(@view(u[:, 1:end-1])), eachcol(@view(u[:, 2:end]))),

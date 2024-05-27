@@ -10,7 +10,12 @@ include("flux1d.jl")
 include("flux2d.jl")
 include("fvm.jl")
 
-export BoundaryCondition, PeriodicAxis, WallBoundary, StrongWall, WeakWallReflect, WeakWallExtrapolate
+# boundary condition types
+export BoundaryCondition, PeriodicAxis, EdgeBoundary
+export StrongWall, WeakWallReflect, WeakWallExtrapolate
+export SupersonicInflow, FixedPressureOutflow
+
+# methods
 export interface_signal_speeds, maximum_Δt
 export step_euler_hll!, bulk_step!, enforce_boundary!
 

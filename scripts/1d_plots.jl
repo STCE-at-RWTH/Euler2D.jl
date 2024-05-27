@@ -2,26 +2,10 @@ using Euler2D
 using ShockwaveProperties
 using Unitful
 
-function u0(x)
-    uL = ConservedState(PrimitiveState(1.225, [0.0], 595.0); gas = DRY_AIR)
-    uR = ConservedState(PrimitiveState(1.225, [0.0], 295.0); gas = DRY_AIR)
-    if x < 5.0
-        return [1.225, 0.0, 200] #state_to_vector(uL)
-    end
-    return [1.225, 0.0, 100] #state_to_vector(uR)
-end
-
-function u1(x)
-    uL = ConservedState(PrimitiveState(2.25, [2.0], 250.); gas = DRY_AIR)
-    uR = ConservedState(PrimitiveState(1.225, [0.5], 350.); gas = DRY_AIR)
-    if 25. < x < 75.
-        return state_to_vector(uL)
-    end
-    return state_to_vector(uR)
-end
 ##
 
 function simulate_euler_1d(
+    x_min::Float64,
     x_max::Float64,
     ncells_x::Int,
     x_bcs::BoundaryCondition,
@@ -39,7 +23,7 @@ function simulate_euler_1d(
         u_tape = open(tape_file; write = true, read = true, create = true)
     end
 
-    xs = range(0.0, x_max; length = ncells_x + 1)
+    xs = range(x_min, x_max; length = ncells_x + 1)
     Δx = step(xs)
     u = stack([u0(x + Δx / 2) for x ∈ xs[1:end-1]])
     u_next = zeros(eltype(u), size(u))
@@ -83,32 +67,21 @@ function simulate_euler_1d(
 end
 
 ##
+# SHOCK SCENARIO ONE
+# SHOCK AT X = 0
+# SUPERSONIC FLOW IMPACTS STATIC ATMOSPHERIC AIR
 
-Δx = 0.005
-u = mapreduce(hcat, (0:Δx:10.0)[1:end-1]) do x
-    u0(x + Δx / 2)
-end
+uL_1 = ConservedState(PrimitiveState(1.225, [2.0], 300.); gas = DRY_AIR)
+uR_1 = ConservedState(PrimitiveState(1.225, [0.0], 350.); gas = DRY_AIR)
 
-u_next = similar(u)
-wrap_bcs = PeriodicAxis()
-wall_bcs = WallBoundary(StrongWall(), StrongWall())
-Δt = maximum_Δt(wall_bcs, u, Δx, 0.5, 1; gas = DRY_AIR)
-step_euler_hll!(u_next, u, Δt, Δx, wall_bcs; gas = DRY_AIR)
+u1(x) = x < 0 ? uL_1 : uR_1
+left_bc_1 = SupersonicInflow(uL_1)
+# convert pressure at outflow to Pascals 
+# before stripping units (just to be safe)
+right_bc_1 = FixedPressureOutflow(ustrip(u"Pa", pressure(uR_1; gas=DRY_AIR)))
+bcs_1 = EdgeBoundary(left_bc_1, right_bc_1)
 
-simulate_euler_1d(100.0, 2000, wrap_bcs, 0.1, u1; gas = DRY_AIR, CFL = 0.75)
-
-p1 = PrimitiveState(1.25, [0.5], 250.)
-c1 = ConservedState(p1; gas=DRY_AIR)
-internal_energy_density(c1)
-uconvert(u"kPa", pressure(c1; gas=DRY_AIR))
-uconvert(u"kPa", pressure(p1; gas=DRY_AIR))
-p2 = PrimitiveState(2.5, [0.5], 125.)
-c2 = ConservedState(p2; gas=DRY_AIR)
-internal_energy_density(c2)
-uconvert(u"kPa", pressure(c2; gas=DRY_AIR))
-uconvert(u"kPa", pressure(p2; gas=DRY_AIR))
-
-pressure(c2; gas=DRY_AIR) - pressure(c1; gas=DRY_AIR)
+simulate_euler_1d(-100.0, 100.0, 2000, bcs_1, 0.1, u1; gas = DRY_AIR, CFL = 0.75, output_tag="euler_scenario_1")
 
 ##
 ## NOTES FROM FRIDAY
