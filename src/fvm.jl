@@ -247,9 +247,6 @@ function enforce_boundary!(
         u[:, end] - (Δt / Δx * (ϕ_periodic - ϕ_hll(u[:, end-1], u[:, end], 1; gas = gas)))
 end
 
-## I could break this into boundary conditions that set phantoms
-#    and boundary conditions that set fluxes
-
 function enforce_boundary!(
     bcs::EdgeBoundary{L,R},
     u_next::AbstractArray{T,2},
