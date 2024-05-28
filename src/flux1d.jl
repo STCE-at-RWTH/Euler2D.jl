@@ -105,11 +105,12 @@ function interface_signal_speeds(uL, uR, dim; gas::CaloricallyPerfectGas)
     λ_roe = roe_matrix_eigenvalues(uL, uR, dim; gas = gas)
     λ_L = eigenvalues_∇F(uL, dim; gas = gas)
     λ_R = eigenvalues_∇F(uR, dim; gas = gas)
+    @assert length(λ_L) == length(λ_R) == length(λ_roe)
     # 2.24 from Vides, et al.
     #s_L = minimum((min(λs...) for λs ∈ zip(λ_L, λ_roe)))
     #s_R = maximum((max(λs...) for λs ∈ zip(λ_roe, λ_R)))
-    s_L = min(minimum(λ_L), minimum(λ_R))
-    s_R = max(maximum(λ_R), maximum(λ_R))
+    s_L = min((min(λ...) for λ ∈ zip(λ_L, λ_roe))...)
+    s_R = max((max(λ...) for λ ∈ zip(λ_roe, λ_R))...)
     return s_L, s_R
 end
 

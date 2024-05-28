@@ -71,17 +71,67 @@ end
 # SHOCK AT X = 0
 # SUPERSONIC FLOW IMPACTS STATIC ATMOSPHERIC AIR
 
-uL_1 = ConservedState(PrimitiveState(1.225, [2.0], 300.); gas = DRY_AIR)
-uR_1 = ConservedState(PrimitiveState(1.225, [0.0], 350.); gas = DRY_AIR)
+uL_1 = ConservedState(PrimitiveState(1.225, [2.0], 300.0); gas = DRY_AIR)
+uR_1 = ConservedState(PrimitiveState(1.225, [0.0], 350.0); gas = DRY_AIR)
 
-u1(x) = x < 0 ? uL_1 : uR_1
+u1(x) = state_to_vector(x < 0 ? uL_1 : uR_1)
 left_bc_1 = SupersonicInflow(uL_1)
 # convert pressure at outflow to Pascals 
 # before stripping units (just to be safe)
-right_bc_1 = FixedPressureOutflow(ustrip(u"Pa", pressure(uR_1; gas=DRY_AIR)))
+right_bc_1 = FixedPressureOutflow(ustrip(u"Pa", pressure(uR_1; gas = DRY_AIR)))
 bcs_1 = EdgeBoundary(left_bc_1, right_bc_1)
 
-simulate_euler_1d(-100.0, 100.0, 2000, bcs_1, 0.1, u1; gas = DRY_AIR, CFL = 0.75, output_tag="euler_scenario_1")
+simulate_euler_1d(
+    -50.0,
+    50.0,
+    8000,
+    bcs_1,
+    0.1,
+    u1;
+    gas = DRY_AIR,
+    CFL = 0.75,
+    output_tag = "euler_scenario_1",
+)
+
+##
+# SHOCK SCENARIO TWO
+# SHOCKS AT X = -50 and X = 50
+# SUPERSONIC INFLOW ON BOTH SIDES
+
+uL_2 = ConservedState(PrimitiveState(1.225, [2.0], 300.0); gas = DRY_AIR)
+uM_2 = ConservedState(PrimitiveState(1.225, [0.0], 350.0); gas = DRY_AIR)
+uR_2 = ConservedState(PrimitiveState(1.225, [-2.0], 300.0); gas = DRY_AIR)
+
+interface_signal_speeds(state_to_vector(uL_2), state_to_vector(uM_2), 1; gas=DRY_AIR)
+Euler2D.ϕ_hll(state_to_vector(uL_2), state_to_vector(uM_2), 1; gas=DRY_AIR)
+
+
+function u2(x)
+    res = if x < -50
+        uL_2
+    elseif x > 50
+        uR_2
+    else
+        uM_2
+    end
+    return state_to_vector(res)
+end
+
+left_bc_2 = SupersonicInflow(uL_2)
+right_bc_2 = SupersonicInflow(uR_2)
+bcs_2 = EdgeBoundary(left_bc_2, right_bc_2)
+
+simulate_euler_1d(
+    -75.0,
+    75.0,
+    1000,
+    bcs_2,
+    0.1,
+    u2;
+    gas = DRY_AIR,
+    CFL = 0.75,
+    output_tag = "euler_scenario_2",
+)
 
 ##
 ## NOTES FROM FRIDAY
@@ -89,3 +139,18 @@ simulate_euler_1d(-100.0, 100.0, 2000, bcs_1, 0.1, u1; gas = DRY_AIR, CFL = 0.75
 ## maybe I should email Herty / Müller...
 ## Maybe I should also switch to HLL-C to correct the contact wave rather than smearing out the data.
 ## hmmmm. 
+
+
+vL = state_to_vector(uL_2)
+vM = state_to_vector(uM_2)
+vR = state_to_vector(uR_2)
+
+s_aL = Euler2D.eigenvalues_∇F(vL, 1; gas=DRY_AIR)
+s_aR = Euler2D.eigenvalues_∇F(vM, 1; gas=DRY_AIR)
+s_a_roe = Euler2D.roe_matrix_eigenvalues(vL, vM, 1; gas=DRY_AIR)
+speeds_a = interface_signal_speeds(vL, vM, 1; gas=DRY_AIR)
+
+s_bL = Euler2D.eigenvalues_∇F(vM, 1; gas=DRY_AIR)
+s_bR = Euler2D.eigenvalues_∇F(vR, 1; gas=DRY_AIR)
+s_b_roe = Euler2D.roe_matrix_eigenvalues(vM, vR, 1; gas=DRY_AIR)
+speeds_b = interface_signal_speeds(vM, vR, 1; gas=DRY_AIR)

@@ -42,7 +42,7 @@ function make_sim_data(filename)
 end
 
 # ╔═╡ b65e1b20-0264-4d42-95c4-b96ccddc175a
-d = make_sim_data("euler_1d.out")
+d = make_sim_data("euler_scenario_2.out")
 
 # ╔═╡ 6c08cf56-6838-45c3-acff-8727164e7677
 function plot_bounds(sim::EulerSim1D)
@@ -77,12 +77,12 @@ function plotframe(frame, data, bounds)
 end
 
 # ╔═╡ d06cf7e8-61f9-4fba-9da3-208964311844
-@gif for i=1:d.n_t
+@gif for i=1:20:d.n_t
 	plotframe(i, d, b)
 end fps=10
 
 # ╔═╡ 2ff53b04-b43a-407a-a655-530473edc7d0
-plotframe(1,d,b)
+plotframe(8,d,b)
 
 # ╔═╡ 93572c63-6451-4ca8-8733-0039ef0f4637
 plotframe(d.n_t, d, b)

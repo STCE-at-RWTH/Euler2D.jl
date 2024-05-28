@@ -1,4 +1,5 @@
 using Test
+using ShockwaveProperties
 using Zygote
 
 """
@@ -25,4 +26,8 @@ function ∇F(u; gas::CaloricallyPerfectGas = DRY_AIR)
         reduce(hcat, ∂F[r])'
     end)
     return permutedims(out, (1, 3, 2))
+end
+
+@testset "Compiles." begin
+    using Euler2D
 end

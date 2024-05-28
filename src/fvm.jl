@@ -89,7 +89,7 @@ function phantom_cell(
     dim;
     gas::CaloricallyPerfectGas,
 ) where {T}
-    return bc.prescribed_state
+    return state_to_vector(bc.prescribed_state)
 end
 
 struct FixedPressureOutflow <: PhantomEdge{1}
@@ -133,7 +133,7 @@ function phantom_cell(
     e_b = T_b / ustrip(gas.c_v)
     ρE_b = ρ_b * (e_b + v_i ⋅ v_i / 2)
 
-    phantom = vcat(ρ_b, ρv_b, ρE_b)
+    phantom = vcat(ρ_b, ρ_b .* v_i, ρE_b)
     return phantom
 end
 
@@ -265,7 +265,7 @@ function right_edge_ϕ(
     u::AbstractArray{T,2},
     dim;
     gas::CaloricallyPerfectGas,
-) where {T}
+) where {T, N}
     return ϕ_hll(
         @view(u[:, end]),
         phantom_cell(bc, @view(u[:, end:-1:end-N]), dim; gas = gas),
@@ -289,7 +289,7 @@ function left_edge_ϕ(
     dim;
     gas::CaloricallyPerfectGas,
 ) where {T,N}
-    return edge_flux(bc, @view(u[:, end:-1:end-N], dim; gas = gas))
+    return edge_flux(bc, @view(u[:, end:-1:end-N]), dim; gas = gas)
 end
 
 ##

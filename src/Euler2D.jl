@@ -12,7 +12,8 @@ include("fvm.jl")
 
 # boundary condition types
 export BoundaryCondition, PeriodicAxis, EdgeBoundary
-export StrongWall, WeakWallReflect, WeakWallExtrapolate
+export PhantomEdge
+export StrongWall
 export SupersonicInflow, FixedPressureOutflow
 
 # methods
