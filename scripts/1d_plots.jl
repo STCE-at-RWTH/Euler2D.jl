@@ -3,7 +3,40 @@ using ShockwaveProperties
 using Unitful
 
 ##
+"""
+    simulate_euler_1d(x_min, x_max, ncells_x, x_bcs, T, u0; gas, CFL, max_tsteps, write_output, output_tag)
 
+Simulate the solution to the Euler equations from `t=0` to `t=T`, with `u(0, x) = u0(x)`. 
+Time step size is computed from the CFL condition.
+
+The simulation will fail if any nonphysical conditions are reached (speed of sound cannot be computed). 
+The usual error message for this is printed as "Δt calculation failed" to the command line.
+
+If the simulation is written to disk, two files will be created under `data/`. 
+One is the simulation tape, and the other is the full simulation information (`.out`). 
+The `.out` file contains, in this order:
+- 3 `UInt64`: the dimensions of `u`
+- 2 `Float64`: `x0` and `x_max`
+- 1 `UInt64`: the number of time steps
+- `N_t` `Float64`: The values ``t^k``
+- ``N_t⋅N_x⋅N_u`` `Float64`: The values of `u`
+
+Arguments
+---
+- `x_min`, `x_max`: The x-positions of the left and right boundaries, respectively.
+- `ncells_x`: The number of FVM cells in the x-direction.
+- `x_bcs`: Boundary conditions on the x-axis. 
+- `T`: End time.
+- `u0`: ``u(0, x):ℝ↦ℝ^3``: conditions at time `t=0`.
+
+Keyword Arguments
+---
+- `gas=DRY_AIR`: The fluid to be simulated.
+- `CFL=0.75`: The CFL condition to apply to `Δt`. Between zero and one, default `0.75`.
+- `max_tsteps`: Maximum number of time steps to take. Defaults to "very large".
+- `write_output=true`: Should output be written to disk?
+- `output_tag="euler_1d"`: File name for the tape and output summary.
+"""
 function simulate_euler_1d(
     x_min::Float64,
     x_max::Float64,
@@ -19,6 +52,9 @@ function simulate_euler_1d(
 )
     write_output = write_output && !isempty(output_tag)
     if write_output
+        if !isdir("data")
+            mkdir("data")
+        end
         tape_file = joinpath("data", output_tag * ".tape")
         u_tape = open(tape_file; write = true, read = true, create = true)
     end
@@ -71,7 +107,7 @@ end
 # SHOCK AT X = 0
 # SUPERSONIC FLOW IMPACTS STATIC ATMOSPHERIC AIR
 
-uL_1 = ConservedState(PrimitiveState(1.225, [2.0], 300.0); gas = DRY_AIR)
+uL_1 = ConservedState(PrimitiveState(1.225, [1.5], 300.0); gas = DRY_AIR)
 uR_1 = ConservedState(PrimitiveState(1.225, [0.0], 350.0); gas = DRY_AIR)
 
 u1(x) = state_to_vector(x < 0 ? uL_1 : uR_1)
@@ -82,10 +118,11 @@ left_bc_1 = SupersonicInflow(uL_1)
 right_bc_1 = FixedPhantomOutside(uR_1)
 bcs_1 = EdgeBoundary(left_bc_1, right_bc_1)
 
+# use 1001 cells to avoid a grid-aligned shock...
 simulate_euler_1d(
     -25.0,
-    100.0,
-    8000,
+    225.0,
+    1001,
     bcs_1,
     0.1,
     u1;
@@ -108,9 +145,9 @@ Euler2D.ϕ_hll(state_to_vector(uL_2), state_to_vector(uM_2), 1; gas=DRY_AIR)
 
 
 function u2(x)
-    res = if x < -25
+    res = if x < -50
         uL_2
-    elseif x > 25
+    elseif x > 50
         uR_2
     else
         uM_2
@@ -123,35 +160,13 @@ right_bc_2 = SupersonicInflow(uR_2)
 bcs_2 = EdgeBoundary(left_bc_2, right_bc_2)
 
 simulate_euler_1d(
-    -50.0,
-    50.0,
+    -75.0,
+    75.0,
     1000,
     bcs_2,
-    0.2,
+    0.15,
     u2;
     gas = DRY_AIR,
     CFL = 0.75,
     output_tag = "euler_scenario_2",
 )
-
-##
-## NOTES FROM FRIDAY
-## WTF is wrong with my boundary conditions?
-## maybe I should email Herty / Müller...
-## Maybe I should also switch to HLL-C to correct the contact wave rather than smearing out the data.
-## hmmmm. 
-
-
-vL = state_to_vector(uL_2)
-vM = state_to_vector(uM_2)
-vR = state_to_vector(uR_2)
-
-s_aL = Euler2D.eigenvalues_∇F(vL, 1; gas=DRY_AIR)
-s_aR = Euler2D.eigenvalues_∇F(vM, 1; gas=DRY_AIR)
-s_a_roe = Euler2D.roe_matrix_eigenvalues(vL, vM, 1; gas=DRY_AIR)
-speeds_a = interface_signal_speeds(vL, vM, 1; gas=DRY_AIR)
-
-s_bL = Euler2D.eigenvalues_∇F(vM, 1; gas=DRY_AIR)
-s_bR = Euler2D.eigenvalues_∇F(vR, 1; gas=DRY_AIR)
-s_b_roe = Euler2D.roe_matrix_eigenvalues(vM, vR, 1; gas=DRY_AIR)
-speeds_b = interface_signal_speeds(vM, vR, 1; gas=DRY_AIR)

@@ -107,20 +107,9 @@ function interface_signal_speeds(uL, uR, dim; gas::CaloricallyPerfectGas)
     λ_R = eigenvalues_∇F(uR, dim; gas = gas)
     @assert length(λ_L) == length(λ_R) == length(λ_roe)
     # 2.24 from Vides, et al.
-    #s_L = minimum((min(λs...) for λs ∈ zip(λ_L, λ_roe)))
-    #s_R = maximum((max(λs...) for λs ∈ zip(λ_roe, λ_R)))
     s_L = min((min(λ...) for λ ∈ zip(λ_L, λ_roe))...)
     s_R = max((max(λ...) for λ ∈ zip(λ_roe, λ_R))...)
     return s_L, s_R
-end
-
-# ReLu and... whatever its minimum version is called
-function xplus(x::T)::T where {T}
-    return max(zero(T), x)
-end
-
-function xminus(x::T)::T where {T}
-    return min(zero(T), x)
 end
 
 """
@@ -163,10 +152,10 @@ _Equation **2.20** from Vides et al._
 function ϕ_hll(uL, uR, fL, fR, sL, sR)
     @assert sL < sR
     if sR < 0
-        #flow only into left cell
+        # flow only into left cell
         return fR
     elseif sL > 0
-        #flow only into right cell
+        # flow only into right cell
         return fL
     else
         # shared flow
