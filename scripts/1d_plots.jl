@@ -78,12 +78,13 @@ u1(x) = state_to_vector(x < 0 ? uL_1 : uR_1)
 left_bc_1 = SupersonicInflow(uL_1)
 # convert pressure at outflow to Pascals 
 # before stripping units (just to be safe)
-right_bc_1 = FixedPressureOutflow(ustrip(u"Pa", pressure(uR_1; gas = DRY_AIR)))
+# right_bc_1 = FixedPressureOutflow(ustrip(u"Pa", pressure(uR_1; gas = DRY_AIR)))
+right_bc_1 = FixedPhantomOutside(uR_1)
 bcs_1 = EdgeBoundary(left_bc_1, right_bc_1)
 
 simulate_euler_1d(
-    -50.0,
-    50.0,
+    -25.0,
+    100.0,
     8000,
     bcs_1,
     0.1,
@@ -107,9 +108,9 @@ Euler2D.ϕ_hll(state_to_vector(uL_2), state_to_vector(uM_2), 1; gas=DRY_AIR)
 
 
 function u2(x)
-    res = if x < -50
+    res = if x < -25
         uL_2
-    elseif x > 50
+    elseif x > 25
         uR_2
     else
         uM_2
@@ -122,11 +123,11 @@ right_bc_2 = SupersonicInflow(uR_2)
 bcs_2 = EdgeBoundary(left_bc_2, right_bc_2)
 
 simulate_euler_1d(
-    -75.0,
-    75.0,
+    -50.0,
+    50.0,
     1000,
     bcs_2,
-    0.1,
+    0.2,
     u2;
     gas = DRY_AIR,
     CFL = 0.75,

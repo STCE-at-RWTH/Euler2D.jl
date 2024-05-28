@@ -52,6 +52,7 @@ This edge is a hard wall where the no-penetration condition
 is enforced by using a phantom cell.
 """
 struct StrongWall <: PhantomEdge{1} end
+
 function phantom_cell(
     ::StrongWall,
     u::AbstractArray{T,2},
@@ -66,8 +67,36 @@ end
 struct WeakWallReflect <: FluxEdge{1} end
 # struct WeakWallExtrapolate <: FluxEdge{2} end
 
+
+"""
+    FixedPhantomOutside
+
+Fixes a phantom cell outside the given edge of the computational domain.
+This BC is appropriate to use if the interesting behavior of the solution
+    does **not** approach the boundary.
+
+Fields
+---
+ - `prescribed_state`: The state prescribed outside the boundary.
+"""
+struct FixedPhantomOutside <: PhantomEdge{1}
+    prescribed_state::ConservedState
+end
+
+function phantom_cell(
+    bc::FixedPhantomOutside,
+    u::AbstractArray{T,2},
+    dim;
+    gas::CaloricallyPerfectGas,
+) where {T}
+    return state_to_vector(bc.prescribed_state)
+end
+
 """
     SupersonicInflow
+
+Enforces a supersonic inflow condition at the boundary. 
+The user is responsible for making sure the flow velocity points into the domain.
 
 Fields
 ---
@@ -108,7 +137,7 @@ Essentially, if the flow is subsonic at the boundary, we fix the pressure
   and compute density in the phantom.
 Otherwise, we assume information gets projected out of the domain.
 
-Note: This will break if the flow becomes supersonic away from the boundary. 
+Note: This will break if the flow becomes supersonic back into the domain. 
 That seems reasonable to me.
 """
 function phantom_cell(
@@ -268,7 +297,7 @@ function right_edge_ϕ(
 ) where {T, N}
     return ϕ_hll(
         @view(u[:, end]),
-        phantom_cell(bc, @view(u[:, end:-1:end-N]), dim; gas = gas),
+        phantom_cell(bc, @view(u[:, end:-1:(end-N+1)]), dim; gas = gas),
         dim;
         gas = gas,
     )
@@ -289,7 +318,7 @@ function left_edge_ϕ(
     dim;
     gas::CaloricallyPerfectGas,
 ) where {T,N}
-    return edge_flux(bc, @view(u[:, end:-1:end-N]), dim; gas = gas)
+    return edge_flux(bc, @view(u[:, end:-1:(end-N+1)]), dim; gas = gas)
 end
 
 ##
