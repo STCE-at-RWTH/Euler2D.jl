@@ -79,9 +79,6 @@ function phantom_cell(
     return phantom
 end
 
-struct WeakWallReflect <: FluxEdge{1} end
-# struct WeakWallExtrapolate <: FluxEdge{2} end
-
 """
     FixedPhantomOutside
 
@@ -209,10 +206,6 @@ function phantom_cell(
     return phantom
 end
 
-# struct FixedMassFlow end
-
-##
-
 """
     bulk_step!(u_next, u, Δt, Δx; gas)
 
@@ -336,29 +329,6 @@ function right_edge_ϕ(
         phantom[1+dim] *= -1
     end
     return ϕ_hll(@view(u[:, end]), phantom, dim; gas)
-end
-
-function left_edge_ϕ(
-    bc::FluxEdge{N},
-    u::AbstractArray{T,2},
-    dim;
-    gas::CaloricallyPerfectGas,
-) where {T,N}
-    return edge_flux(bc, @view(u[:, 1:N]), dim; gas)
-end
-
-# TODO we actually need to flip the the cell momenta passed into the flux calculation
-# TODO   and then flip the result (treat everything as the LEFT edge inside edge_flux)
-
-function right_edge_ϕ(
-    bc::FluxEdge{N},
-    u::AbstractArray{T,2},
-    dim;
-    gas::CaloricallyPerfectGas,
-) where {T,N}
-    neighbors = u[:, end:-1:(end-N+1)] # copy
-    neighbors[dim+1, :] .*= -1.0
-    return edge_flux(bc, neighbors, dim; gas)
 end
 
 ##
