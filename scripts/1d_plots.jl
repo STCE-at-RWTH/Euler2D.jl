@@ -1,4 +1,5 @@
 using Euler2D
+using LinearAlgebra
 using ShockwaveProperties
 using Unitful
 
@@ -99,7 +100,7 @@ function simulate_euler_1d(
         end
         close(u_tape)
     end
-    return (t[end], u_next)
+    return (t[end], u)
 end
 
 ##
@@ -107,8 +108,8 @@ end
 # SHOCK AT X = 0
 # SUPERSONIC FLOW IMPACTS STATIC ATMOSPHERIC AIR
 
-uL_1 = ConservedState(PrimitiveState(1.225, [1.5], 300.0); gas = DRY_AIR)
-uR_1 = ConservedState(PrimitiveState(1.225, [0.0], 350.0); gas = DRY_AIR)
+uL_1 = ConservedProps(PrimitiveProps(1.225, [1.5], 300.0); gas = DRY_AIR)
+uR_1 = ConservedProps(PrimitiveProps(1.225, [0.0], 350.0); gas = DRY_AIR)
 
 u1(x) = state_to_vector(x < 0 ? uL_1 : uR_1)
 left_bc_1 = SupersonicInflow(uL_1)
@@ -122,7 +123,7 @@ bcs_1 = EdgeBoundary(left_bc_1, right_bc_1)
 simulate_euler_1d(
     -25.0,
     225.0,
-    1001,
+    500,
     bcs_1,
     0.1,
     u1;
@@ -136,9 +137,9 @@ simulate_euler_1d(
 # SHOCKS AT X = -50 and X = 50
 # SUPERSONIC INFLOW ON BOTH SIDES
 
-uL_2 = ConservedState(PrimitiveState(1.225, [2.0], 300.0); gas = DRY_AIR)
-uM_2 = ConservedState(PrimitiveState(1.225, [0.0], 350.0); gas = DRY_AIR)
-uR_2 = ConservedState(PrimitiveState(1.225, [-2.0], 300.0); gas = DRY_AIR)
+uL_2 = ConservedProps(PrimitiveProps(1.225, [2.0], 300.0); gas = DRY_AIR)
+uM_2 = ConservedProps(PrimitiveProps(1.225, [0.0], 350.0); gas = DRY_AIR)
+uR_2 = ConservedProps(PrimitiveProps(1.225, [-2.0], 300.0); gas = DRY_AIR)
 
 interface_signal_speeds(state_to_vector(uL_2), state_to_vector(uM_2), 1; gas=DRY_AIR)
 Euler2D.ϕ_hll(state_to_vector(uL_2), state_to_vector(uM_2), 1; gas=DRY_AIR)
@@ -162,7 +163,7 @@ bcs_2 = EdgeBoundary(left_bc_2, right_bc_2)
 simulate_euler_1d(
     -75.0,
     75.0,
-    1000,
+    2500,
     bcs_2,
     0.15,
     u2;
@@ -170,3 +171,28 @@ simulate_euler_1d(
     CFL = 0.75,
     output_tag = "euler_scenario_2",
 )
+
+## SHOCK SCENARIO 3
+# SOD SHOCK TUBE 1
+
+ρL = 1.0u"kg/m^3"
+vL = [0.0u"m/s"]
+PL = 10.0u"Pa"
+TL = uconvert(u"K", PL / (ρL * DRY_AIR.R))
+ML = vL/speed_of_sound(ρL, PL; gas=DRY_AIR)
+
+ρR = 0.125u"kg/m^3"
+vR = [0.0u"m/s"]
+PR = 1.0u"Pa"
+TR = uconvert(u"K", PR/(ρR * DRY_AIR.R))
+MR = vR/speed_of_sound(ρR, PR; gas=DRY_AIR)
+
+s_high = PrimitiveProps(ρL, ML, TL)
+s_low = PrimitiveProps(ρR, MR, TR)
+
+sod1_bcs = EdgeBoundary(FixedPhantomOutside(s_high, DRY_AIR), FixedPhantomOutside(s_low, DRY_AIR))
+u0_sod1(x) = ConservedProps(x < 0.5 ? s_high : s_low; gas=DRY_AIR) |> state_to_vector
+
+##
+
+simulate_euler_1d(0.0, 1.0, 400, sod1_bcs, 0.05, u0_sod1; gas=DRY_AIR, CFL=0.75, output_tag="sod1")

@@ -87,7 +87,7 @@ function interface_states(
 
 function interface_fluxes(u::CellData2D{T}; gas::CaloricallyPerfectGas) where {T}
     fluxes = map(u) do u
-        F(u; gas = gas)
+        F_euler(u; gas = gas)
     end
     f = map(fluxes) do f
     end
