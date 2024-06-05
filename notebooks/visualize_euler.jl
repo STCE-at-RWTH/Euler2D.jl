@@ -87,7 +87,7 @@ function plotframe(frame, data, bounds)
 		plot(xs, data.u[i, :, frame], legend=false, ylabel=ylabels[i], xticks=(i==3), ylims=bounds[i], dpi=600) 
 		for i=1:3]
 	p_data = map(eachcol(data.u[:, :, frame])) do u
-		c = ConservedState(u[1], u[2:end-1], u[end])
+		c = ConservedProps(u[1], u[2:end-1], u[end])
 		return uconvert(u"kPa", pressure(c; gas=DRY_AIR))
 	end
 	pressure_plot=plot(xs, p_data, ylabel=L"P", legend=false)
@@ -104,11 +104,6 @@ end fps=10
 	plotframe(i, d2, b2)
 end fps=10
 
-# ╔═╡ 78825bca-6d80-449a-a9a1-05b3b0a09e19
-@gif for i=1:dsod1.n_t
-	plotframe(i, dsod1, bs1)
-end fps = 10
-
 # ╔═╡ 6c458355-04e8-43cf-99a9-15d3d0cb20dc
 plotframe(1, dsod1, bs1)
 
@@ -118,20 +113,6 @@ begin
 	savefig(p, "ics.png")
 	p
 end
-
-# ╔═╡ 5a3e387d-ce6c-4467-bcd1-2c8dd13797cf
-plotframe(dsod1.n_t-1, dsod1, bs1)
-
-# ╔═╡ 83fd80f0-f8df-4169-ab85-6408cdf7f32d
-dsod1.u[:, end, 3]
-
-# ╔═╡ c5a220f9-7ef5-47f2-b860-b7062e467194
-
-
-# ╔═╡ c158c431-a3b1-4bd4-9d4d-48a78d0c79d8
-findfirst(map(diff(dsod1.u[end, end, :])) do ρE
-	abs(ρE) > 0
-end)
 
 # ╔═╡ 44c8aa62-153c-42da-b828-f15b5008a59e
 function signal_speed_bounds(data::EulerSim1D)
@@ -1509,16 +1490,11 @@ version = "1.4.1+1"
 # ╠═59f5b1e3-5313-4666-9370-b5f82eb0b622
 # ╠═7fea2a1d-7dfb-4a45-8188-ecc0552a76bb
 # ╠═eddd67a5-9cac-4bbb-bae7-6069c16969d5
-# ╟─77083802-2c87-466b-a376-7dea9fa2490c
+# ╠═77083802-2c87-466b-a376-7dea9fa2490c
 # ╠═d8f40768-d877-4325-a6d0-f91499c939f9
 # ╠═d06cf7e8-61f9-4fba-9da3-208964311844
-# ╠═78825bca-6d80-449a-a9a1-05b3b0a09e19
 # ╠═6c458355-04e8-43cf-99a9-15d3d0cb20dc
 # ╠═307dfa9e-9b17-42fe-8acb-491acadca7a9
-# ╠═5a3e387d-ce6c-4467-bcd1-2c8dd13797cf
-# ╠═83fd80f0-f8df-4169-ab85-6408cdf7f32d
-# ╠═c5a220f9-7ef5-47f2-b860-b7062e467194
-# ╠═c158c431-a3b1-4bd4-9d4d-48a78d0c79d8
 # ╟─44c8aa62-153c-42da-b828-f15b5008a59e
 # ╟─e32cf42c-a914-4e9d-82a8-29fd07bafb7f
 # ╟─d8bcab65-00b1-4171-892f-d8945d65fb60

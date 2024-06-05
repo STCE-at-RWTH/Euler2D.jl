@@ -20,6 +20,13 @@ i.e. the right edge of the last cell is the same as the left edge of the first.
 struct PeriodicAxis <: BoundaryCondition end
 
 """
+    Edge
+
+Abstract supertype for all edge boundary conditions.
+"""
+abstract type Edge end
+
+"""
     EdgeBoundary{L, R}
 
 Indicates that this axis has some prescribed left and right edge boundary conditions.
@@ -28,13 +35,6 @@ struct EdgeBoundary{L<:Edge,R<:Edge} <: BoundaryCondition
     left::L
     right::R
 end
-
-"""
-    Edge
-
-Abstract supertype for all edge boundary conditions.
-"""
-abstract type Edge end
 
 """
     PhantomEdge{N}
@@ -49,8 +49,10 @@ abstract type PhantomEdge{N} <: Edge end
 
 Supertype for all edge conditions that generate an edge flux
 from `N` cells inside the computational domain.
+
+Currently not used.
 """
-abstract type FluxEdge{N} end
+abstract type FluxEdge{N} <: Edge end
 
 """
     reverse_right_edge(::Edge) = true

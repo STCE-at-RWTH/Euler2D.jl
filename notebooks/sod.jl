@@ -75,13 +75,32 @@ begin
 end
 
 # ╔═╡ a37e06d8-9b92-48c4-a484-9ae35a8a0b79
-u = ConservedProps(PrimitiveProps(1.5, [2.0, 0.0, 0.5], 300.0); gas=DRY_AIR)
+dsod1 = make_sim_data("sod1.out")
 
-# ╔═╡ 2b22ddaf-8e94-4fb7-a2e3-bbb43708a5cc
-F(u, DRY_AIR)
+# ╔═╡ 0dd5f204-70c4-48f6-9a4a-9201cd85b7bc
+bs1 = plot_bounds(dsod1)
 
-# ╔═╡ 9f8b23ce-993d-47ff-8038-fe3f737bfaf9
-F(state_to_vector(u), DRY_AIR)
+# ╔═╡ e559ffb0-14e9-4da5-903b-40f7c8488ec8
+function plotframe(frame, data, bounds)
+	x = range(;start=data.x0, stop=data.xN, length=data.n_x+1)
+	xs = range(;start=data.x0+step(x)/2, stop=data.xN-step(x)/2, length=data.n_x)
+	ylabels=[L"ρ", L"ρv", L"ρE"]
+	ps = [
+		plot(xs, data.u[i, :, frame], legend=false, ylabel=ylabels[i], xticks=(i==3), ylims=bounds[i], dpi=600) 
+		for i=1:3]
+	p_data = map(eachcol(data.u[:, :, frame])) do u
+		c = ConservedProps(u)
+		return uconvert(u"kPa", pressure(c; gas=DRY_AIR))
+	end
+	pressure_plot=plot(xs, p_data, ylabel=L"P", legend=false)
+	titlestr = @sprintf "t=%.4e" data.t[frame]
+	return plot(ps..., pressure_plot, suptitle=titlestr, titlefontface="Computer Modern")
+end
+
+# ╔═╡ 240d4f45-8024-4eb7-bbae-6cb923280426
+@gif for i=1:dsod1.n_t
+	plotframe(i, dsod1, bs1)
+end fps = 15
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
@@ -1218,11 +1237,12 @@ version = "1.4.1+1"
 # ╔═╡ Cell order:
 # ╠═5235b02a-21c7-11ef-3bff-bbb12c64876f
 # ╠═c262ba8c-3c15-4ec4-ad98-4fede84d1be0
-# ╠═a1cf8795-d623-48d2-99d2-8b387b5e03f1
-# ╠═ca6bae27-5501-4869-b512-9358d39071d2
-# ╠═260ea05b-bb07-41c7-82bb-a4f194a9453e
+# ╟─a1cf8795-d623-48d2-99d2-8b387b5e03f1
+# ╟─ca6bae27-5501-4869-b512-9358d39071d2
+# ╟─260ea05b-bb07-41c7-82bb-a4f194a9453e
 # ╠═a37e06d8-9b92-48c4-a484-9ae35a8a0b79
-# ╠═2b22ddaf-8e94-4fb7-a2e3-bbb43708a5cc
-# ╠═9f8b23ce-993d-47ff-8038-fe3f737bfaf9
+# ╠═0dd5f204-70c4-48f6-9a4a-9201cd85b7bc
+# ╠═e559ffb0-14e9-4da5-903b-40f7c8488ec8
+# ╠═240d4f45-8024-4eb7-bbae-6cb923280426
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

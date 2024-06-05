@@ -181,9 +181,9 @@ PL = 10.0u"Pa"
 TL = uconvert(u"K", PL / (ρL * DRY_AIR.R))
 ML = vL/speed_of_sound(ρL, PL; gas=DRY_AIR)
 
-ρR = 0.125u"kg/m^3"
+ρR = 0.125 * ρL
 vR = [0.0u"m/s"]
-PR = 1.0u"Pa"
+PR = 0.1 * PL
 TR = uconvert(u"K", PR/(ρR * DRY_AIR.R))
 MR = vR/speed_of_sound(ρR, PR; gas=DRY_AIR)
 
