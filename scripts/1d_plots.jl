@@ -3,7 +3,7 @@ using LinearAlgebra
 using ShockwaveProperties
 using Unitful
 
-##
+
 """
     simulate_euler_1d(x_min, x_max, ncells_x, x_bcs, T, u0; gas, CFL, max_tsteps, write_output, output_tag)
 
@@ -74,6 +74,7 @@ function simulate_euler_1d(
         catch err
             @show length(t), t[end]
             println("Δt calculation failed.")
+            println(typeof(err))
             break
         end
         if t[end] + Δt > T
@@ -191,8 +192,12 @@ s_high = PrimitiveProps(ρL, ML, TL)
 s_low = PrimitiveProps(ρR, MR, TR)
 
 sod1_bcs = EdgeBoundary(FixedPhantomOutside(s_high, DRY_AIR), FixedPhantomOutside(s_low, DRY_AIR))
+copy_bcs = EdgeBoundary(ExtrapolateToPhantom(), ExtrapolateToPhantom())
 u0_sod1(x) = ConservedProps(x < 0.5 ? s_high : s_low; gas=DRY_AIR) |> state_to_vector
 
-##
+simulate_euler_1d(0.0, 2.0, 2000, copy_bcs, 0.05, u0_sod1; gas=DRY_AIR, CFL=0.75, output_tag="sod1")
 
-simulate_euler_1d(0.0, 1.0, 400, sod1_bcs, 0.05, u0_sod1; gas=DRY_AIR, CFL=0.75, output_tag="sod1")
+# SOD SCENARIO 2
+
+u0_sod2(x) = ConservedProps(x < 1.5 ? s_low : s_high; gas=DRY_AIR) |> state_to_vector
+simulate_euler_1d(0.0, 2.0, 2000, copy_bcs, 0.05, u0_sod2; gas=DRY_AIR, CFL=0.75, output_tag="sod2")

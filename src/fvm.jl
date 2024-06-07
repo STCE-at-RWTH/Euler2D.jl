@@ -353,13 +353,15 @@ function maximum_Δt(::PeriodicAxis, u, Δx, CFL, dim; gas::CaloricallyPerfectGa
     return Δt
 end
 
-function maximum_Δt(::EdgeBoundary, u, Δx, CFL, dim; gas::CaloricallyPerfectGas)
+function maximum_Δt(bcs::EdgeBoundary, u, Δx, CFL, dim; gas::CaloricallyPerfectGas)
     a = mapreduce(
         max,
         zip(eachcol(@view(u[:, 1:end-1])), eachcol(@view(u[:, 2:end]))),
     ) do (uL, uR)
         max(abs.(interface_signal_speeds(uL, uR, dim; gas))...)
     end
+    # a = max(a, abs.(interface_signal_speeds(phantom_cell(bcs.left, u, 1; gas), u[:, 1], 1; gas))...)
+    # a = max(a, abs.(interface_signal_speeds(u[:, end], phantom_cell(bcs.right, u, 1; gas), 1; gas))...)
     Δt = CFL * Δx / a
     return Δt
 end

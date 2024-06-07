@@ -49,12 +49,19 @@ end
 
 # ╔═╡ ca6bae27-5501-4869-b512-9358d39071d2
 function plot_bounds(sim::EulerSim1D)
-	n = 1
+	n = 10
 	bounds = [(minimum(@view sim.u[i, :, 1:end-n]), maximum(@view sim.u[i, :, 1:end-n])) for i=1:3]
 	return [
 		(a < 0 ? 1.2*a : 0.8*a,
 		 b < 0 ? 0.8*b : 1.2*b) for (a,b)∈bounds
 	]
+end
+
+# ╔═╡ b39d9e97-3eae-4c40-b41c-88c403947b5f
+function x_axis(data)
+	x = range(;start=data.x0, stop=data.xN, length=data.n_x+1)
+	xs = range(;start=data.x0+step(x)/2, stop=data.xN-step(x)/2, length=data.n_x)
+	return xs
 end
 
 # ╔═╡ 260ea05b-bb07-41c7-82bb-a4f194a9453e
@@ -77,30 +84,86 @@ end
 # ╔═╡ a37e06d8-9b92-48c4-a484-9ae35a8a0b79
 dsod1 = make_sim_data("sod1.out")
 
+# ╔═╡ 433765ee-2926-4082-8991-b8484a0d2106
+dsod2 = make_sim_data("sod2.out")
+
 # ╔═╡ 0dd5f204-70c4-48f6-9a4a-9201cd85b7bc
 bs1 = plot_bounds(dsod1)
 
+# ╔═╡ 8b31c7d4-766d-4eac-b6b0-505a3bda2106
+bs2 = plot_bounds(dsod2)
+
 # ╔═╡ e559ffb0-14e9-4da5-903b-40f7c8488ec8
 function plotframe(frame, data, bounds)
-	x = range(;start=data.x0, stop=data.xN, length=data.n_x+1)
-	xs = range(;start=data.x0+step(x)/2, stop=data.xN-step(x)/2, length=data.n_x)
+	xs = x_axis(data)
 	ylabels=[L"ρ", L"ρv", L"ρE"]
 	ps = [
 		plot(xs, data.u[i, :, frame], legend=false, ylabel=ylabels[i], xticks=(i==3), ylims=bounds[i], dpi=600) 
 		for i=1:3]
+	v_data = map(eachcol(data.u[:, :, frame])) do u
+		c = ConservedProps(u)
+		v = velocity(c)[1]
+	end
 	p_data = map(eachcol(data.u[:, :, frame])) do u
 		c = ConservedProps(u)
 		return uconvert(u"kPa", pressure(c; gas=DRY_AIR))
 	end
 	pressure_plot=plot(xs, p_data, ylabel=L"P", legend=false)
+	velocity_plot=plot(xs, v_data, ylabel=L"v", legend=false)
 	titlestr = @sprintf "t=%.4e" data.t[frame]
-	return plot(ps..., pressure_plot, suptitle=titlestr, titlefontface="Computer Modern")
+	return plot(ps[1], ps[3], velocity_plot, pressure_plot, suptitle=titlestr, titlefontface="Computer Modern")
 end
 
 # ╔═╡ 240d4f45-8024-4eb7-bbae-6cb923280426
 @gif for i=1:dsod1.n_t
 	plotframe(i, dsod1, bs1)
-end fps = 15
+end every 20 fps = 10
+
+# ╔═╡ a646924e-5aba-4867-8e77-c45ad9d4b2e6
+@gif for i=1:dsod2.n_t
+	plotframe(i, dsod2, bs2)
+end every 20 fps = 10
+
+# ╔═╡ e6d5b0c9-b475-4d69-a22e-2fe9cddc6ac1
+begin
+	function shock_speed(uL, uR, gas)
+		FL = F(uL, gas)
+		FR = F(uR, gas)
+		return (FL - FR) ./ (uL - uR)
+	end
+
+	function shock_speed(uL::ConservedProps, uR::ConservedProps, gas)
+		dF = F(uL, gas) - F(uR, gas)
+		dU = ConservedProps(uL.ρ-uR.ρ, uL.ρv - uR.ρv, uL.ρE - uR.ρE)
+		return vcat(dF[1]/dU.ρ, dF[2:end-1] ./ dU.ρv, dF[end]/dU.ρE)
+	end
+end
+
+# ╔═╡ 372a1da7-da5a-4d54-9ad4-5aff40324887
+let
+	uL = dsod1.u[:, 900, 350]
+	uR = dsod1.u[:, end, 350]
+	shock_speed(ConservedProps(uL), ConservedProps(uR), DRY_AIR)
+end
+
+# ╔═╡ 6d8d7321-ba2b-45da-9e2f-b65a1d37ba66
+x_axis(dsod1)[800]
+
+# ╔═╡ dc592e1e-066b-4dae-b90a-41d75ee67255
+let
+	uR = dsod2.u[:, 1031, 300]
+	uL = dsod2.u[:, 1, 300]
+	shock_speed(ConservedProps(uL), ConservedProps(uR), DRY_AIR)
+end
+
+# ╔═╡ 6dad151b-2ceb-44f7-95ee-4cd981dee6b7
+plotframe(350, dsod1, bs1)
+
+# ╔═╡ 510203fd-fc40-486f-ad5e-f12ce7ba8af5
+plotframe(dsod1.n_t, dsod1, bs1)
+
+# ╔═╡ 8ec51f09-2e94-46af-8ad7-e531263f59be
+plotframe(dsod2.n_t, dsod2, bs2)
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
@@ -125,7 +188,7 @@ Unitful = "~1.20.0"
 PLUTO_MANIFEST_TOML_CONTENTS = """
 # This file is machine-generated - editing it directly is not advised
 
-julia_version = "1.10.3"
+julia_version = "1.10.4"
 manifest_format = "2.0"
 project_hash = "ba6664b806f61eab78c9a07265f9f54318276a2b"
 
@@ -1239,10 +1302,21 @@ version = "1.4.1+1"
 # ╠═c262ba8c-3c15-4ec4-ad98-4fede84d1be0
 # ╟─a1cf8795-d623-48d2-99d2-8b387b5e03f1
 # ╟─ca6bae27-5501-4869-b512-9358d39071d2
+# ╟─b39d9e97-3eae-4c40-b41c-88c403947b5f
 # ╟─260ea05b-bb07-41c7-82bb-a4f194a9453e
 # ╠═a37e06d8-9b92-48c4-a484-9ae35a8a0b79
+# ╠═433765ee-2926-4082-8991-b8484a0d2106
 # ╠═0dd5f204-70c4-48f6-9a4a-9201cd85b7bc
+# ╠═8b31c7d4-766d-4eac-b6b0-505a3bda2106
 # ╠═e559ffb0-14e9-4da5-903b-40f7c8488ec8
 # ╠═240d4f45-8024-4eb7-bbae-6cb923280426
+# ╠═a646924e-5aba-4867-8e77-c45ad9d4b2e6
+# ╠═e6d5b0c9-b475-4d69-a22e-2fe9cddc6ac1
+# ╠═372a1da7-da5a-4d54-9ad4-5aff40324887
+# ╠═6d8d7321-ba2b-45da-9e2f-b65a1d37ba66
+# ╠═dc592e1e-066b-4dae-b90a-41d75ee67255
+# ╠═6dad151b-2ceb-44f7-95ee-4cd981dee6b7
+# ╠═510203fd-fc40-486f-ad5e-f12ce7ba8af5
+# ╠═8ec51f09-2e94-46af-8ad7-e531263f59be
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

@@ -57,7 +57,7 @@ We compute enthalphy density `ρH` as the sum of internal energy density and pre
 
 See Equations 10 and 11 in Roe.
 """
-function roe_parameter_vector(u::AbstractVector; gas::CaloricallyPerfectGas)
+function roe_parameter_vector(u; gas::CaloricallyPerfectGas)
     rhoH = ustrip(total_enthalpy_density(u[1], @view(u[2:end-1]), u[end]; gas))
     return vcat(u[1], u[2:end-1], rhoH) ./ sqrt(u[1])
 end
