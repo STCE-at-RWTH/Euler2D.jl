@@ -107,8 +107,8 @@ end
 # SHOCK AT X = 0
 # SUPERSONIC FLOW IMPACTS STATIC ATMOSPHERIC AIR
 
-uL_1 = ConservedState(PrimitiveState(1.225, [1.5], 300.0); gas = DRY_AIR)
-uR_1 = ConservedState(PrimitiveState(1.225, [0.0], 350.0); gas = DRY_AIR)
+uL_1 = ConservedProps(PrimitiveProps(1.225, [1.5], 300.0); gas = DRY_AIR)
+uR_1 = ConservedProps(PrimitiveProps(1.225, [0.0], 350.0); gas = DRY_AIR)
 
 u1(x) = state_to_vector(x < 0 ? uL_1 : uR_1)
 left_bc_1 = SupersonicInflow(uL_1)
@@ -136,9 +136,9 @@ simulate_euler_1d(
 # SHOCKS AT X = -50 and X = 50
 # SUPERSONIC INFLOW ON BOTH SIDES
 
-uL_2 = ConservedState(PrimitiveState(1.225, [2.0], 300.0); gas = DRY_AIR)
-uM_2 = ConservedState(PrimitiveState(1.225, [0.0], 350.0); gas = DRY_AIR)
-uR_2 = ConservedState(PrimitiveState(1.225, [-2.0], 300.0); gas = DRY_AIR)
+uL_2 = ConservedProps(PrimitiveProps(1.225, [2.0], 300.0); gas = DRY_AIR)
+uM_2 = ConservedProps(PrimitiveProps(1.225, [0.0], 350.0); gas = DRY_AIR)
+uR_2 = ConservedProps(PrimitiveProps(1.225, [-2.0], 300.0); gas = DRY_AIR)
 
 interface_signal_speeds(state_to_vector(uL_2), state_to_vector(uM_2), 1; gas=DRY_AIR)
 Euler2D.ϕ_hll(state_to_vector(uL_2), state_to_vector(uM_2), 1; gas=DRY_AIR)

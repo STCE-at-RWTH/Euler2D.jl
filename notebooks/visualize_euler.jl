@@ -81,7 +81,7 @@ function plotframe(frame, data, bounds)
 		plot(xs, data.u[i, :, frame], legend=false, ylabel=ylabels[i], xticks=(i==3), ylims=bounds[i], dpi=600) 
 		for i=1:3]
 	p_data = map(eachcol(data.u[:, :, frame])) do u
-		c = ConservedState(u[1], u[2:end-1], u[end])
+		c = ConservedProps(u[1], u[2:end-1], u[end])
 		return uconvert(u"kPa", pressure(c; gas=DRY_AIR))
 	end
 	pressure_plot=plot(xs, p_data, ylabel=L"P", legend=false)
@@ -134,7 +134,7 @@ function plotframe_signal_speeds(frame, data, bounds; gas=DRY_AIR)
 		[aL aR]
 	end
 	M1 = map(eachcol(@view u_k[:, 2:end])) do u
-		s = ConservedState(u[1], u[2:end-1], u[end])
+		s = ConservedProps(u[1], u[2:end-1], u[end])
 		return ustrip(u"m/s", speed_of_sound(s; gas=DRY_AIR))
 	end
 	labels=[L"a_L", L"a_R"]

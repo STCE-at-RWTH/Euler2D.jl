@@ -79,7 +79,7 @@ Fields
  - `prescribed_state`: The state prescribed outside the boundary.
 """
 struct FixedPhantomOutside <: PhantomEdge{1}
-    prescribed_state::ConservedState
+    prescribed_state::ConservedProps
 end
 
 function phantom_cell(
@@ -103,12 +103,12 @@ Fields
  Must have a velocity that points _into_ the domain.
 """
 struct SupersonicInflow <: PhantomEdge{1}
-    prescribed_state::ConservedState
+    prescribed_state::ConservedProps
 end
 
-function SupersonicInflow(s::PrimitiveState; gas::CaloricallyPerfectGas)
+function SupersonicInflow(s::PrimitiveProps; gas::CaloricallyPerfectGas)
     @assert all(>(1.0), s.M) "Cannot construct a supersonic inflow boundary with M_∞ ≤ 1.0!"
-    return SupersonicInflow(ConservedState(s; gas = gas))
+    return SupersonicInflow(ConservedProps(s; gas = gas))
 end
 
 function phantom_cell(
