@@ -98,7 +98,7 @@ function plotframe(frame, data, bounds)
 	xs = x_axis(data)
 	ylabels=[L"ρ", L"ρv", L"ρE"]
 	ps = [
-		plot(xs, data.u[i, :, frame], legend=false, ylabel=ylabels[i], xticks=(i==3), ylims=bounds[i], dpi=600) 
+		plot(xs, data.u[i, :, frame], legend=(i==1), label=false, ylabel=ylabels[i], xticks=(i==3), xgrid=true, ylims=bounds[i], dpi=600) 
 		for i=1:3]
 	v_data = map(eachcol(data.u[:, :, frame])) do u
 		c = ConservedProps(u)
@@ -106,23 +106,29 @@ function plotframe(frame, data, bounds)
 	end
 	p_data = map(eachcol(data.u[:, :, frame])) do u
 		c = ConservedProps(u)
-		return uconvert(u"kPa", pressure(c; gas=DRY_AIR))
+		return uconvert(u"Pa", pressure(c; gas=DRY_AIR))
 	end
 	pressure_plot=plot(xs, p_data, ylabel=L"P", legend=false)
 	velocity_plot=plot(xs, v_data, ylabel=L"v", legend=false)
-	titlestr = @sprintf "t=%.4e" data.t[frame]
-	return plot(ps[1], ps[3], velocity_plot, pressure_plot, suptitle=titlestr, titlefontface="Computer Modern")
+	titlestr = @sprintf "n=%d t=%.4e" frame data.t[frame]
+	return plot(ps[1], ps[2], velocity_plot, pressure_plot, suptitle=titlestr, titlefontface="Computer Modern")
 end
 
 # ╔═╡ 240d4f45-8024-4eb7-bbae-6cb923280426
 @gif for i=1:dsod1.n_t
 	plotframe(i, dsod1, bs1)
-end every 20 fps = 10
+end every 15 fps = 10
 
 # ╔═╡ a646924e-5aba-4867-8e77-c45ad9d4b2e6
 @gif for i=1:dsod2.n_t
 	plotframe(i, dsod2, bs2)
 end every 20 fps = 10
+
+# ╔═╡ c0eaf7a3-46ef-4a03-8d3b-7c68f0f59043
+dsod1.u[:, 950, 350]
+
+# ╔═╡ 0ea29833-00cf-4322-83ad-477d6535cdc4
+dsod2.u[:, 1310, 372]
 
 # ╔═╡ e6d5b0c9-b475-4d69-a22e-2fe9cddc6ac1
 begin
@@ -140,30 +146,46 @@ begin
 end
 
 # ╔═╡ 372a1da7-da5a-4d54-9ad4-5aff40324887
-let
-	uL = dsod1.u[:, 900, 350]
+ss1 = let
+	uL = dsod1.u[:, 950, 350]
 	uR = dsod1.u[:, end, 350]
 	shock_speed(ConservedProps(uL), ConservedProps(uR), DRY_AIR)
 end
 
-# ╔═╡ 6d8d7321-ba2b-45da-9e2f-b65a1d37ba66
-x_axis(dsod1)[800]
+# ╔═╡ 6dad151b-2ceb-44f7-95ee-4cd981dee6b7
+let
+	p = plotframe(dsod1.n_t-50, dsod1, bs1)
+	xgrid!(p, xminorticks=true)
+	for i in 1:4
+		vline!(p[i], [0.5 + ustrip(ss1[3]) .* dsod1.t[end-50]], label="Est. Shock Position")
+	end
+	savefig(p, "bad_sod_ex.png")
+	p
+end
+
+# ╔═╡ 835d66cf-231e-4bef-9ee3-3ba8f5568f26
+0.5u"m" .+ Quantity(dsod1.t[end], u"s") * ss1
 
 # ╔═╡ dc592e1e-066b-4dae-b90a-41d75ee67255
-let
-	uR = dsod2.u[:, 1031, 300]
-	uL = dsod2.u[:, 1, 300]
+ss2 = let
+	uR = dsod2.u[:, 1310, 372]
+	uL = dsod2.u[:, 200, 372]
 	shock_speed(ConservedProps(uL), ConservedProps(uR), DRY_AIR)
 end
 
-# ╔═╡ 6dad151b-2ceb-44f7-95ee-4cd981dee6b7
-plotframe(350, dsod1, bs1)
-
-# ╔═╡ 510203fd-fc40-486f-ad5e-f12ce7ba8af5
-plotframe(dsod1.n_t, dsod1, bs1)
-
 # ╔═╡ 8ec51f09-2e94-46af-8ad7-e531263f59be
-plotframe(dsod2.n_t, dsod2, bs2)
+begin
+	p = plotframe(dsod2.n_t-50, dsod2, bs2)
+	# vline!(p[2], [x_axis(dsod2)[1310]])
+	for i in 1:4
+		vline!(p[i], [1.5 + ustrip(ss2[3]) .* dsod2.t[end-50]], label="Shock Position")
+	end
+	savefig(p, "good_sod_ex.png")
+	p
+end
+
+# ╔═╡ e5549fbb-9bff-4dcc-9bcf-355994c6392a
+-1.5u"m" .- ss2 .* Quantity(dsod2.t[end], u"s")
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
@@ -1311,12 +1333,14 @@ version = "1.4.1+1"
 # ╠═e559ffb0-14e9-4da5-903b-40f7c8488ec8
 # ╠═240d4f45-8024-4eb7-bbae-6cb923280426
 # ╠═a646924e-5aba-4867-8e77-c45ad9d4b2e6
-# ╠═e6d5b0c9-b475-4d69-a22e-2fe9cddc6ac1
-# ╠═372a1da7-da5a-4d54-9ad4-5aff40324887
-# ╠═6d8d7321-ba2b-45da-9e2f-b65a1d37ba66
-# ╠═dc592e1e-066b-4dae-b90a-41d75ee67255
 # ╠═6dad151b-2ceb-44f7-95ee-4cd981dee6b7
-# ╠═510203fd-fc40-486f-ad5e-f12ce7ba8af5
+# ╠═c0eaf7a3-46ef-4a03-8d3b-7c68f0f59043
+# ╠═0ea29833-00cf-4322-83ad-477d6535cdc4
+# ╟─e6d5b0c9-b475-4d69-a22e-2fe9cddc6ac1
+# ╠═372a1da7-da5a-4d54-9ad4-5aff40324887
+# ╠═835d66cf-231e-4bef-9ee3-3ba8f5568f26
 # ╠═8ec51f09-2e94-46af-8ad7-e531263f59be
+# ╠═dc592e1e-066b-4dae-b90a-41d75ee67255
+# ╠═e5549fbb-9bff-4dcc-9bcf-355994c6392a
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002
