@@ -118,7 +118,7 @@ uL_1 = ConservedProps(PrimitiveProps(1.225, [1.5], 300.0); gas = DRY_AIR)
 uR_1 = ConservedProps(PrimitiveProps(1.225, [0.0], 350.0); gas = DRY_AIR)
 
 u1(x) = state_to_vector(x < 0 ? uL_1 : uR_1)
-left_bc_1 = SupersonicInflow(uL_1)
+left_bc_1 = SupersonicInflow(uL_1, DRY_AIR)
 # convert pressure at outflow to Pascals 
 # before stripping units (just to be safe)
 # right_bc_1 = FixedPressureOutflow(ustrip(u"Pa", pressure(uR_1; gas = DRY_AIR)))
@@ -142,6 +142,10 @@ simulate_euler_1d(
 # SHOCKS AT X = -50 and X = 50
 # SUPERSONIC INFLOW ON BOTH SIDES
 
+uL_2 = ConservedProps(PrimitiveProps(1.225, [1.5], 300.0); gas = DRY_AIR)
+uM_2 = ConservedProps(PrimitiveProps(1.225, [0.0], 350.0); gas = DRY_AIR)
+uR_2 = ConservedProps(PrimitiveProps(1.225, [-1.5], 300.0); gas = DRY_AIR)
+
 function u2(x)
     res = if x < -50
         uL_2
@@ -153,9 +157,9 @@ function u2(x)
     return state_to_vector(res)
 end
 
-left_bc_2 = SupersonicInflow(uL_2)
-right_bc_2 = SupersonicInflow(uR_2)
-bcs_2 = EdgeBoundary(left_bc_2, right_bc_2)
+left_bc_2 = SupersonicInflow(uL_2, DRY_AIR)
+right_bc_2 = SupersonicInflow(uR_2, DRY_AIR)
+bcs_2 = EdgeBoundary(ExtrapolateToPhantom(), ExtrapolateToPhantom())
 
 simulate_euler_1d(
     -75.0,

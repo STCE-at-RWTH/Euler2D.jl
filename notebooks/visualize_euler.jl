@@ -56,9 +56,6 @@ d1 = make_sim_data("euler_scenario_1.out")
 # ╔═╡ 02cdc149-d3a0-4f45-974d-293a7eaeeb47
 d2 = make_sim_data("euler_scenario_2.out")
 
-# ╔═╡ 3759b7df-26ad-42ae-965e-3ee90e12d72c
-dsod1 = make_sim_data("sod1.out")
-
 # ╔═╡ 6c08cf56-6838-45c3-acff-8727164e7677
 function plot_bounds(sim::EulerSim1D)
 	n = 1
@@ -75,9 +72,6 @@ b1 = plot_bounds(d1)
 # ╔═╡ 7fea2a1d-7dfb-4a45-8188-ecc0552a76bb
 b2 = plot_bounds(d2)
 
-# ╔═╡ eddd67a5-9cac-4bbb-bae7-6069c16969d5
-bs1 = plot_bounds(dsod1)
-
 # ╔═╡ 77083802-2c87-466b-a376-7dea9fa2490c
 function plotframe(frame, data, bounds)
 	x = range(;start=data.x0, stop=data.xN, length=data.n_x+1)
@@ -87,7 +81,7 @@ function plotframe(frame, data, bounds)
 		plot(xs, data.u[i, :, frame], legend=false, ylabel=ylabels[i], xticks=(i==3), ylims=bounds[i], dpi=600) 
 		for i=1:3]
 	p_data = map(eachcol(data.u[:, :, frame])) do u
-		c = ConservedProps(u[1], u[2:end-1], u[end])
+		c = ConservedState(u[1], u[2:end-1], u[end])
 		return uconvert(u"kPa", pressure(c; gas=DRY_AIR))
 	end
 	pressure_plot=plot(xs, p_data, ylabel=L"P", legend=false)
@@ -103,9 +97,6 @@ end fps=10
 @gif for i=1:60:d2.n_t
 	plotframe(i, d2, b2)
 end fps=10
-
-# ╔═╡ 6c458355-04e8-43cf-99a9-15d3d0cb20dc
-plotframe(1, dsod1, bs1)
 
 # ╔═╡ 307dfa9e-9b17-42fe-8acb-491acadca7a9
 begin
@@ -168,9 +159,6 @@ end fps=10
 	plotframe_signal_speeds(i, d2, b2_signal_speeds)
 end fps=10
 
-# ╔═╡ 89e19dd2-ead8-4d97-a3ae-564179badfe2
-
-
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
 [deps]
@@ -195,7 +183,7 @@ Unitful = "~1.19.0"
 PLUTO_MANIFEST_TOML_CONTENTS = """
 # This file is machine-generated - editing it directly is not advised
 
-julia_version = "1.10.3"
+julia_version = "1.10.4"
 manifest_format = "2.0"
 project_hash = "ab4cbe05d83eb1269829bb56cd8c3cf31f71b7b0"
 
@@ -1485,15 +1473,12 @@ version = "1.4.1+1"
 # ╠═68254b8f-59a2-47d2-a4d6-dac259e77b79
 # ╠═b65e1b20-0264-4d42-95c4-b96ccddc175a
 # ╠═02cdc149-d3a0-4f45-974d-293a7eaeeb47
-# ╠═3759b7df-26ad-42ae-965e-3ee90e12d72c
 # ╠═6c08cf56-6838-45c3-acff-8727164e7677
 # ╠═59f5b1e3-5313-4666-9370-b5f82eb0b622
 # ╠═7fea2a1d-7dfb-4a45-8188-ecc0552a76bb
-# ╠═eddd67a5-9cac-4bbb-bae7-6069c16969d5
 # ╠═77083802-2c87-466b-a376-7dea9fa2490c
 # ╠═d8f40768-d877-4325-a6d0-f91499c939f9
 # ╠═d06cf7e8-61f9-4fba-9da3-208964311844
-# ╠═6c458355-04e8-43cf-99a9-15d3d0cb20dc
 # ╠═307dfa9e-9b17-42fe-8acb-491acadca7a9
 # ╟─44c8aa62-153c-42da-b828-f15b5008a59e
 # ╟─e32cf42c-a914-4e9d-82a8-29fd07bafb7f
@@ -1501,6 +1486,5 @@ version = "1.4.1+1"
 # ╟─8ddb95fd-ae17-4293-afdf-f7b4c69e1e62
 # ╠═02ef7665-0a2a-4284-994e-3204c07fe6f2
 # ╠═4b2e1fd7-d212-4580-96e7-897850e6d524
-# ╠═89e19dd2-ead8-4d97-a3ae-564179badfe2
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002
