@@ -3,7 +3,6 @@ using LinearAlgebra
 using ShockwaveProperties
 using Unitful
 
-
 """
     simulate_euler_1d(x_min, x_max, ncells_x, x_bcs, T, u0; gas, CFL, max_tsteps, write_output, output_tag)
 
@@ -62,7 +61,7 @@ function simulate_euler_1d(
 
     xs = range(x_min, x_max; length = ncells_x + 1)
     Δx = step(xs)
-    u = stack([u0(x + Δx / 2) for x ∈ xs[1:end-1]])
+    u = stack(u0, (xs .+ Δx/2)[1:end-1])
     u_next = zeros(eltype(u), size(u))
     t = [0.0]
 
@@ -82,7 +81,13 @@ function simulate_euler_1d(
         end
         (length(t) % 10 == 0) && @show length(t), t[end], Δt
         step_euler_hll!(u_next, u, Δt, Δx, x_bcs; gas = gas)
-        u = u_next
+        #
+        # .= probably more performant than copy()? I do not know and don't care to test. 
+        #   I pretend memory is expensive
+        #
+        # LET THIS .= STAND AS A MONUMENT TO MY STUPIDITY
+        #
+        u .= u_next
         push!(t, t[end] + Δt)
         write_output && write(u_tape, u)
     end
@@ -120,11 +125,10 @@ left_bc_1 = SupersonicInflow(uL_1)
 right_bc_1 = FixedPhantomOutside(uR_1)
 bcs_1 = EdgeBoundary(left_bc_1, right_bc_1)
 
-# use 1001 cells to avoid a grid-aligned shock...
 simulate_euler_1d(
     -25.0,
     225.0,
-    500,
+    1000,
     bcs_1,
     0.1,
     u1;
@@ -137,14 +141,6 @@ simulate_euler_1d(
 # SHOCK SCENARIO TWO
 # SHOCKS AT X = -50 and X = 50
 # SUPERSONIC INFLOW ON BOTH SIDES
-
-uL_2 = ConservedProps(PrimitiveProps(1.225, [2.0], 300.0); gas = DRY_AIR)
-uM_2 = ConservedProps(PrimitiveProps(1.225, [0.0], 350.0); gas = DRY_AIR)
-uR_2 = ConservedProps(PrimitiveProps(1.225, [-2.0], 300.0); gas = DRY_AIR)
-
-interface_signal_speeds(state_to_vector(uL_2), state_to_vector(uM_2), 1; gas=DRY_AIR)
-Euler2D.ϕ_hll(state_to_vector(uL_2), state_to_vector(uM_2), 1; gas=DRY_AIR)
-
 
 function u2(x)
     res = if x < -50
@@ -164,7 +160,7 @@ bcs_2 = EdgeBoundary(left_bc_2, right_bc_2)
 simulate_euler_1d(
     -75.0,
     75.0,
-    2500,
+    1000,
     bcs_2,
     0.15,
     u2;
@@ -180,24 +176,94 @@ simulate_euler_1d(
 vL = [0.0u"m/s"]
 PL = 10.0u"Pa"
 TL = uconvert(u"K", PL / (ρL * DRY_AIR.R))
-ML = vL/speed_of_sound(ρL, PL; gas=DRY_AIR)
+ML = vL / speed_of_sound(ρL, PL; gas = DRY_AIR)
 
 ρR = 0.125 * ρL
 vR = [0.0u"m/s"]
 PR = 0.1 * PL
-TR = uconvert(u"K", PR/(ρR * DRY_AIR.R))
-MR = vR/speed_of_sound(ρR, PR; gas=DRY_AIR)
+TR = uconvert(u"K", PR / (ρR * DRY_AIR.R))
+MR = vR / speed_of_sound(ρR, PR; gas = DRY_AIR)
 
 s_high = PrimitiveProps(ρL, ML, TL)
 s_low = PrimitiveProps(ρR, MR, TR)
 
-sod1_bcs = EdgeBoundary(FixedPhantomOutside(s_high, DRY_AIR), FixedPhantomOutside(s_low, DRY_AIR))
+sod1_bcs =
+    EdgeBoundary(FixedPhantomOutside(s_high, DRY_AIR), FixedPhantomOutside(s_low, DRY_AIR))
 copy_bcs = EdgeBoundary(ExtrapolateToPhantom(), ExtrapolateToPhantom())
-u0_sod1(x) = ConservedProps(x < 0.5 ? s_high : s_low; gas=DRY_AIR) |> state_to_vector
+u0_sod1(x) = ConservedProps(x < 0.5 ? s_high : s_low; gas = DRY_AIR) |> state_to_vector
 
-simulate_euler_1d(0.0, 2.0, 2000, copy_bcs, 0.05, u0_sod1; gas=DRY_AIR, CFL=0.75, output_tag="sod1")
+##
+
+simulate_euler_1d(
+    0.0,
+    2.0,
+    1000,
+    copy_bcs,
+    0.05,
+    u0_sod1;
+    gas = DRY_AIR,
+    CFL = 0.75,
+    output_tag = "sod1",
+)
 
 # SOD SCENARIO 2
 
-u0_sod2(x) = ConservedProps(x < 1.5 ? s_low : s_high; gas=DRY_AIR) |> state_to_vector
-simulate_euler_1d(0.0, 2.0, 2000, copy_bcs, 0.05, u0_sod2; gas=DRY_AIR, CFL=0.75, output_tag="sod2")
+u0_sod2(x) = ConservedProps(x < 1.5 ? s_low : s_high; gas = DRY_AIR) |> state_to_vector
+simulate_euler_1d(
+    0.0,
+    2.0,
+    1000,
+    copy_bcs,
+    0.05,
+    u0_sod2;
+    gas = DRY_AIR,
+    CFL = 0.75,
+    output_tag = "sod2",
+)
+
+# SOD SCENARIO 3 and 4
+# EXTRACT THE SHOCK
+s_front_r = ConservedProps(0.263245, [0.77343], 8.69876)
+s_front_l = ConservedProps(0.263245, [-0.77343], 8.69876)
+u0_sod3(x) = state_to_vector(x < 0.5 ? s_front_r : ConservedProps(s_low; gas=DRY_AIR))
+u0_sod4(x) = state_to_vector(x < 1.5 ? ConservedProps(s_low; gas=DRY_AIR) : s_front_l)
+
+simulate_euler_1d(
+    0.0,
+    2.0,
+    1000,
+    copy_bcs,
+    0.05,
+    u0_sod3;
+    gas = DRY_AIR,
+    CFL = 0.75,
+    output_tag = "sod3",
+)
+
+fixed_bcs_shockleft = EdgeBoundary(ExtrapolateToPhantom(), FixedPhantomOutside(s_front_l))
+simulate_euler_1d(
+    0.0,
+    2.0,
+    1000,
+    copy_bcs,
+    0.05,
+    u0_sod4;
+    gas = DRY_AIR,
+    CFL = 0.75,
+    output_tag = "sod4",
+)
+
+## 
+
+u0_const(x) = state_to_vector(s_high)
+simulate_euler_1d(
+    0.0,
+    2.0,
+    4000,
+    PeriodicAxis(),
+    0.5,
+    u0_const;
+    gas = DRY_AIR,
+    CFL = 0.75,
+    output_tag = "const_test",
+)
