@@ -1,7 +1,6 @@
 module Euler2D
 
 using LinearAlgebra
-using LoopVectorization
 using Tullio
 using ShockwaveProperties
 using Unitful

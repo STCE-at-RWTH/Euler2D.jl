@@ -27,16 +27,6 @@ Abstract supertype for all edge boundary conditions.
 abstract type Edge end
 
 """
-    EdgeBoundary{L, R}
-
-Indicates that this axis has some prescribed left and right edge boundary conditions.
-"""
-struct EdgeBoundary{L<:Edge,R<:Edge} <: BoundaryCondition
-    left::L
-    right::R
-end
-
-"""
     PhantomEdge{N}
 
 Supertype for all edge conditions that generate a phantom cell 
@@ -58,9 +48,28 @@ abstract type FluxEdge{N} <: Edge end
     reverse_right_edge(::Edge) = true
 
 Check if this edge boundary requires the reversal of velocity components when applied on the right side.
-(We assume, by default, that the boundary condition is applied [phantom] - 1 - 2... on the axis.)
+(We assume, by default, that the boundary condition is applied [phantom] - u1 - u2... on the axis.)
 """
 reverse_right_edge(::Edge) = true
+
+"""
+    nneighbors(::PhantomEdge{N})
+    nneighbors(::FluxEdge{N})
+
+How many neighbor cells are required to compute this boundary condition?
+"""
+nneighbors(::PhantomEdge{N}) where {N} = N
+nneighbors(::FluxEdge{N}) where {N} = N
+
+"""
+    EdgeBoundary{L, R}
+
+Indicates that this axis has some prescribed left and right edge boundary conditions.
+"""
+struct EdgeBoundary{L<:Edge,R<:Edge} <: BoundaryCondition
+    left::L
+    right::R
+end
 
 """
     StrongWall
@@ -148,7 +157,7 @@ struct SupersonicInflow <: PhantomEdge{1}
 
     function SupersonicInflow(u::ConservedProps, gas::CaloricallyPerfectGas)
         all(>(1.0), mach_number(u; gas)) ||
-            error("Cannot construct a supersonic inflow boundary with M_∞ ≤ 1.0!")
+            ArgumentError("Cannot construct a supersonic inflow boundary with M_∞ ≤ 1.0!")
         return new(u)
     end
 end
@@ -221,13 +230,26 @@ function bulk_step!(
     Δx::Float64;
     gas::CaloricallyPerfectGas,
 ) where {U<:AbstractArray{Float64,2}}
-    @assert size(u)[1] == 3
+    @assert length(axes(u, 1)) == 3
     @tullio u_next[:, i] = (
         u[:, i] - (
-            Δt / Δx *
-            (ϕ_hll(u[:, i], u[:, i+1], 1; gas) - ϕ_hll(u[:, i-1], u[:, i], 1; gas))
+            Δt / Δx * (
+                ϕ_hll(u[:, i], u[:, i+1], 1; gas = gas) -
+                ϕ_hll(u[:, i-1], u[:, i], 1; gas = gas)
+            )
         )
     )
+    # @inbounds for i ∈ axes(u, 2)[2:end-1]
+    #     @views begin
+    #         u_next[:, i] =
+    #             u[:, i] - (
+    #                 Δt / Δx * (
+    #                     ϕ_hll(u[:, i], u[:, i+1], 1; gas) -
+    #                     ϕ_hll(u[:, i-1], u[:, i], 1; gas)
+    #                 )
+    #             )
+    #     end
+    # end
 end
 
 """
@@ -353,15 +375,31 @@ function maximum_Δt(::PeriodicAxis, u, Δx, CFL, dim; gas::CaloricallyPerfectGa
     return Δt
 end
 
-function maximum_Δt(bcs::EdgeBoundary, u, Δx, CFL, dim; gas::CaloricallyPerfectGas)
+function maximum_Δt(
+    bcs::EdgeBoundary{L,R},
+    u,
+    Δx,
+    CFL,
+    dim;
+    gas::CaloricallyPerfectGas,
+) where {L<:PhantomEdge,R<:PhantomEdge}
     a = mapreduce(
         max,
         zip(eachcol(@view(u[:, 1:end-1])), eachcol(@view(u[:, 2:end]))),
     ) do (uL, uR)
         max(abs.(interface_signal_speeds(uL, uR, dim; gas))...)
     end
-    # a = max(a, abs.(interface_signal_speeds(phantom_cell(bcs.left, u, 1; gas), u[:, 1], 1; gas))...)
-    # a = max(a, abs.(interface_signal_speeds(u[:, end], phantom_cell(bcs.right, u, 1; gas), 1; gas))...)
+
+    phantom_L = phantom_cell(bcs.left, u[:, 1:nneighbors(bcs.left)], 1; gas)
+    neighbors_R = u[:, end:-1:(end-nneighbors(bcs.right)+1)]
+    neighbors_R[2, :] *= -1
+    phantom_R = phantom_cell(bcs.right, neighbors_R, 1; gas)
+    if reverse_right_edge(bcs.right)
+        phantom_R[2] *= -1
+    end
+
+    a = max(a, abs.(interface_signal_speeds(phantom_L, u[:, 1], 1; gas))...)
+    a = max(a, abs.(interface_signal_speeds(u[:, end], phantom_R, 1; gas))...)
     Δt = CFL * Δx / a
     return Δt
 end
@@ -377,7 +415,3 @@ function step_euler_hll!(
     bulk_step!(u_next, u, Δt, Δx; gas)
     enforce_boundary!(x_bcs, u_next, u, Δt, Δx; gas)
 end
-
-##
-
-# (a, b) = simulate_euler_2d(100.0, 100.0, 50, 50, 1.0, u0; max_tsteps = 10000)

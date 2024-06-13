@@ -5,14 +5,13 @@ version = "0.1.2"
 
 [deps]
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
-LoopVectorization = "bdcacae8-1622-11e9-2a5c-532679323890"
 ShockwaveProperties = "77d2bf28-a3e9-4b9c-9fcf-b85f74cc8a50"
 Tullio = "bc48ee85-29a4-5162-ae0b-a64e1601d4bc"
 Unitful = "1986cc42-f94f-5a68-af5c-568840ba703d"
 UnitfulChainRules = "f31437dd-25a7-4345-875f-756556e6935d"
 
 [compat]
-ShockwaveProperties = ">= 0.1.4"
+ShockwaveProperties = ">= 0.1.10"
 
 [extras]
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
