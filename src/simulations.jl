@@ -89,9 +89,9 @@ function simulate_euler_equations(
     end
     write_result && open(tape_file, "w+") do f
         write(f, zero(Int)) #need this later
-        write(f, length(ncells))
-        for (n, b) ∈ zip(ncells, bounds)
-            write(f, n, b...)
+        write(f, length(ncells), ncells...)
+        for b ∈ bounds
+            write(f, b...)
         end
         write(f, t)
         write(f, u)
@@ -161,9 +161,10 @@ function simulate_euler_equations(
     # TODO need to create sim object and write it out if flagged
 end
 
-
-load_euler_sim(path) = open(path) do f
-    n_tsteps = read(f, Int)
-    ndims = read(f, Int)
-    bounds = 
+function load_euler_sim(path; T=Float64)
+    open(path) do f
+        n_tsteps = read(f, Int)
+        ndims = read(f, Int)
+        bounds = 1
+    end
 end
