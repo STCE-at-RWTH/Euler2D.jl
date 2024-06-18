@@ -82,7 +82,7 @@ struct StrongWall <: PhantomEdge{1} end
 function phantom_cell(
     ::StrongWall,
     u::AbstractArray{T,2},
-    dim;
+    dim,
     gas::CaloricallyPerfectGas,
 ) where {T}
     phantom = u
@@ -119,7 +119,7 @@ reverse_right_edge(::FixedPhantomOutside) = false
 function phantom_cell(
     bc::FixedPhantomOutside,
     u::AbstractArray{T,2},
-    dim;
+    dim,
     gas::CaloricallyPerfectGas,
 ) where {T}
     return state_to_vector(bc.prescribed_state)
@@ -137,7 +137,7 @@ struct ExtrapolateToPhantom <: PhantomEdge{1} end
 function phantom_cell(
     bc::ExtrapolateToPhantom,
     u::AbstractArray{T,2},
-    dim;
+    dim,
     gas::CaloricallyPerfectGas,
 ) where {T}
     return u
@@ -169,12 +169,21 @@ end
 function phantom_cell(
     bc::SupersonicInflow,
     u::AbstractArray{T,2},
-    dim;
+    dim,
     gas::CaloricallyPerfectGas,
 ) where {T}
     return state_to_vector(bc.prescribed_state)
 end
 
+"""
+    FixedPressureOutflow
+
+Represents an outflow with fixed pressure conditions. It doesn't work.
+
+Fields
+---
+- `P`: The pressure at the boundary.
+"""
 struct FixedPressureOutflow <: PhantomEdge{1}
     P
 end
@@ -193,7 +202,7 @@ That seems reasonable to me.
 function phantom_cell(
     bc::FixedPressureOutflow,
     u::AbstractArray{T,2},
-    dim;
+    dim,
     gas::CaloricallyPerfectGas,
 ) where {T}
     v_i = u[dim+1, 1] / u[1, 1]
@@ -217,201 +226,224 @@ function phantom_cell(
     return phantom
 end
 
-"""
-    bulk_step!(u_next, u, Δt, Δx; gas)
-
-Step the bulk of the simulation grid to the next time step and write the result into `u_next`.
-- `u_next` and `u` are `3 x Nx` grids.
-"""
-function bulk_step!(
-    u_next::U,
-    u::U,
-    Δt::Float64,
-    Δx::Float64;
-    gas::CaloricallyPerfectGas,
-) where {U<:AbstractArray{Float64,2}}
-    @assert length(axes(u, 1)) == 3
-    @tullio u_next[:, i] = (
-        u[:, i] - (
-            Δt / Δx * (
-                ϕ_hll(u[:, i], u[:, i+1], 1; gas = gas) -
-                ϕ_hll(u[:, i-1], u[:, i], 1; gas = gas)
-            )
-        )
-    )
-    # @inbounds for i ∈ axes(u, 2)[2:end-1]
-    #     @views begin
-    #         u_next[:, i] =
-    #             u[:, i] - (
-    #                 Δt / Δx * (
-    #                     ϕ_hll(u[:, i], u[:, i+1], 1; gas) -
-    #                     ϕ_hll(u[:, i-1], u[:, i], 1; gas)
-    #                 )
-    #             )
-    #     end
-    # end
-end
-
-"""
-    bulk_step!(u_next, u, Δt, Δx, Δy; gas)
-
-Step the bulk of the simulation grid to the next time step and write the result into `u_next`.
-- `u_next` and `u` are `4 × Nx × Ny`, e.g. `4x100x100` for a 10,000 grid cell simulation.
-"""
-function bulk_step!(
-    u_next::U,
-    u::U,
-    Δt,
-    Δx,
-    Δy;
-    gas::CaloricallyPerfectGas,
-) where {U<:AbstractArray{Float64,3}}
-    @assert size(u)[1] == 4
-    @tullio u_next[:, i, j] = (
-        u[:, i, j] - (
-            Δt / Δx * (
-                ϕ_hll(u[:, i, j], u[:, i+1, j], 1; gas) -
-                ϕ_hll(u[:, i-1, j], u[:, i, j], 1; gas)
-            ) -
-            Δt / Δy * (
-                ϕ_hll(u[:, i, j], u[:, i, j+1], 2; gas) -
-                ϕ_hll(u[:, i, j-1], u[:, i, j], 2; gas)
-            )
-        )
-    )
-end
-
-##
-
-##
-## NOTES FROM WEDNESDAY
-## I think there's a sign error somewhere in this boundary correction.
-## we get reasonable answers if I flip the sign in the equation to find T from rhoE
-## when rhoE is negative
-## i'm so confused.
-## 
-
-function enforce_boundary!(
-    ::PeriodicAxis,
-    u_next::AbstractArray{T,2},
-    u::AbstractArray{T,2},
-    Δx::T,
-    Δt::T;
-    gas::CaloricallyPerfectGas,
-) where {T}
-    # flux out of the last cell into the first cell
-    ϕ_periodic = ϕ_hll(u[:, end], u[:, 1], 1; gas)
-    u_next[:, 1] = u[:, 1] - (Δt / Δx * (ϕ_hll(u[:, 1], u[:, 2], 1; gas) - ϕ_periodic))
-    u_next[:, end] =
-        u[:, end] - (Δt / Δx * (ϕ_periodic - ϕ_hll(u[:, end-1], u[:, end], 1; gas)))
-end
-
-function enforce_boundary!(
-    bcs::EdgeBoundary{L,R},
-    u_next::AbstractArray{T,2},
-    u::AbstractArray{T,2},
-    Δx,
-    Δt;
-    gas::CaloricallyPerfectGas,
-) where {L,R,T}
-    u_next[:, 1] =
-        u[:, 1] -
-        (Δt / Δx * (ϕ_hll(u[:, 1], u[:, 2], 1; gas) - left_edge_ϕ(bcs.left, u, 1; gas)))
-
-    u_next[:, end] =
-        u[:, end] - (
-            Δt / Δx *
-            (right_edge_ϕ(bcs.right, u, 1; gas) - ϕ_hll(u[:, end-1], u[:, end], 1; gas))
-        )
-end
-
-# TODO we actually need to flip the the cell momenta passed into the flux calculation
-# TODO   and then flip the result (treat everything as the LEFT edge inside edge_flux)
-
 function left_edge_ϕ(
     bc::PhantomEdge{N},
     u::AbstractArray{T,2},
-    dim;
+    dim,
     gas::CaloricallyPerfectGas,
 ) where {T,N}
-    phantom = phantom_cell(bc, @view(u[:, 1:N]), dim; gas)
-    return ϕ_hll(phantom, @view(u[:, 1]), dim; gas)
+    phantom = phantom_cell(bc, @view(u[:, 1:N]), dim, gas)
+    return ϕ_hll(phantom, @view(u[:, 1]), dim, gas)
 end
 
 function right_edge_ϕ(
     bc::PhantomEdge{N},
     u::AbstractArray{T,2},
-    dim;
+    dim,
     gas::CaloricallyPerfectGas,
 ) where {T,N}
     neighbors = u[:, end:-1:(end-N+1)] # copy
     # reverse momentum on the right edge
     neighbors[dim+1, :] .*= -1.0
-    phantom = phantom_cell(bc, neighbors, dim; gas)
+    phantom = phantom_cell(bc, neighbors, dim, gas)
     # reverse the appropriate velocity component
     if reverse_right_edge(bc)
         phantom[1+dim] *= -1
     end
-    return ϕ_hll(@view(u[:, end]), phantom, dim; gas)
+    return ϕ_hll(@view(u[:, end]), phantom, dim, gas)
 end
 
 ##
 
 """
-    maximum_Δt(<:BoundaryCondition, u, Δx, CFL, dim; gas)
+    maximum_Δt(u, Δx, boundary_condition, dim, cfl_limit, gas)
 
-Compute the maximum possible `Δt` given a `Δx` and CFL number.
+Compute the maximum possible `Δt` given a `Δx` and CFL upper bound.
 """
-function maximum_Δt(::PeriodicAxis, u, Δx, CFL, dim; gas::CaloricallyPerfectGas)
+function maximum_Δt(u, Δx, ::PeriodicAxis, dim, cfl_limit, gas::CaloricallyPerfectGas)
     a = mapreduce(
         max,
         zip(eachcol(@view(u[:, 1:end-1])), eachcol(@view(u[:, 2:end]))),
     ) do (uL, uR)
-        max(abs.(interface_signal_speeds(uL, uR, dim; gas))...)
+        max(abs.(interface_signal_speeds(uL, uR, dim, gas))...)
     end
-    a_bc = max(abs.(interface_signal_speeds(u[:, end], u[:, 1], dim; gas))...)
+    a_bc = max(abs.(interface_signal_speeds(u[:, end], u[:, 1], dim, gas))...)
     a = max(a, a_bc)
-    Δt = CFL * Δx / a
+    Δt = cfl_limit * Δx / a
     return Δt
 end
 
 function maximum_Δt(
-    bcs::EdgeBoundary{L,R},
     u,
     Δx,
-    CFL,
-    dim;
+    bcs::EdgeBoundary{L,R},
+    dim,
+    cfl_limit,
     gas::CaloricallyPerfectGas,
 ) where {L<:PhantomEdge,R<:PhantomEdge}
     a = mapreduce(
         max,
         zip(eachcol(@view(u[:, 1:end-1])), eachcol(@view(u[:, 2:end]))),
     ) do (uL, uR)
-        max(abs.(interface_signal_speeds(uL, uR, dim; gas))...)
+        max(abs.(interface_signal_speeds(uL, uR, dim, gas))...)
     end
 
-    phantom_L = phantom_cell(bcs.left, u[:, 1:nneighbors(bcs.left)], 1; gas)
+    phantom_L = phantom_cell(bcs.left, u[:, 1:nneighbors(bcs.left)], dim, gas)
     neighbors_R = u[:, end:-1:(end-nneighbors(bcs.right)+1)]
     neighbors_R[2, :] *= -1
-    phantom_R = phantom_cell(bcs.right, neighbors_R, 1; gas)
+    phantom_R = phantom_cell(bcs.right, neighbors_R, dim, gas)
     if reverse_right_edge(bcs.right)
         phantom_R[2] *= -1
     end
 
-    a = max(a, abs.(interface_signal_speeds(phantom_L, u[:, 1], 1; gas))...)
-    a = max(a, abs.(interface_signal_speeds(u[:, end], phantom_R, 1; gas))...)
-    Δt = CFL * Δx / a
+    a = max(a, abs.(interface_signal_speeds(phantom_L, u[:, 1], dim, gas))...)
+    a = max(a, abs.(interface_signal_speeds(u[:, end], phantom_R, dim, gas))...)
+    Δt = cfl_limit * Δx / a
     return Δt
 end
 
-function step_euler_hll!(
-    u_next::U,
-    u::U,
+"""
+    maximum_Δt(u, dV, boundary_conditions, cfl_lmit, gas)
+
+Compute the maximum possible `Δt` for the data `u` with cell spacing `dV`, 
+    given `boundary_conditions` and a `cfl_limit`. 
+"""
+function maximum_Δt(u, dV, boundary_conditions, CFL, gas::CaloricallyPerfectGas)
+    Δt = mapreduce(min, enumerate(zip(dV, boundary_conditions))) do (d, (Δx, bc))
+        return mapreduce(min, eachslice(u; dims = d + 1)) do u_ax
+            maximum_Δt(u_ax, Δx, bc, d, CFL, gas)
+        end
+    end
+    return Δt
+end
+
+# TODO check the signs indside the 2 and 3d versions
+
+"""
+    bulk_step!(u_next, u, dV, Δt)
+
+Step the bulk of the simulation grid to the next time step and write the result into `u_next`.
+"""
+function bulk_step!(
+    u_next::AbstractArray{T,2},
+    u::AbstractArray{T,2},
+    (Δx,),
+    Δt,
+    gas::CaloricallyPerfectGas,
+) where {T}
+    @tullio u_next[:, i] = (
+        u[:, i] -
+        Δt / Δx * (ϕ_hll(u[:, i], u[:, i+1], 1, gas) - ϕ_hll(u[:, i-1], u[:, i], 1, gas))
+    )
+end
+
+function bulk_step!(
+    u_next::AbstractArray{T,3},
+    u::AbstractArray{T,3},
+    (Δx, Δy),
+    Δt,
+    gas::CaloricallyPerfectGas,
+) where {T}
+    @assert length(axes(u, 1)) == 4
+    @tullio u_next[:, i, j] = (
+        u[:, i, j] - (
+            Δt / Δx * (
+                ϕ_hll(u[:, i, j], u[:, i+1, j], 1, gas) -
+                ϕ_hll(u[:, i-1, j], u[:, i, j], 1, gas)
+            ) +
+            Δt / Δy * (
+                ϕ_hll(u[:, i, j], u[:, i, j+1], 2, gas) -
+                ϕ_hll(u[:, i, j-1], u[:, i, j], 2, gas)
+            )
+        )
+    )
+end
+
+function bulk_step!(
+    u_next::AbstractArray{T,4},
+    u::AbstractArray{T,4},
+    (Δx, Δy, Δz),
+    Δt,
+    gas::CaloricallyPerfectGas,
+)
+    @assert length(axes(u, 1)) == 5
+    @tullio u_next[:, i, j] = (
+        u[:, i, j, k] - (
+            Δt / Δx * (
+                ϕ_hll(u[:, i, j, k], u[:, i+1, j, k], 1, gas) -
+                ϕ_hll(u[:, i-1, j, k], u[:, i, j, k], 1, gas)
+            ) +
+            Δt / Δy * (
+                ϕ_hll(u[:, i, j, k], u[:, i, j+1, k], 2, gas) -
+                ϕ_hll(u[:, i, j-1, k], u[:, i, j, k], 2, gas)
+            ) +
+            Δt / Δz * (
+                ϕ_hll(u[:, i, j, k], u[:, i, j, k+1], 3, gas) -
+                ϕ_hll(u[:, i, j, k-1], u[:, i, j, k], 3, gas)
+            )
+        )
+    )
+end
+
+""""
+    bulk_step_1d_slice!(u_next, u, Δt, Δx, dim, gas)
+
+Apply Godunov's method along a 1-dimensional slice of data ``[ρ, ρv⃗, ρE]``.
+
+The operator splitting method does permit us to handle each real dimension separately.
+"""
+function bulk_step_1d_slice!(u_next, u, Δt, Δx, dim, gas::CaloricallyPerfectGas)
+    @tullio u_next[:, i] = (
+        u[:, i] -
+        Δt / Δx *
+        (ϕ_hll(u[:, i], u[:, i+1], dim, gas) - ϕ_hll(u[:, i-1], u[:, i], dim, gas))
+    )
+end
+
+function enforce_boundary_1d_slice!(
+    u_next::AbstractArray{T,2},
+    u::AbstractArray{T,2},
     Δt,
     Δx,
-    x_bcs::BoundaryCondition;
+    boundary_conditions::PeriodicAxis,
+    dim,
     gas::CaloricallyPerfectGas,
-) where {U<:AbstractArray{Float64,2}}
-    bulk_step!(u_next, u, Δt, Δx; gas)
-    enforce_boundary!(x_bcs, u_next, u, Δt, Δx; gas)
+) where {T}
+    # flux out of the last cell into the first cell
+    ϕ_periodic = ϕ_hll(u[:, end], u[:, 1], dim, gas)
+    u_next[:, 1] = u[:, 1] - (Δt / Δx * (ϕ_hll(u[:, 1], u[:, 2], dim, gas) - ϕ_periodic))
+    u_next[:, end] =
+        u[:, end] - (Δt / Δx * (ϕ_periodic - ϕ_hll(u[:, end-1], u[:, end], dim, gas)))
+end
+
+function enforce_boundary_1d_slice!(
+    u_next::AbstractArray{T,2},
+    u::AbstractArray{T,2},
+    Δt,
+    Δx,
+    boundary_conditions::EdgeBoundary,
+    dim,
+    gas::CaloricallyPerfectGas,
+) where {T}
+    u_next[:, 1] =
+        u[:, 1] - (
+            Δt / Δx * (
+                ϕ_hll(u[:, 1], u[:, 2], dim, gas) -
+                left_edge_ϕ(boundary_conditions.left, u, dim, gas)
+            )
+        )
+    u_next[:, end] =
+        u[:, end] - (
+            Δt / Δx * (
+                right_edge_ϕ(boundary_conditions.right, u, dim, gas) -
+                ϕ_hll(u[:, end-1], u[:, end], dim, gas)
+            )
+        )
+end
+
+function step_euler_hll!(u_next, u, dV, boundary_conditions, Δt, gas::CaloricallyPerfectGas)
+    bulk_step!(u_next, u, Δt, dV, gas)
+    for (dim, (Δx, bcs)) ∈ enumerate(zip(dV, boundary_conditions))
+        enforce_boundary!(u_next, u, bcs, Δx, Δt, gas)
+    end
 end
