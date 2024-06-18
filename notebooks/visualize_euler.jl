@@ -94,9 +94,9 @@ end
 end fps=10
 
 # ╔═╡ d06cf7e8-61f9-4fba-9da3-208964311844
-@gif for i=1:60:d2.n_t
+@gif for i=1:d2.n_t
 	plotframe(i, d2, b2)
-end fps=10
+end every 20 fps=10
 
 # ╔═╡ 307dfa9e-9b17-42fe-8acb-491acadca7a9
 begin

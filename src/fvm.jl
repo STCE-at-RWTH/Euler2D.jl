@@ -309,83 +309,16 @@ Compute the maximum possible `Δt` for the data `u` with cell spacing `dV`,
     given `boundary_conditions` and a `cfl_limit`. 
 """
 function maximum_Δt(u, dV, boundary_conditions, CFL, gas::CaloricallyPerfectGas)
-    Δt = mapreduce(min, enumerate(zip(dV, boundary_conditions))) do (d, (Δx, bc))
-        return mapreduce(min, eachslice(u; dims = d + 1)) do u_ax
-            maximum_Δt(u_ax, Δx, bc, d, CFL, gas)
+    Δt = mapreduce(min, enumerate(zip(dV, boundary_conditions))) do (space_dim, (Δx, bc))
+        dims = ((i + 1 for i ∈ 1:length(dV) if i ≠ space_dim)...,)
+        return mapreduce(min, eachslice(u; dims)) do u_ax
+            maximum_Δt(u_ax, Δx, bc, space_dim, CFL, gas)
         end
     end
     return Δt
 end
 
-# TODO check the signs indside the 2 and 3d versions
-
 """
-    bulk_step!(u_next, u, dV, Δt)
-
-Step the bulk of the simulation grid to the next time step and write the result into `u_next`.
-"""
-function bulk_step!(
-    u_next::AbstractArray{T,2},
-    u::AbstractArray{T,2},
-    (Δx,),
-    Δt,
-    gas::CaloricallyPerfectGas,
-) where {T}
-    @tullio u_next[:, i] = (
-        u[:, i] -
-        Δt / Δx * (ϕ_hll(u[:, i], u[:, i+1], 1, gas) - ϕ_hll(u[:, i-1], u[:, i], 1, gas))
-    )
-end
-
-function bulk_step!(
-    u_next::AbstractArray{T,3},
-    u::AbstractArray{T,3},
-    (Δx, Δy),
-    Δt,
-    gas::CaloricallyPerfectGas,
-) where {T}
-    @assert length(axes(u, 1)) == 4
-    @tullio u_next[:, i, j] = (
-        u[:, i, j] - (
-            Δt / Δx * (
-                ϕ_hll(u[:, i, j], u[:, i+1, j], 1, gas) -
-                ϕ_hll(u[:, i-1, j], u[:, i, j], 1, gas)
-            ) +
-            Δt / Δy * (
-                ϕ_hll(u[:, i, j], u[:, i, j+1], 2, gas) -
-                ϕ_hll(u[:, i, j-1], u[:, i, j], 2, gas)
-            )
-        )
-    )
-end
-
-function bulk_step!(
-    u_next::AbstractArray{T,4},
-    u::AbstractArray{T,4},
-    (Δx, Δy, Δz),
-    Δt,
-    gas::CaloricallyPerfectGas,
-)
-    @assert length(axes(u, 1)) == 5
-    @tullio u_next[:, i, j] = (
-        u[:, i, j, k] - (
-            Δt / Δx * (
-                ϕ_hll(u[:, i, j, k], u[:, i+1, j, k], 1, gas) -
-                ϕ_hll(u[:, i-1, j, k], u[:, i, j, k], 1, gas)
-            ) +
-            Δt / Δy * (
-                ϕ_hll(u[:, i, j, k], u[:, i, j+1, k], 2, gas) -
-                ϕ_hll(u[:, i, j-1, k], u[:, i, j, k], 2, gas)
-            ) +
-            Δt / Δz * (
-                ϕ_hll(u[:, i, j, k], u[:, i, j, k+1], 3, gas) -
-                ϕ_hll(u[:, i, j, k-1], u[:, i, j, k], 3, gas)
-            )
-        )
-    )
-end
-
-""""
     bulk_step_1d_slice!(u_next, u, Δt, Δx, dim, gas)
 
 Apply Godunov's method along a 1-dimensional slice of data ``[ρ, ρv⃗, ρE]``.
@@ -393,13 +326,27 @@ Apply Godunov's method along a 1-dimensional slice of data ``[ρ, ρv⃗, ρE]``
 The operator splitting method does permit us to handle each real dimension separately.
 """
 function bulk_step_1d_slice!(u_next, u, Δt, Δx, dim, gas::CaloricallyPerfectGas)
-    @tullio u_next[:, i] = (
-        u[:, i] -
-        Δt / Δx *
-        (ϕ_hll(u[:, i], u[:, i+1], dim, gas) - ϕ_hll(u[:, i-1], u[:, i], dim, gas))
-    )
+    @tullio u_next[:, i] =
+        u[:, i] - (
+            Δt / Δx *
+            (ϕ_hll(u[:, i], u[:, i+1], dim, gas) - ϕ_hll(u[:, i-1], u[:, i], dim, gas))
+        )
 end
 
+"""
+    enforce_boundary_1d_slice!(u_next, u, Δt, Δx, boundary_conditions, dim, gas)
+
+Enforce a boundary condition on a 1-d slice of data ``[ρ, ρv⃗, ρE]``.
+
+## Arguments
+- `u_next`: Output array of data for the results at the next time step
+- `u`: Input data at the current time step
+- `Δt`: Time step size
+- `Δx`: The inter-cell spacing on real axis `dim`
+- `boundary_conditions`: The boundary condition to enforce
+- `dim`: The real axis being sliced
+- `gas`
+"""
 function enforce_boundary_1d_slice!(
     u_next::AbstractArray{T,2},
     u::AbstractArray{T,2},
@@ -441,9 +388,15 @@ function enforce_boundary_1d_slice!(
         )
 end
 
-function step_euler_hll!(u_next, u, dV, boundary_conditions, Δt, gas::CaloricallyPerfectGas)
-    bulk_step!(u_next, u, Δt, dV, gas)
-    for (dim, (Δx, bcs)) ∈ enumerate(zip(dV, boundary_conditions))
-        enforce_boundary!(u_next, u, bcs, Δx, Δt, gas)
+function step_euler_hll!(u_next, u, Δt, dV, boundary_conditions, gas::CaloricallyPerfectGas)
+    @assert length(dV) == length(boundary_conditions)
+    N = length(dV)
+    for (space_dim, (Δx, bcs)) ∈ enumerate(zip(dV, boundary_conditions))
+        # there must be a better way
+        dims = ((i + 1 for i ∈ 1:N if i ≠ space_dim)...,)
+        for (u_next_slice, u_slice) in zip(eachslice(u_next; dims), eachslice(u; dims))
+            bulk_step_1d_slice!(u_next_slice, u_slice, Δt, Δx, space_dim, gas)
+            enforce_boundary_1d_slice!(u_next_slice, u_slice, Δt, Δx, bcs, space_dim, gas)
+        end
     end
 end

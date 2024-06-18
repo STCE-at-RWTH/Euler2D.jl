@@ -8,12 +8,13 @@ using Unitful
 include("flux1d.jl")
 include("flux2d.jl")
 include("fvm.jl")
+include("simulations.jl")
 
 # boundary condition types
 export BoundaryCondition, PeriodicAxis, EdgeBoundary
 export PhantomEdge
 export StrongWall, FixedPhantomOutside, ExtrapolateToPhantom
-export SupersonicInflow, FixedPressureOutflow
+export SupersonicInflow
 
 # methods
 export interface_signal_speeds, maximum_Δt
