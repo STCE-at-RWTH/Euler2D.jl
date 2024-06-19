@@ -80,13 +80,8 @@ function simulate_euler_1d(
             Δt = T - t[end]
         end
         (length(t) % 10 == 0) && @show length(t), t[end], Δt
-        step_euler_hll!(u_next, u, Δt, Δx, x_bcs; gas = gas)
-        #
-        # .= probably more performant than copy()? I do not know and don't care to test. 
-        #   I pretend memory is expensive
-        #
+        step_euler_hll!(u_next, u, Δt, Δx, x_bcs; gas = gas)        
         # LET THIS .= STAND AS A MONUMENT TO MY STUPIDITY
-        #
         u .= u_next
         push!(t, t[end] + Δt)
         write_output && write(u_tape, u)

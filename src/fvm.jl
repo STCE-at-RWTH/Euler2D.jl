@@ -295,7 +295,6 @@ function maximum_Δt(
     if reverse_right_edge(bcs.right)
         phantom_R[2] *= -1
     end
-
     a = max(a, abs.(interface_signal_speeds(phantom_L, u[:, 1], dim, gas))...)
     a = max(a, abs.(interface_signal_speeds(u[:, end], phantom_R, dim, gas))...)
     Δt = cfl_limit * Δx / a

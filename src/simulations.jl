@@ -6,38 +6,47 @@ Represents a completed simulation of the Euler equations on an N-dimensional gri
 ## Fields
 - `ncells::(Int, Int, ...)`: Number of cells in each of the `N` dimensions of the simulation.
 - `nsteps::Int`: Number of time steps taken in the simulation
-- `dims::{(T, T), (T, T), ...}`: Bounds of the simulation in each of the dimensions.
+- `bounds::{(T, T), (T, T), ...}`: Bounds of the simulation in each of the dimensions.
 - `tsteps::Vector{T}`: Time steps.
 - `u::Array{T, N+1}`: `(N+2) × ncells... x nsteps` array of data for u
 
 ## Methods
 
 """
-struct EulerSim{N,T}
+struct EulerSim{N,NAXES,T}
     ncells::NTuple{N,Int}
     nsteps::Int
-    dims::NTuple{N,Tuple{T,T}}
+    bounds::NTuple{N,Tuple{T,T}}
     tsteps::Vector{T}
-    u::Array{T,N + 1}
+    u::Array{T,NAXES}
 end
 
 # TODO utility functions for plotting these things, maybe look at PlotRecipes? No need to go too overboard, though.
 # extend this to work with out-of-memory data?
 
+n_space_dims(e::EulerSim{N,NAXES,T}) where {N,NAXES,T} = N
+n_data_dims(e::EulerSim{N,NAXES,T}) where {N,NAXES,T} = NAXES
+n_tsteps(e) = e.nsteps
+
 function cell_boundaries(e, dim)
-    return range(e.dims[dim]...; length = e.ncells[dim] + 1)
+    return range(e.bounds[dim]...; length = e.ncells[dim] + 1)
+end
+function cell_boundaries(e)
+    return ntuple(i -> cell_boundaries(e, i), N)
 end
 
 function cell_centers(e, dim)
-    faces = cell_boundaries(e, dim)
-    return faces[1:end-1] .+ step(faces) / 2
+    ifaces = cell_boundaries(e, dim)
+    return ifaces[1:end-1] .+ step(ifaces) / 2
+end
+
+function cell_boundaries(e::EulerSim{N,NAXES,T}) where {N,NAXES,T}
+    return ntuple(i -> cell_boundaries(e, i), N)
 end
 
 function nth_step(e::EulerSim{N,T}, n) where {N,T}
-    return e.tsteps[n], view(e.u, ntuple(i -> Colon(), N - 2)..., n)
+    return e.tsteps[n], view(e.u, ntuple(i -> Colon(), N + 1)..., n)
 end
-
-# TODO for Very Large simulations we'll need to tape these rather than holding them entirely in RAM
 
 function simulate_euler_equations(
     bounds,
@@ -57,7 +66,7 @@ function simulate_euler_equations(
     @assert N == length(bounds) "ncells and bounds must match in length"
     @assert N == length(boundary_conditions) "must provide a boundary condition for each bound (or vice versa)"
     T_end > 0 && DomainError("T_end = $T_end invalid, T_end must be positive")
-    0 < cfl_limit < 1 && @warn "CFL invalid, must be between 0 and 1 for stabilty" cfl_limit
+    0 < cfl_limit < 1 || @warn "CFL invalid, must be between 0 and 1 for stabilty" cfl_limit
 
     cell_ifaces = [range(b...; length = n + 1) for (b, n) ∈ zip(bounds, ncells)]
     cell_centers = [ax[1:end-1] .+ step(ax) / 2 for ax ∈ cell_ifaces]
@@ -70,6 +79,7 @@ function simulate_euler_equations(
     u_next = zeros(eltype(u), size(u)...)
     n_tsteps = 1
     t = zero(eltype(u))
+    n_bytes_written = 0
 
     if write_result
         if !isdir("data")
@@ -88,19 +98,19 @@ function simulate_euler_equations(
         push!(t_history, t)
     end
     write_result && open(tape_file, "w+") do f
-        write(f, zero(Int)) #need this later
-        write(f, length(ncells), ncells...)
+        n_bytes_written += write(f, zero(Int)) #need this later
+        n_bytes_written += write(f, length(ncells), ncells...)
         for b ∈ bounds
             write(f, b...)
         end
-        write(f, t)
-        write(f, u)
+        n_bytes_written += write(f, t)
+        n_bytes_written += write(f, u)
     end
 
     while !(t > T_end || t ≈ T_end) && n_tsteps < max_tsteps
         Δt = try
-            maximum_Δt(u, dV, boundary_conditions, CFL, gas)
-        catch e
+            maximum_Δt(u, dV, boundary_conditions, cfl_limit, gas)
+        catch err
             err isa DomainError || throw(err)
             st = stacktrace(first(current_exceptions()).backtrace)
             is_speed_of_sound = any(st) do f
@@ -113,8 +123,8 @@ function simulate_euler_equations(
             break
         end
         Δt = min(Δt, T_end - t)
-        if length(t) % 10 == 1
-            @info TSTEP = n_tsteps t_k = t Δt
+        if n_tsteps % 10 == 1
+            @info "Time step..." n_tsteps t_k = t Δt
         end
 
         step_euler_hll!(u_next, u, Δt, dV, boundary_conditions, gas)
@@ -125,9 +135,9 @@ function simulate_euler_equations(
 
         # opening the file is probably trivial compared to writing
         #   one megafloat
-        write_result && open(tape_file, "a") do f
-            write(f, t)
-            write(f, u)
+        write_result && open(tape_file, "a+") do f
+            n_bytes_written += write(f, t)
+            n_bytes_written += write(f, u)
         end
         if history_in_memory
             push!(u_history, copy(u))
@@ -135,8 +145,10 @@ function simulate_euler_equations(
         end
     end
 
-    write_result && open(tape_file, "w") do f
-        write(f, n_tsteps)
+    write_result && open(tape_file, "a+") do f
+        seekstart(f)
+        n_bytes_written += write(f, n_tsteps)
+        seekend(f)
     end
 
     if history_in_memory
@@ -158,13 +170,27 @@ function simulate_euler_equations(
         [t],
         u,
     )
-    # TODO need to create sim object and write it out if flagged
 end
 
-function load_euler_sim(path; T=Float64)
-    open(path) do f
+function load_euler_sim(path; T = Float64, show_info=false)
+    return open(path, "r") do f
         n_tsteps = read(f, Int)
-        ndims = read(f, Int)
-        bounds = 1
+        N = read(f, Int)
+        ncells = ntuple(i -> read(f, Int), N)
+        bounds = ntuple(i -> (read(f, T), read(f, T)), N)
+        t = Vector{T}(undef, n_tsteps)
+        u = Array{T,N + 2}(undef, N + 2, ncells..., n_tsteps)
+        for i = 1:n_tsteps
+            t[i] = read(f, T)
+            idxs = (ntuple(i -> Colon(), N + 1)..., i)
+            read!(f, @view u[idxs...])
+        end
+
+        if show_info
+            @info "Loaded Euler eqns. simulation" n_tsteps ncells bounds size(u)
+        end
+        return EulerSim(ncells, n_tsteps, bounds, t, u)
     end
 end
+
+function save_euler_sim(path, e::EulerSim{N,NA,T}) where {N,NA,T} end

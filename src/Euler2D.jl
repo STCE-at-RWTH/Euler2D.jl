@@ -16,8 +16,12 @@ export PhantomEdge
 export StrongWall, FixedPhantomOutside, ExtrapolateToPhantom
 export SupersonicInflow
 
+# EulerSim methods
+export EulerSim
+export cell_boundaries, cell_centers, nth_step
+
 # methods
 export interface_signal_speeds, maximum_Δt
-export step_euler_hll!, bulk_step!, enforce_boundary!
+export step_euler_hll!, simulate_euler_equations
 
 end
