@@ -325,9 +325,11 @@ Apply Godunov's method along a 1-dimensional slice of data ``[ρ, ρv⃗, ρE]``
 The operator splitting method does permit us to handle each real dimension separately.
 """
 function bulk_step_1d_slice!(u_next, u, Δt, Δx, dim, gas::CaloricallyPerfectGas)
-    @tullio u_next[:, i] -= (
+    # this expression is different from enforce_boundary because
+    #   tullio cannot parse -=
+    @tullio u_next[:, i] += (
         Δt / Δx *
-        (ϕ_hll(u[:, i], u[:, i+1], dim, gas) - ϕ_hll(u[:, i-1], u[:, i], dim, gas))
+        (ϕ_hll(u[:, i-1], u[:, i], dim, gas) - ϕ_hll(u[:, i], u[:, i+1], dim, gas))
     )
 end
 
@@ -391,8 +393,9 @@ Step the Euler equations one `Δt` into the future, and write the result into `u
 function step_euler_hll!(u_next, u, Δt, dV, boundary_conditions, gas::CaloricallyPerfectGas)
     @assert length(dV) == length(boundary_conditions)
     @assert size(u_next) == size(u)
+    N = length(dV)
     # first part of the update step
-    u_next .= u
+    copyto!(u_next, u)
     for (space_dim, (Δx, bcs)) ∈ enumerate(zip(dV, boundary_conditions))
         # there must be a better way
         dims = ((i + 1 for i ∈ 1:N if i ≠ space_dim)...,)
