@@ -4,176 +4,97 @@
 using Markdown
 using InteractiveUtils
 
-# ╔═╡ 5235b02a-21c7-11ef-3bff-bbb12c64876f
+# This Pluto notebook uses @bind for interactivity. When running this notebook outside of Pluto, the following 'mock version' of @bind gives bound variables a default value (instead of an error).
+macro bind(def, element)
+    quote
+        local iv = try Base.loaded_modules[Base.PkgId(Base.UUID("6e696c72-6542-2067-7265-42206c756150"), "AbstractPlutoDingetjes")].Bonds.initial_value catch; b -> missing; end
+        local el = $(esc(element))
+        global $(esc(def)) = Core.applicable(Base.get, el) ? Base.get(el) : iv(el)
+        el
+    end
+end
+
+# ╔═╡ f9ee88aa-fff6-4d6b-94f9-460a38b1f0a8
 begin
 	using Euler2D
 	using LaTeXStrings
 	using LinearAlgebra
 	using Plots
+	using PlutoUI
 	using Printf
 	using ShockwaveProperties
 	using Tullio
 	using Unitful
 end
 
-# ╔═╡ c262ba8c-3c15-4ec4-ad98-4fede84d1be0
-struct EulerSim1D
-	# number of cells in x
-	n_x::Int
-	# start and end of the x bounds
-	x0::Float64
-	xN::Float64
-	# number of tsteps
-	n_t::Int
-	# t [n_t] and u [3 x n_x x n_t]
-	t::Vector{Float64}
-	u::Array{Float64, 3}
-end
-
 # ╔═╡ a1cf8795-d623-48d2-99d2-8b387b5e03f1
-function make_sim_data(filename)
+function load_sim_data(filename; T=Float64)
 	## change this if you like
 	output_data_dir = joinpath(pwd(), "../data") |> realpath
-	return open(joinpath(output_data_dir, filename)) do f
-		n_u = read(f, Int64)
-		n_x = read(f, Int64)
-		x0 = read(f, Float64)
-		xN = read(f, Float64)
-		n_t = read(f, Int64)
-		t = Vector{Float64}(undef, n_t)
-		u = Array{Float64}(undef, (n_u, n_x, n_t))
-		read!(f, t)
-		read!(f, u)
-		return EulerSim1D(n_x, x0, xN, n_t, t, u)
-	end
+	return Euler2D.load_euler_sim(joinpath(output_data_dir, filename); T)
 end
 
 # ╔═╡ ca6bae27-5501-4869-b512-9358d39071d2
-function plot_bounds(sim::EulerSim1D)
-	n = 10
-	bounds = [(minimum(@view sim.u[i, :, 1:end-n]), maximum(@view sim.u[i, :, 1:end-n])) for i=1:3]
-	return [
-		(a < 0 ? 1.2*a : 0.8*a,
-		 b < 0 ? 0.8*b : 1.2*b) for (a,b)∈bounds
-	]
-end
-
-# ╔═╡ b39d9e97-3eae-4c40-b41c-88c403947b5f
-function x_axis(data)
-	x = range(;start=data.x0, stop=data.xN, length=data.n_x+1)
-	xs = range(;start=data.x0+step(x)/2, stop=data.xN-step(x)/2, length=data.n_x)
-	return xs
-end
-
-# ╔═╡ 260ea05b-bb07-41c7-82bb-a4f194a9453e
-begin
-	function F(u, gas::CaloricallyPerfectGas)
-    	ρv = @view u[2:end-1]
-    	v = ρv / u[1]
-    	P = ustrip(pressure(u[1], ρv, u[end]; gas))
-    	return vcat(ρv', ρv * v' + I * P, (v * (u[end] + P))')
-	end
-	function F(u::ConservedProps, gas::CaloricallyPerfectGas)
-		P = pressure(u; gas)
-		v = velocity(u)
-		return vcat(momentum_density(u)',
-					momentum_density(u) * v' + I*P,
-					(v * (total_internal_energy_density(u) + P))')
+function plot_bounds(sim::EulerSim{N,NAXES,T}) where {N,NAXES,T}
+	bounds = [(minimum(u), maximum(u)) for u ∈ eachslice(sim.u; dims=1)]
+	return map(bounds) do (low, up)
+		diffhalf = abs(up - low)/2
+		mid = (up + low) / 2
+		return (mid-1.1*diffhalf, mid+1.1*diffhalf)
 	end
 end
 
 # ╔═╡ a37e06d8-9b92-48c4-a484-9ae35a8a0b79
-dsod1 = make_sim_data("sod1.out")
+sod_1d_right = load_sim_data("sod_shock_right_1d.tape")
 
 # ╔═╡ 433765ee-2926-4082-8991-b8484a0d2106
-dsod2 = make_sim_data("sod2.out")
+sod_1d_left = load_sim_data("sod_shock_left_1d.tape")
 
 # ╔═╡ 0dd5f204-70c4-48f6-9a4a-9201cd85b7bc
-bs1 = plot_bounds(dsod1)
+bs_right = plot_bounds(sod_1d_right)
 
 # ╔═╡ 8b31c7d4-766d-4eac-b6b0-505a3bda2106
-bs2 = plot_bounds(dsod2)
+bs_left = plot_bounds(sod_1d_left)
 
 # ╔═╡ e559ffb0-14e9-4da5-903b-40f7c8488ec8
-function plotframe(frame, data, bounds)
-	xs = x_axis(data)
+function plotframe(frame, data::EulerSim{1, 3, T}, bounds) where {T}
+	(t, u_data) = nth_step(data, frame)
+	xs = cell_centers(data, 1)
 	ylabels=[L"ρ", L"ρv", L"ρE"]
 	ps = [
-		plot(xs, data.u[i, :, frame], legend=(i==1), label=false, ylabel=ylabels[i], xticks=(i==3), xgrid=true, ylims=bounds[i], dpi=600) 
+		plot(xs, u_data[i, :], legend=(i==1), label=false, ylabel=ylabels[i], xticks=(i==3), xgrid=true, ylims=bounds[i], dpi=600) 
 		for i=1:3]
-	v_data = map(eachcol(data.u[:, :, frame])) do u
+	v_data = map(eachcol(u_data)) do u
 		c = ConservedProps(u)
 		v = velocity(c)[1]
 	end
-	p_data = map(eachcol(data.u[:, :, frame])) do u
+	p_data = map(eachcol(u_data)) do u
 		c = ConservedProps(u)
 		return uconvert(u"Pa", pressure(c; gas=DRY_AIR))
 	end
 	pressure_plot=plot(xs, p_data, ylabel=L"P", legend=false)
 	velocity_plot=plot(xs, v_data, ylabel=L"v", legend=false)
-	titlestr = @sprintf "n=%d t=%.4e" frame data.t[frame]
+	titlestr = @sprintf "n=%d t=%.4e" frame t
 	return plot(ps[1], ps[2], velocity_plot, pressure_plot, suptitle=titlestr, titlefontface="Computer Modern")
 end
 
-# ╔═╡ 279c8612-cf21-43ea-a019-08140ee1fd76
-function signal_speed_bounds(data::EulerSim1D)
-	n = 20
-	signal_speeds = mapslices(@view(data.u[:, :, 1:end-n]); dims=(1,2)) do u_k
-		speeds = mapreduce(vcat, zip(eachcol(@view u_k[:, 1:end-1]), 
-									 eachcol(@view u_k[:, 2:end]))) do (uL, uR)
-			aL, aR = interface_signal_speeds(uL, uR, 1; gas=DRY_AIR)
-			[aL aR]
-		end
-		return speeds
-	end
-	aL_bounds = sort!(abs.([minimum(@view(signal_speeds[:, 1, :])), 
-							maximum(@view(signal_speeds[:, 1, :]))]))
-	aR_bounds = sort!(abs.([minimum(@view(signal_speeds[:, 2, :])), 
-		    				maximum(@view(signal_speeds[:, 2, :]))]))
-	return [
-		(a < 0 ? 1.2*a : 0.8*a,
-		 b < 0 ? 0.8*b : 1.2*b) for (a,b)∈[aL_bounds, aR_bounds]
-	]
-end
-
-# ╔═╡ c6cd44d6-9267-4d03-a5d8-3544d3996f6a
-bss1 = signal_speed_bounds(dsod1)
-
-# ╔═╡ 4e075a9e-7e36-45d7-a395-e9c24a246f97
-bss2 = signal_speed_bounds(dsod2)
-
-# ╔═╡ 818c83f0-de45-45a8-8ecc-22ba14633dcb
-function plot_signal_speeds(frame, data, bounds)
-	xs = x_axis(data)
-	x = (xs[1:end-1]) .+ step(xs)
-	u_k = @view data.u[:, :, frame]
-	speeds = mapreduce(vcat, zip(eachcol(@view u_k[:, 1:end-1]), 
-								 eachcol(@view u_k[:, 2:end]))) do (uL, uR)
-		aL, aR = interface_signal_speeds(uL, uR, 1; gas=DRY_AIR)
-		[abs(aL) aR]
-	end
-	M1 = map(eachcol(@view u_k[:, 2:end])) do u
-		s = ConservedProps(u)
-		return ustrip(u"m/s", speed_of_sound(s; gas=DRY_AIR))
-	end
-	V = map(eachcol(@view u_k[:, 2:end])) do u
-		s = ConservedProps(u)
-		return ustrip(u"m/s", velocity(s; gas=DRY_AIR)[1])
-	end
-	labels=[L"a_L", L"a_R"]
-	ps = plot(x, speeds, labels=[L"a_L" L"a_R"])
-	plot!(ps, x, M1, labels = [L"M" L"|v|"], dpi=600)
-	return ps
-end
+# ╔═╡ e74fcd04-e19b-4f53-b3f4-eb6c74326cca
+plotframe(1, sod_1d_right, bs_right)
 
 # ╔═╡ 73840d97-db1c-4e09-ae37-13638503d30c
 md"""
 # Sod Shock Tube (Right)
 """
 
+# ╔═╡ bb46759a-ef64-47b6-a847-31e81b9d5bf6
+@bind tstep_right Slider(1:sod_1d_right.nsteps)
+
+# ╔═╡ f35979fa-3812-4883-8927-b2c42ee04f51
+plotframe(tstep_right, sod_1d_right, bs_right)
+
 # ╔═╡ 240d4f45-8024-4eb7-bbae-6cb923280426
-@gif for i=1:dsod1.n_t
-	plotframe(i, dsod1, bs1)
+@gif for i=1:sod_1d_right.nsteps
+	plotframe(i, sod_1d_right, bs_right)
 end every 5 fps = 10
 
 # ╔═╡ 921b74c9-97e7-4ceb-95f3-3af6f250a6b1
@@ -181,10 +102,11 @@ md"""
 # Sod Shock Tube (Left)
 """
 
-# ╔═╡ a646924e-5aba-4867-8e77-c45ad9d4b2e6
-@gif for i=1:dsod2.n_t
-	plotframe(i, dsod2, bs2)
-end every 5 fps = 10
+# ╔═╡ 21f47b30-e3c4-42d7-ad10-99ca0fc6c736
+@bind tstep_left Slider(1:sod_1d_left.nsteps)
+
+# ╔═╡ e4fc128e-8d37-48ea-bf2d-6518695707a9
+plotframe(tstep_left, sod_1d_left, bs_left)
 
 # ╔═╡ 077fabf0-a848-4dc9-922c-ebf0ed610294
 md"""
@@ -194,13 +116,13 @@ md"""
 # ╔═╡ e6d5b0c9-b475-4d69-a22e-2fe9cddc6ac1
 begin
 	function shock_speed(uL, uR, gas)
-		FL = F(uL, gas)
-		FR = F(uR, gas)
+		FL = F_euler(uL, gas)
+		FR = F_euler(uR, gas)
 		return (FL - FR) ./ (uL - uR)
 	end
 
 	function shock_speed(uL::ConservedProps, uR::ConservedProps, gas)
-		dF = F(uL, gas) - F(uR, gas)
+		dF = F_euler(uL, gas) - F_euler(uR, gas)
 		dU = ConservedProps(uL.ρ-uR.ρ, uL.ρv - uR.ρv, uL.ρE - uR.ρE)
 		return vcat(dF[1]/dU.ρ, dF[2:end-1] ./ dU.ρv, dF[end]/dU.ρE)
 	end
@@ -211,22 +133,24 @@ md"""
 ## Shock Tube (Right)
 """
 
+# ╔═╡ 6cc8a3d0-d89e-4d86-ac61-634b4069119c
+@bind tstep_right2 Slider(1:sod_1d_right.nsteps)
+
 # ╔═╡ 372a1da7-da5a-4d54-9ad4-5aff40324887
 ss1 = let
 	uL = [0.263245, 0.77343, 8.69876]
-	uR = dsod1.u[:, end, end]
+	uR = sod_1d_right.u[:, end, end]
 	shock_speed(ConservedProps(uL), ConservedProps(uR), DRY_AIR)
 end
 
 # ╔═╡ 6dad151b-2ceb-44f7-95ee-4cd981dee6b7
 let
-	p = plotframe(dsod1.n_t-50, dsod1, bs1)
+	p = plotframe(tstep_right2, sod_1d_right, bs_right)
 	xgrid!(p, xminorticks=true)
 	for i in 1:4
-		vline!(p[i], [0.5 + ustrip(ss1[2]) .* dsod1.t[end-50]], label="Est. Shock Position")
+		vline!(p[i], [0.5 + ustrip(ss1[2]) .* sod_1d_right.tsteps[tstep_right2]], label="Est. Shock Position")
 	end
 	#vline!(p, [x_axis(dsod1)[1450]])
-	savefig(p, "bad_sod_ex.png")
 	p
 end
 
@@ -235,48 +159,26 @@ md"""
 ## Shock Tube (Left)
 """
 
+# ╔═╡ 43ac9d47-a9a7-4e04-9589-b1c56b96ecb1
+@bind tstep_left2 Slider(1:sod_1d_left.nsteps)
+
 # ╔═╡ dc592e1e-066b-4dae-b90a-41d75ee67255
 ss2 = let
-	uR = dsod2.u[:, 1, end]
+	uR = sod_1d_left.u[:, 1, end]
 	uL = [0.263245, -0.77343, 8.69876]
 	shock_speed(ConservedProps(uL), ConservedProps(uR), DRY_AIR)
 end
 
 # ╔═╡ 8ec51f09-2e94-46af-8ad7-e531263f59be
-begin
-	p = plotframe(dsod2.n_t-44, dsod2, bs2)
+let
+	p = plotframe(tstep_left2, sod_1d_left, bs_left)
+	xgrid!(p, xminorticks=true)
 	for i in 1:4
-		vline!(p[i], [1.5 + ustrip(ss2[3]) .* dsod2.t[end-44]], label="Shock Position")
+		vline!(p[i], [1.5 + ustrip(ss2[2]) .* sod_1d_left.tsteps[tstep_left2]], label="Est. Shock Position")
 	end
-	savefig(p, "good_sod_ex.png")
+	#vline!(p, [x_axis(dsod1)[1450]])
 	p
 end
-
-# ╔═╡ 01dbb6f3-e5f6-47d3-8f84-540f93b4495a
-dsod3 = make_sim_data("sod3.out")
-
-# ╔═╡ 8e8f3c4f-270f-4c61-a8ba-40dce9b89440
-bs3 = plot_bounds(dsod3)
-
-# ╔═╡ 4aeedee8-ec15-4dcd-87db-2ea03e24a438
-@gif for i=1:dsod3.n_t
-	p = plotframe(i, dsod3, bs3)
-	vline!(p[2], [0.5 + dsod3.t[i]*ustrip(ss1[2])])
-	p
-end every 5 fps = 10
-
-# ╔═╡ 409ccfb9-8d1c-450a-ad74-fdd8e8a94693
-dsod4 = make_sim_data("sod4.out")
-
-# ╔═╡ e057380e-4f70-4696-9bbc-ac236c1f6008
-bs4 = plot_bounds(dsod4)
-
-# ╔═╡ 601cf6c8-ea61-49c7-9edf-db5f9f965eab
-@gif for i=1:dsod4.n_t
-	p = plotframe(i, dsod4, bs4)
-	vline!(p[2], [1.5 + dsod3.t[i]*ustrip(ss2[2])])
-	p
-end every 5 fps = 10
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
@@ -285,15 +187,17 @@ Euler2D = "c24a2923-03cb-4692-957a-ccd31f2ad327"
 LaTeXStrings = "b964fa9f-0449-5b57-a5c2-d3ea65f4040f"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 Plots = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
+PlutoUI = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 ShockwaveProperties = "77d2bf28-a3e9-4b9c-9fcf-b85f74cc8a50"
 Tullio = "bc48ee85-29a4-5162-ae0b-a64e1601d4bc"
 Unitful = "1986cc42-f94f-5a68-af5c-568840ba703d"
 
 [compat]
-Euler2D = "~0.1.2"
+Euler2D = "~0.2.1"
 LaTeXStrings = "~1.3.1"
 Plots = "~1.40.4"
+PlutoUI = "~0.7.58"
 ShockwaveProperties = "~0.1.11"
 Tullio = "~0.3.7"
 Unitful = "~1.20.0"
@@ -305,51 +209,17 @@ PLUTO_MANIFEST_TOML_CONTENTS = """
 
 julia_version = "1.10.4"
 manifest_format = "2.0"
-project_hash = "f8f6b0e4cc176e02ae6434635f1026827c850913"
+project_hash = "2b9eee7289e101b7b9c88017ccdc59300173828d"
 
-[[deps.Adapt]]
-deps = ["LinearAlgebra", "Requires"]
-git-tree-sha1 = "6a55b747d1812e699320963ffde36f1ebdda4099"
-uuid = "79e6a3ab-5dfb-504d-930d-738a2a938a0e"
-version = "4.0.4"
-
-    [deps.Adapt.extensions]
-    AdaptStaticArraysExt = "StaticArrays"
-
-    [deps.Adapt.weakdeps]
-    StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
+[[deps.AbstractPlutoDingetjes]]
+deps = ["Pkg"]
+git-tree-sha1 = "c278dfab760520b8bb7e9511b968bf4ba38b7acc"
+uuid = "6e696c72-6542-2067-7265-42206c756150"
+version = "1.2.3"
 
 [[deps.ArgTools]]
 uuid = "0dad84c5-d112-42e6-8d28-ef12dabb789f"
 version = "1.1.1"
-
-[[deps.ArrayInterface]]
-deps = ["Adapt", "LinearAlgebra", "SparseArrays", "SuiteSparse"]
-git-tree-sha1 = "ed2ec3c9b483842ae59cd273834e5b46206d6dda"
-uuid = "4fba245c-0d91-5ea0-9b3e-6abc04ee57a9"
-version = "7.11.0"
-
-    [deps.ArrayInterface.extensions]
-    ArrayInterfaceBandedMatricesExt = "BandedMatrices"
-    ArrayInterfaceBlockBandedMatricesExt = "BlockBandedMatrices"
-    ArrayInterfaceCUDAExt = "CUDA"
-    ArrayInterfaceCUDSSExt = "CUDSS"
-    ArrayInterfaceChainRulesExt = "ChainRules"
-    ArrayInterfaceGPUArraysCoreExt = "GPUArraysCore"
-    ArrayInterfaceReverseDiffExt = "ReverseDiff"
-    ArrayInterfaceStaticArraysCoreExt = "StaticArraysCore"
-    ArrayInterfaceTrackerExt = "Tracker"
-
-    [deps.ArrayInterface.weakdeps]
-    BandedMatrices = "aae01518-5342-5314-be14-df237901396f"
-    BlockBandedMatrices = "ffab5731-97b5-5995-9138-79e8c1846df0"
-    CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
-    CUDSS = "45b445bb-4962-46a0-9369-b4df9d0f772e"
-    ChainRules = "082447d4-558c-5d27-93f4-14fc19e9eca2"
-    GPUArraysCore = "46192b85-c4d5-4398-a991-12ede77f4527"
-    ReverseDiff = "37e2e3b7-166d-5795-8a7a-e32c996b4267"
-    StaticArraysCore = "1e83bf80-4336-4d27-bf5d-d5a4f845583c"
-    Tracker = "9f7883ad-71c0-57eb-9f7f-b5c9e6d3789c"
 
 [[deps.Artifacts]]
 uuid = "56f22d72-fd6d-98f1-02f0-08ddc0907c33"
@@ -358,27 +228,15 @@ uuid = "56f22d72-fd6d-98f1-02f0-08ddc0907c33"
 uuid = "2a0f44e3-6c83-55bd-87e4-b1978d98bd5f"
 
 [[deps.BitFlags]]
-git-tree-sha1 = "2dc09997850d68179b69dafb58ae806167a32b1b"
+git-tree-sha1 = "0691e34b3bb8be9307330f88d1a3c3f25466c24d"
 uuid = "d1d4a3ce-64b1-5f1a-9ba4-7e7e69966f35"
-version = "0.1.8"
-
-[[deps.BitTwiddlingConvenienceFunctions]]
-deps = ["Static"]
-git-tree-sha1 = "0c5f81f47bbbcf4aea7b2959135713459170798b"
-uuid = "62783981-4cbd-42fc-bca8-16325de8dc4b"
-version = "0.1.5"
+version = "0.1.9"
 
 [[deps.Bzip2_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
 git-tree-sha1 = "9e2a6b69137e6969bab0152632dcb3bc108c8bdd"
 uuid = "6e34b625-4abd-537c-b88f-471c36dfa7a0"
 version = "1.0.8+1"
-
-[[deps.CPUSummary]]
-deps = ["CpuId", "IfElse", "PrecompileTools", "Static"]
-git-tree-sha1 = "585a387a490f1c4bd88be67eea15b93da5e85db7"
-uuid = "2a0fbf3d-bb9c-48f3-b0a9-814d99fd7ab9"
-version = "0.2.5"
 
 [[deps.Cairo_jll]]
 deps = ["Artifacts", "Bzip2_jll", "CompilerSupportLibraries_jll", "Fontconfig_jll", "FreeType2_jll", "Glib_jll", "JLLWrappers", "LZO_jll", "Libdl", "Pixman_jll", "Xorg_libXext_jll", "Xorg_libXrender_jll", "Zlib_jll", "libpng_jll"]
@@ -395,12 +253,6 @@ weakdeps = ["SparseArrays"]
 
     [deps.ChainRulesCore.extensions]
     ChainRulesCoreSparseArraysExt = "SparseArrays"
-
-[[deps.CloseOpenIntervals]]
-deps = ["Static", "StaticArrayInterface"]
-git-tree-sha1 = "70232f82ffaab9dc52585e0dd043b5e0c6b714f1"
-uuid = "fb6a15b2-703c-40df-9091-08a04967cfa9"
-version = "0.1.12"
 
 [[deps.CodecZlib]]
 deps = ["TranscodingStreams", "Zlib_jll"]
@@ -462,12 +314,6 @@ git-tree-sha1 = "439e35b0b36e2e5881738abc8857bd92ad6ff9a8"
 uuid = "d38c429a-6771-53c6-b99e-75d170b6e991"
 version = "0.6.3"
 
-[[deps.CpuId]]
-deps = ["Markdown"]
-git-tree-sha1 = "fcbb72b032692610bfbdb15018ac16a36cf2e406"
-uuid = "adafc99b-e345-5852-983c-f28acb93d879"
-version = "0.3.1"
-
 [[deps.DataAPI]]
 git-tree-sha1 = "abe83f3a2f1b857aac70ef8b269080af17764bbe"
 uuid = "9a962f9c-6df0-11e9-0e5d-c546b8b5ee8a"
@@ -513,10 +359,10 @@ uuid = "2702e6a9-849d-5ed8-8c21-79e8b8f9ee43"
 version = "0.0.20230411+0"
 
 [[deps.Euler2D]]
-deps = ["LinearAlgebra", "LoopVectorization", "ShockwaveProperties", "Tullio", "Unitful", "UnitfulChainRules"]
-git-tree-sha1 = "7ddfc22ac9de4d1a8903acbcc5b45648f93485fc"
+deps = ["LinearAlgebra", "ShockwaveProperties", "Tullio", "Unitful", "UnitfulChainRules"]
+git-tree-sha1 = "4fe10953077fe27f303f11288d36bf2b35f6bee0"
 uuid = "c24a2923-03cb-4692-957a-ccd31f2ad327"
-version = "0.1.2"
+version = "0.2.1"
 
 [[deps.ExceptionUnwrapping]]
 deps = ["Test"]
@@ -627,16 +473,23 @@ git-tree-sha1 = "129acf094d168394e80ee1dc4bc06ec835e510a3"
 uuid = "2e76f6c2-a576-52d4-95c1-20adfe4de566"
 version = "2.8.1+1"
 
-[[deps.HostCPUFeatures]]
-deps = ["BitTwiddlingConvenienceFunctions", "IfElse", "Libdl", "Static"]
-git-tree-sha1 = "eb8fed28f4994600e29beef49744639d985a04b2"
-uuid = "3e5b6fbb-0976-4d2c-9146-d79de83f2fb0"
-version = "0.1.16"
+[[deps.Hyperscript]]
+deps = ["Test"]
+git-tree-sha1 = "179267cfa5e712760cd43dcae385d7ea90cc25a4"
+uuid = "47d2ed2b-36de-50cf-bf87-49c2cf4b8b91"
+version = "0.0.5"
 
-[[deps.IfElse]]
-git-tree-sha1 = "debdd00ffef04665ccbb3e150747a77560e8fad1"
-uuid = "615f187c-cbe4-4ef1-ba3b-2fcf58d6d173"
-version = "0.1.1"
+[[deps.HypertextLiteral]]
+deps = ["Tricks"]
+git-tree-sha1 = "7134810b1afce04bbc1045ca1985fbe81ce17653"
+uuid = "ac1192a8-f4b3-4bfe-ba22-af5b92cd3ab2"
+version = "0.9.5"
+
+[[deps.IOCapture]]
+deps = ["Logging", "Random"]
+git-tree-sha1 = "8b72179abc660bfab5e28472e019392b97d0985c"
+uuid = "b5f81e59-6552-4d32-b1f0-c071b021bf89"
+version = "0.2.4"
 
 [[deps.InteractiveUtils]]
 deps = ["Markdown"]
@@ -713,12 +566,6 @@ version = "0.16.3"
     [deps.Latexify.weakdeps]
     DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
     SymEngine = "123dc426-2d89-5057-bbad-38513e3affd8"
-
-[[deps.LayoutPointers]]
-deps = ["ArrayInterface", "LinearAlgebra", "ManualMemory", "SIMDTypes", "Static", "StaticArrayInterface"]
-git-tree-sha1 = "62edfee3211981241b57ff1cedf4d74d79519277"
-uuid = "10f19ff3-798f-405d-979b-55457f8fc047"
-version = "0.1.15"
 
 [[deps.LibCURL]]
 deps = ["LibCURL_jll", "MozillaCACerts_jll"]
@@ -824,31 +671,16 @@ git-tree-sha1 = "c1dd6d7978c12545b4179fb6153b9250c96b0075"
 uuid = "e6f89c97-d47a-5376-807f-9c37f3926c36"
 version = "1.0.3"
 
-[[deps.LoopVectorization]]
-deps = ["ArrayInterface", "CPUSummary", "CloseOpenIntervals", "DocStringExtensions", "HostCPUFeatures", "IfElse", "LayoutPointers", "LinearAlgebra", "OffsetArrays", "PolyesterWeave", "PrecompileTools", "SIMDTypes", "SLEEFPirates", "Static", "StaticArrayInterface", "ThreadingUtilities", "UnPack", "VectorizationBase"]
-git-tree-sha1 = "8f6786d8b2b3248d79db3ad359ce95382d5a6df8"
-uuid = "bdcacae8-1622-11e9-2a5c-532679323890"
-version = "0.12.170"
-
-    [deps.LoopVectorization.extensions]
-    ForwardDiffExt = ["ChainRulesCore", "ForwardDiff"]
-    SpecialFunctionsExt = "SpecialFunctions"
-
-    [deps.LoopVectorization.weakdeps]
-    ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
-    ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
-    SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
+[[deps.MIMEs]]
+git-tree-sha1 = "65f28ad4b594aebe22157d6fac869786a255b7eb"
+uuid = "6c6e2e6c-3030-632d-7369-2d6c69616d65"
+version = "0.1.4"
 
 [[deps.MacroTools]]
 deps = ["Markdown", "Random"]
 git-tree-sha1 = "2fa9ee3e63fd3a4f7a9a4f4744a52f4856de82df"
 uuid = "1914dd2f-81c6-5fcd-8719-6d5c9610ff09"
 version = "0.5.13"
-
-[[deps.ManualMemory]]
-git-tree-sha1 = "bcaef4fc7a0cfe2cba636d84cda54b5e4e4ca3cd"
-uuid = "d125e4d3-2237-4719-b19c-fa641b8a4667"
-version = "0.1.8"
 
 [[deps.Markdown]]
 deps = ["Base64"]
@@ -892,15 +724,6 @@ version = "1.0.2"
 [[deps.NetworkOptions]]
 uuid = "ca575930-c2e3-43a9-ace4-1e988b2c1908"
 version = "1.2.0"
-
-[[deps.OffsetArrays]]
-git-tree-sha1 = "e64b4f5ea6b7389f6f046d13d4896a8f9c1ba71e"
-uuid = "6fe1bfb0-de20-5000-8ca7-80f57d26f881"
-version = "1.14.0"
-weakdeps = ["Adapt"]
-
-    [deps.OffsetArrays.extensions]
-    OffsetArraysAdaptExt = "Adapt"
 
 [[deps.Ogg_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
@@ -1006,11 +829,11 @@ version = "1.40.4"
     ImageInTerminal = "d8c32880-2388-543b-8c61-d9f865259254"
     Unitful = "1986cc42-f94f-5a68-af5c-568840ba703d"
 
-[[deps.PolyesterWeave]]
-deps = ["BitTwiddlingConvenienceFunctions", "CPUSummary", "IfElse", "Static", "ThreadingUtilities"]
-git-tree-sha1 = "240d7170f5ffdb285f9427b92333c3463bf65bf6"
-uuid = "1d0040c9-8b98-4ee7-8388-3f51789ca0ad"
-version = "0.2.1"
+[[deps.PlutoUI]]
+deps = ["AbstractPlutoDingetjes", "Base64", "ColorTypes", "Dates", "FixedPointNumbers", "Hyperscript", "HypertextLiteral", "IOCapture", "InteractiveUtils", "JSON", "Logging", "MIMEs", "Markdown", "Random", "Reexport", "URIs", "UUIDs"]
+git-tree-sha1 = "71a22244e352aa8c5f0f2adde4150f62368a3f2e"
+uuid = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
+version = "0.7.58"
 
 [[deps.PrecompileTools]]
 deps = ["Preferences"]
@@ -1075,17 +898,6 @@ version = "1.3.0"
 uuid = "ea8e919c-243c-51af-8825-aaa63cd721ce"
 version = "0.7.0"
 
-[[deps.SIMDTypes]]
-git-tree-sha1 = "330289636fb8107c5f32088d2741e9fd7a061a5c"
-uuid = "94e857df-77ce-4151-89e5-788b33177be4"
-version = "0.1.0"
-
-[[deps.SLEEFPirates]]
-deps = ["IfElse", "Static", "VectorizationBase"]
-git-tree-sha1 = "3aac6d68c5e57449f5b9b865c9ba50ac2970c4cf"
-uuid = "476501e8-09a2-5ece-8869-fb82de89a1fa"
-version = "0.6.42"
-
 [[deps.Scratch]]
 deps = ["Dates"]
 git-tree-sha1 = "3bac05bc7e74a75fd9cba4295cde4045d9fe2386"
@@ -1136,26 +948,6 @@ weakdeps = ["ChainRulesCore"]
     [deps.SpecialFunctions.extensions]
     SpecialFunctionsChainRulesCoreExt = "ChainRulesCore"
 
-[[deps.Static]]
-deps = ["IfElse"]
-git-tree-sha1 = "d2fdac9ff3906e27f7a618d47b676941baa6c80c"
-uuid = "aedffcd0-7271-4cad-89d0-dc628f76c6d3"
-version = "0.8.10"
-
-[[deps.StaticArrayInterface]]
-deps = ["ArrayInterface", "Compat", "IfElse", "LinearAlgebra", "PrecompileTools", "Requires", "SparseArrays", "Static", "SuiteSparse"]
-git-tree-sha1 = "5d66818a39bb04bf328e92bc933ec5b4ee88e436"
-uuid = "0d7ed370-da01-4f52-bd93-41d350b8b718"
-version = "1.5.0"
-
-    [deps.StaticArrayInterface.extensions]
-    StaticArrayInterfaceOffsetArraysExt = "OffsetArrays"
-    StaticArrayInterfaceStaticArraysExt = "StaticArrays"
-
-    [deps.StaticArrayInterface.weakdeps]
-    OffsetArrays = "6fe1bfb0-de20-5000-8ca7-80f57d26f881"
-    StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
-
 [[deps.Statistics]]
 deps = ["LinearAlgebra", "SparseArrays"]
 uuid = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
@@ -1172,10 +964,6 @@ deps = ["DataAPI", "DataStructures", "LinearAlgebra", "LogExpFunctions", "Missin
 git-tree-sha1 = "5cf7606d6cef84b543b483848d4ae08ad9832b21"
 uuid = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
 version = "0.34.3"
-
-[[deps.SuiteSparse]]
-deps = ["Libdl", "LinearAlgebra", "Serialization", "SparseArrays"]
-uuid = "4607b0f0-06f3-5cda-b6b1-a6196a1729e9"
 
 [[deps.SuiteSparse_jll]]
 deps = ["Artifacts", "Libdl", "libblastrampoline_jll"]
@@ -1202,12 +990,6 @@ version = "0.1.1"
 deps = ["InteractiveUtils", "Logging", "Random", "Serialization"]
 uuid = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
-[[deps.ThreadingUtilities]]
-deps = ["ManualMemory"]
-git-tree-sha1 = "eda08f7e9818eb53661b3deb74e3159460dfbc27"
-uuid = "8290d209-cae3-49c0-8002-c8c24d57dab5"
-version = "0.5.2"
-
 [[deps.TranscodingStreams]]
 git-tree-sha1 = "a947ea21087caba0a798c5e494d0bb78e3a1a3a0"
 uuid = "3bb67fe8-82b1-5028-8e26-92a6c54297fa"
@@ -1216,6 +998,11 @@ weakdeps = ["Random", "Test"]
 
     [deps.TranscodingStreams.extensions]
     TestExt = ["Test", "Random"]
+
+[[deps.Tricks]]
+git-tree-sha1 = "eae1bb484cd63b36999ee58be2de6c178105112f"
+uuid = "410a4b4d-49e4-4fbc-ab6d-cb71b17b3775"
+version = "0.1.8"
 
 [[deps.Tullio]]
 deps = ["DiffRules", "LinearAlgebra", "Requires"]
@@ -1243,11 +1030,6 @@ version = "1.5.1"
 [[deps.UUIDs]]
 deps = ["Random", "SHA"]
 uuid = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
-
-[[deps.UnPack]]
-git-tree-sha1 = "387c1f73762231e86e0c9c5443ce3b4a0a9a0c2b"
-uuid = "3a884ed6-31ef-47d7-9d2a-63182c4928ed"
-version = "1.0.2"
 
 [[deps.Unicode]]
 uuid = "4ec0a83e-493e-50e2-b9ac-8f72acf5a8f5"
@@ -1288,12 +1070,6 @@ version = "1.6.3"
 git-tree-sha1 = "ca0969166a028236229f63514992fc073799bb78"
 uuid = "41fe7b60-77ed-43a1-b4f0-825fd5a5650d"
 version = "0.2.0"
-
-[[deps.VectorizationBase]]
-deps = ["ArrayInterface", "CPUSummary", "HostCPUFeatures", "IfElse", "LayoutPointers", "Libdl", "LinearAlgebra", "SIMDTypes", "Static", "StaticArrayInterface"]
-git-tree-sha1 = "e863582a41c5731f51fd050563ae91eb33cf09be"
-uuid = "3d5dd08c-fd9d-11e8-17fa-ed2836048c2f"
-version = "0.21.68"
 
 [[deps.Vulkan_Loader_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Wayland_jll", "Xorg_libX11_jll", "Xorg_libXrandr_jll", "xkbcommon_jll"]
@@ -1587,38 +1363,31 @@ version = "1.4.1+1"
 """
 
 # ╔═╡ Cell order:
-# ╠═5235b02a-21c7-11ef-3bff-bbb12c64876f
-# ╠═c262ba8c-3c15-4ec4-ad98-4fede84d1be0
+# ╠═f9ee88aa-fff6-4d6b-94f9-460a38b1f0a8
 # ╠═a1cf8795-d623-48d2-99d2-8b387b5e03f1
-# ╟─ca6bae27-5501-4869-b512-9358d39071d2
-# ╟─b39d9e97-3eae-4c40-b41c-88c403947b5f
-# ╟─260ea05b-bb07-41c7-82bb-a4f194a9453e
+# ╠═ca6bae27-5501-4869-b512-9358d39071d2
 # ╠═a37e06d8-9b92-48c4-a484-9ae35a8a0b79
 # ╠═433765ee-2926-4082-8991-b8484a0d2106
 # ╠═0dd5f204-70c4-48f6-9a4a-9201cd85b7bc
 # ╠═8b31c7d4-766d-4eac-b6b0-505a3bda2106
 # ╠═e559ffb0-14e9-4da5-903b-40f7c8488ec8
-# ╠═279c8612-cf21-43ea-a019-08140ee1fd76
-# ╠═c6cd44d6-9267-4d03-a5d8-3544d3996f6a
-# ╠═4e075a9e-7e36-45d7-a395-e9c24a246f97
-# ╠═818c83f0-de45-45a8-8ecc-22ba14633dcb
+# ╠═e74fcd04-e19b-4f53-b3f4-eb6c74326cca
 # ╟─73840d97-db1c-4e09-ae37-13638503d30c
-# ╠═240d4f45-8024-4eb7-bbae-6cb923280426
-# ╠═921b74c9-97e7-4ceb-95f3-3af6f250a6b1
-# ╠═a646924e-5aba-4867-8e77-c45ad9d4b2e6
+# ╠═bb46759a-ef64-47b6-a847-31e81b9d5bf6
+# ╠═f35979fa-3812-4883-8927-b2c42ee04f51
+# ╟─240d4f45-8024-4eb7-bbae-6cb923280426
+# ╟─921b74c9-97e7-4ceb-95f3-3af6f250a6b1
+# ╠═21f47b30-e3c4-42d7-ad10-99ca0fc6c736
+# ╠═e4fc128e-8d37-48ea-bf2d-6518695707a9
 # ╟─077fabf0-a848-4dc9-922c-ebf0ed610294
-# ╟─e6d5b0c9-b475-4d69-a22e-2fe9cddc6ac1
+# ╠═e6d5b0c9-b475-4d69-a22e-2fe9cddc6ac1
 # ╟─961ee35c-2028-47be-9bf0-79bba38c13b5
-# ╟─6dad151b-2ceb-44f7-95ee-4cd981dee6b7
+# ╟─6cc8a3d0-d89e-4d86-ac61-634b4069119c
+# ╠═6dad151b-2ceb-44f7-95ee-4cd981dee6b7
 # ╟─372a1da7-da5a-4d54-9ad4-5aff40324887
 # ╟─ebf221d9-fa64-4751-8e37-0ca4182d034c
+# ╠═43ac9d47-a9a7-4e04-9589-b1c56b96ecb1
 # ╟─8ec51f09-2e94-46af-8ad7-e531263f59be
 # ╟─dc592e1e-066b-4dae-b90a-41d75ee67255
-# ╠═01dbb6f3-e5f6-47d3-8f84-540f93b4495a
-# ╟─8e8f3c4f-270f-4c61-a8ba-40dce9b89440
-# ╠═4aeedee8-ec15-4dcd-87db-2ea03e24a438
-# ╠═409ccfb9-8d1c-450a-ad74-fdd8e8a94693
-# ╠═e057380e-4f70-4696-9bbc-ac236c1f6008
-# ╠═601cf6c8-ea61-49c7-9edf-db5f9f965eab
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

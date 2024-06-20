@@ -30,7 +30,7 @@ extrapolation_bcs = EdgeBoundary(ExtrapolateToPhantom(), ExtrapolateToPhantom())
 bcs_1d = (extrapolation_bcs,)
 bcs_2d = (extrapolation_bcs, extrapolation_bcs)
 
-bounds_x = (0.0, 1.0)
+bounds_x = (0.0, 2.0)
 bounds_y = (0.0, 1.0)
 
 ncells_x = 500
