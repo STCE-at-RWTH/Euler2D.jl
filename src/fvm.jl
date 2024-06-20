@@ -325,11 +325,10 @@ Apply Godunov's method along a 1-dimensional slice of data ``[ρ, ρv⃗, ρE]``
 The operator splitting method does permit us to handle each real dimension separately.
 """
 function bulk_step_1d_slice!(u_next, u, Δt, Δx, dim, gas::CaloricallyPerfectGas)
-    @tullio u_next[:, i] =
-        u[:, i] - (
-            Δt / Δx *
-            (ϕ_hll(u[:, i], u[:, i+1], dim, gas) - ϕ_hll(u[:, i-1], u[:, i], dim, gas))
-        )
+    @tullio u_next[:, i] -= (
+        Δt / Δx *
+        (ϕ_hll(u[:, i], u[:, i+1], dim, gas) - ϕ_hll(u[:, i-1], u[:, i], dim, gas))
+    )
 end
 
 """
@@ -357,9 +356,8 @@ function enforce_boundary_1d_slice!(
 ) where {T}
     # flux out of the last cell into the first cell
     ϕ_periodic = ϕ_hll(u[:, end], u[:, 1], dim, gas)
-    u_next[:, 1] = u[:, 1] - (Δt / Δx * (ϕ_hll(u[:, 1], u[:, 2], dim, gas) - ϕ_periodic))
-    u_next[:, end] =
-        u[:, end] - (Δt / Δx * (ϕ_periodic - ϕ_hll(u[:, end-1], u[:, end], dim, gas)))
+    u_next[:, 1] -= (Δt / Δx * (ϕ_hll(u[:, 1], u[:, 2], dim, gas) - ϕ_periodic))
+    u_next[:, end] -= (Δt / Δx * (ϕ_periodic - ϕ_hll(u[:, end-1], u[:, end], dim, gas)))
 end
 
 function enforce_boundary_1d_slice!(
@@ -371,30 +369,37 @@ function enforce_boundary_1d_slice!(
     dim,
     gas::CaloricallyPerfectGas,
 ) where {T}
-    u_next[:, 1] =
-        u[:, 1] - (
-            Δt / Δx * (
-                ϕ_hll(u[:, 1], u[:, 2], dim, gas) -
-                left_edge_ϕ(boundary_conditions.left, u, dim, gas)
-            )
+    u_next[:, 1] -= (
+        Δt / Δx * (
+            ϕ_hll(u[:, 1], u[:, 2], dim, gas) -
+            left_edge_ϕ(boundary_conditions.left, u, dim, gas)
         )
-    u_next[:, end] =
-        u[:, end] - (
-            Δt / Δx * (
-                right_edge_ϕ(boundary_conditions.right, u, dim, gas) -
-                ϕ_hll(u[:, end-1], u[:, end], dim, gas)
-            )
+    )
+    u_next[:, end] -= (
+        Δt / Δx * (
+            right_edge_ϕ(boundary_conditions.right, u, dim, gas) -
+            ϕ_hll(u[:, end-1], u[:, end], dim, gas)
         )
+    )
 end
 
+"""
+    step_euler_hll!(u_next, u, Δt, dV, bcs, gas)
+
+Step the Euler equations one `Δt` into the future, and write the result into `u_next`.
+"""
 function step_euler_hll!(u_next, u, Δt, dV, boundary_conditions, gas::CaloricallyPerfectGas)
     @assert length(dV) == length(boundary_conditions)
-    N = length(dV)
+    @assert size(u_next) == size(u)
+    # first part of the update step
+    u_next .= u
     for (space_dim, (Δx, bcs)) ∈ enumerate(zip(dV, boundary_conditions))
         # there must be a better way
         dims = ((i + 1 for i ∈ 1:N if i ≠ space_dim)...,)
         for (u_next_slice, u_slice) in zip(eachslice(u_next; dims), eachslice(u; dims))
+            # compute flux difference
             bulk_step_1d_slice!(u_next_slice, u_slice, Δt, Δx, space_dim, gas)
+            # and on the boundary...
             enforce_boundary_1d_slice!(u_next_slice, u_slice, Δt, Δx, bcs, space_dim, gas)
         end
     end
