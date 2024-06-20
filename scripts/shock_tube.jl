@@ -33,8 +33,10 @@ bcs_2d = (extrapolation_bcs, extrapolation_bcs)
 bounds_x = (0.0, 1.0)
 bounds_y = (0.0, 1.0)
 
-ncells_x = 1000
+ncells_x = 500
 ncells_y = 10
+
+##
 
 # simulation 1
 simulate_euler_equations(
