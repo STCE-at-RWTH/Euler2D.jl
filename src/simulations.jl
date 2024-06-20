@@ -31,7 +31,8 @@ n_tsteps(e) = e.nsteps
 function cell_boundaries(e, dim)
     return range(e.bounds[dim]...; length = e.ncells[dim] + 1)
 end
-function cell_boundaries(e)
+
+function cell_boundaries(e::EulerSim{N,NAXES,T}) where {N,NAXES,T}
     return ntuple(i -> cell_boundaries(e, i), N)
 end
 
@@ -40,21 +41,21 @@ function cell_centers(e, dim)
     return ifaces[1:end-1] .+ step(ifaces) / 2
 end
 
-function cell_boundaries(e::EulerSim{N,NAXES,T}) where {N,NAXES,T}
-    return ntuple(i -> cell_boundaries(e, i), N)
+function cell_centers(e::EulerSim{N,NAXES,T}) where {N,NAXES,T}
+    return ntuple(i -> cell_centers(e, i), N)
 end
 
-function nth_step(e::EulerSim{N,T}, n) where {N,T}
-    return e.tsteps[n], view(e.u, ntuple(i -> Colon(), N + 1)..., n)
+function nth_step(e::EulerSim{N,NAXES,T}, n) where {N,NAXES,T}
+    return e.tsteps[n], view(e.u, ntuple(i -> Colon(), NAXES - 1)..., n)
 end
 
 function simulate_euler_equations(
+    u0,
+    T_end,
+    boundary_conditions,
     bounds,
     ncells,
-    boundary_conditions,
-    T_end,
-    u0;
-    gas::CaloricallyPerfectGas = DRY_AIR,
+    gas::CaloricallyPerfectGas = DRY_AIR;
     cfl_limit = 0.75,
     max_tsteps = typemax(Int),
     write_result = true,
@@ -168,11 +169,11 @@ function simulate_euler_equations(
         1,
         (((first(r), last(r)) for r ∈ cell_ifaces)...,),
         [t],
-        u,
+        reshape(u, size(u)..., 1),
     )
 end
 
-function load_euler_sim(path; T = Float64, show_info=false)
+function load_euler_sim(path; T = Float64, show_info = false)
     return open(path, "r") do f
         n_tsteps = read(f, Int)
         N = read(f, Int)
