@@ -21,7 +21,9 @@ export EulerSim
 export cell_boundaries, cell_centers, nth_step
 
 # methods
+export F_euler
 export interface_signal_speeds, maximum_Δt
 export step_euler_hll!, simulate_euler_equations
+
 
 end
