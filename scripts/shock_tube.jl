@@ -50,7 +50,7 @@ simulate_euler_equations(
 )
 
 # simulation 2
-u1_1d(x) = state_to_vector(x < 0.5 ? s_low : s_high)
+u1_1d(x) = state_to_vector(x < 1.5 ? s_low : s_high)
 
 simulate_euler_equations(
     u1_1d,
@@ -73,3 +73,22 @@ simulate_euler_equations(
     cfl_limit = 0.75,
     output_tag = "sod_shock_right_2d",
 )
+
+# simulation 4 (shock ring)
+# we will observe truly horrifying numerical artifacts here (from operator splitting)
+
+simulate_euler_equations(
+    0.075,
+    bcs_2d,
+    ((-1.0, 1.0), (-1.0, 1.0)),
+    (500, 500);
+    cfl_limit = 0.5,
+    output_tag = "sod_shock_orb",
+) do xk, yk
+    res = if xk^2 + yk^2 < 0.5
+        s_high_2d
+    else
+        s_low_2d
+    end
+    return state_to_vector(res)
+end
