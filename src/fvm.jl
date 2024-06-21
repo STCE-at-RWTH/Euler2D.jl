@@ -310,9 +310,12 @@ Compute the maximum possible `Δt` for the data `u` with cell spacing `dV`,
 function maximum_Δt(u, dV, boundary_conditions, CFL, gas::CaloricallyPerfectGas)
     Δt = mapreduce(min, enumerate(zip(dV, boundary_conditions))) do (space_dim, (Δx, bc))
         dims = ((i + 1 for i ∈ 1:length(dV) if i ≠ space_dim)...,)
-        return mapreduce(min, eachslice(u; dims)) do u_ax
-            maximum_Δt(u_ax, Δx, bc, space_dim, CFL, gas)
+        u_ax = eachslice(u; dims)
+        Δts = Vector{eltype(u)}(undef, length(u_ax))
+        Threads.@threads for i ∈ eachindex(u_ax)
+            Δts[i] = maximum_Δt(u_ax[i], Δx, bc, space_dim, CFL, gas)
         end
+        minimum(Δts)
     end
     return Δt
 end
@@ -399,7 +402,9 @@ function step_euler_hll!(u_next, u, Δt, dV, boundary_conditions, gas::Calorical
     for (space_dim, (Δx, bcs)) ∈ enumerate(zip(dV, boundary_conditions))
         # there must be a better way
         dims = ((i + 1 for i ∈ 1:N if i ≠ space_dim)...,)
-        for (u_next_slice, u_slice) in zip(eachslice(u_next; dims), eachslice(u; dims))
+        u_slices = collect(zip(eachslice(u_next; dims), eachslice(u; dims)))
+        Threads.@threads for i in eachindex(u_slices)
+            u_next_slice, u_slice = u_slices[i]
             # compute flux difference
             bulk_step_1d_slice!(u_next_slice, u_slice, Δt, Δx, space_dim, gas)
             # and on the boundary...

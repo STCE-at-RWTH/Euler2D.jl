@@ -95,7 +95,7 @@ plotframe(tstep_right, sod_1d_right, bs_right)
 # ╔═╡ 240d4f45-8024-4eb7-bbae-6cb923280426
 @gif for i=1:sod_1d_right.nsteps
 	plotframe(i, sod_1d_right, bs_right)
-end every 5 fps = 10
+end every 10 fps = 10
 
 # ╔═╡ 921b74c9-97e7-4ceb-95f3-3af6f250a6b1
 md"""
@@ -179,6 +179,38 @@ let
 	#vline!(p, [x_axis(dsod1)[1450]])
 	p
 end
+
+# ╔═╡ 601460fe-f9fb-4d72-8c7e-74660ae62a67
+md"""
+## 2D Experiment
+"""
+
+# ╔═╡ 70618278-9bff-40b1-873f-87a6377b8319
+sod_2d_orb = load_sim_data("sod_shock_orb.tape")
+
+# ╔═╡ 9638073a-c4ca-4113-8d24-fc5630df1af0
+function plotframe2d(frame, data::EulerSim{2, 4, T}) where {T}
+	(t, u_data) = nth_step(data, frame)
+	xs, ys = cell_centers(data)
+	v_data = mapslices(u_data; dims=1) do u
+		c = ConservedProps(u)
+		v = velocity(c)[1]
+	end
+	pressure_data = map(eachslice(u_data; dims=(2,3))) do u
+		c = ConservedProps(u[1:end])
+		return uconvert(u"Pa", pressure(c; gas=DRY_AIR))
+	end
+	pressure_plot = heatmap(xs, ys, pressure_data, aspect_ratio=:equal)
+	density_plot = heatmap(xs, ys, u_data[1, :, :], aspect_ratio=:equal)
+
+	plot(pressure_plot, density_plot)
+end
+
+# ╔═╡ 001d96d7-115e-4eaa-a716-84fc4922f4f1
+@bind tstep_orb Slider(1:sod_2d_orb.nsteps)
+
+# ╔═╡ 8c0ea7bf-5eb3-4dcd-85bb-8dfdc1a786af
+plotframe2d(tstep_orb, sod_2d_orb)
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
@@ -1375,7 +1407,7 @@ version = "1.4.1+1"
 # ╟─73840d97-db1c-4e09-ae37-13638503d30c
 # ╠═bb46759a-ef64-47b6-a847-31e81b9d5bf6
 # ╠═f35979fa-3812-4883-8927-b2c42ee04f51
-# ╟─240d4f45-8024-4eb7-bbae-6cb923280426
+# ╠═240d4f45-8024-4eb7-bbae-6cb923280426
 # ╟─921b74c9-97e7-4ceb-95f3-3af6f250a6b1
 # ╠═21f47b30-e3c4-42d7-ad10-99ca0fc6c736
 # ╠═e4fc128e-8d37-48ea-bf2d-6518695707a9
@@ -1389,5 +1421,10 @@ version = "1.4.1+1"
 # ╠═43ac9d47-a9a7-4e04-9589-b1c56b96ecb1
 # ╟─8ec51f09-2e94-46af-8ad7-e531263f59be
 # ╟─dc592e1e-066b-4dae-b90a-41d75ee67255
+# ╠═601460fe-f9fb-4d72-8c7e-74660ae62a67
+# ╠═70618278-9bff-40b1-873f-87a6377b8319
+# ╠═9638073a-c4ca-4113-8d24-fc5630df1af0
+# ╠═001d96d7-115e-4eaa-a716-84fc4922f4f1
+# ╠═8c0ea7bf-5eb3-4dcd-85bb-8dfdc1a786af
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

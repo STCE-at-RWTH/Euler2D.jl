@@ -11,6 +11,11 @@ Represents a completed simulation of the Euler equations on an N-dimensional gri
 - `u::Array{T, N+1}`: `(N+2) × ncells... x nsteps` array of data for u
 
 ## Methods
+- `n_data_dims`, `n_space_dims`, `n_tsteps``
+- `cell_centers`: Get the co-ordinates of cell centers.
+- `cell_boundaries`: Get the co-ordinates of cell faces.
+- `nth_step`: Get the information at time step `n`.
+- `eachstep`: Get a vector of `(t_k, u_k)` tuples for easy iteration.
 
 """
 struct EulerSim{N,NAXES,T}
@@ -28,6 +33,12 @@ n_space_dims(e::EulerSim{N,NAXES,T}) where {N,NAXES,T} = N
 n_data_dims(e::EulerSim{N,NAXES,T}) where {N,NAXES,T} = NAXES
 n_tsteps(e) = e.nsteps
 
+"""
+    cell_boundaries(e, n)
+    cell_boundaries(e)
+
+Return `StepRange` for the `nth` space dimension in a simulation, or a tuple of all of them.
+"""
 function cell_boundaries(e, dim)
     return range(e.bounds[dim]...; length = e.ncells[dim] + 1)
 end
@@ -36,6 +47,12 @@ function cell_boundaries(e::EulerSim{N,NAXES,T}) where {N,NAXES,T}
     return ntuple(i -> cell_boundaries(e, i), N)
 end
 
+"""
+    cell_centers(e, n)
+    cell_centers(e)
+
+Return `StepRange` for the `nth` space dimension in a simulation, or a tuple of all of them.
+"""
 function cell_centers(e, dim)
     ifaces = cell_boundaries(e, dim)
     return ifaces[1:end-1] .+ step(ifaces) / 2
@@ -45,23 +62,68 @@ function cell_centers(e::EulerSim{N,NAXES,T}) where {N,NAXES,T}
     return ntuple(i -> cell_centers(e, i), N)
 end
 
-function nth_step(e::EulerSim{N,NAXES,T}, n) where {N,NAXES,T}
-    return e.tsteps[n], view(e.u, ntuple(i -> Colon(), NAXES - 1)..., n)
+"""
+    nth_step(sim, n)
+
+Return `(t, u)` for the `nth` time step in `sim`. `u` will be a view.
+"""
+function nth_step(esim::EulerSim{N,NAXES,T}, n) where {N,NAXES,T}
+    return esim.tsteps[n], view(esim.u, ntuple(i -> Colon(), NAXES - 1)..., n)
 end
 
+"""
+    eachstep(sim)
+
+Return a vector of `[(t1, u1), (t2, u2),...]`. 
+Wraps `nth_step` for for convieniently iterating through a simulation.
+"""
+eachstep(esim::EulerSim) = [nth_step(esim, n) for n ∈ 1:n_tsteps(esim)]
+
+"""
+    simulate_euler_equations(u0, T_end, boundary_conditions, bounds, ncells; gas, CFL, max_tsteps, write_output, output_tag)
+
+Simulate the solution to the Euler equations from `t=0` to `t=T`, with `u(0, x) = u0(x)`. 
+Time step size is computed from the CFL condition.
+
+The simulation will fail if any nonphysical conditions are reached (speed of sound cannot be computed). 
+There is an attempt to gracefully handle this.
+
+The simulation can be written to disk.
+
+Arguments
+---
+- `u0`: ``u(0, x...):ℝ^n↦ℝ^3``: conditions at time `t=0`.
+- `T_end`: Must be greater than zero.
+- `boundary_conditions`: a tuple of boundary conditions for each space dimension
+- `bounds`: a tuple of extents for each space dimension (tuple of tuples)
+- `ncells`: a tuple of cell counts for each dimension
+
+Keyword Arguments
+---
+- `gas=DRY_AIR`: The fluid to be simulated.
+- `CFL=0.75`: The CFL condition to apply to `Δt`. Between zero and one, default `0.75`.
+- `max_tsteps`: Maximum number of time steps to take. Defaults to "very large".
+- `write_result=true`: Should output be written to disk?
+- `history_in_memory`: Should we keep whole history in memory?
+- `return_complete_result`: Should a complete record of the simulation be returned by this function?
+- `output_tag`: File name for the tape and output summary.
+- `thread_pool`: Which thread pool should be used? 
+    (currently unused, but this does multithread via Threads.@threads)
+"""
 function simulate_euler_equations(
     u0,
     T_end,
     boundary_conditions,
     bounds,
-    ncells,
-    gas::CaloricallyPerfectGas = DRY_AIR;
+    ncells;
+    gas::CaloricallyPerfectGas = DRY_AIR,
     cfl_limit = 0.75,
     max_tsteps = typemax(Int),
     write_result = true,
     return_complete_result = false,
     history_in_memory = false,
     output_tag = "euler_sim",
+    thread_pool = :default, 
 )
     N = length(ncells)
     @assert N == length(bounds) "ncells and bounds must match in length"
@@ -92,8 +154,9 @@ function simulate_euler_equations(
     if !write_result && !history_in_memory
         @info "Only the final value of the simulation will be returned." T_end
     end
-    u_history = Vector{typeof(u)}[]
-    t_history = Vector{eltype(u)}[]
+    u_history = typeof(u)[]
+    t_history = eltype(u)[]
+    @show u_history, eltype(u_history)
     if history_in_memory
         push!(u_history, copy(u))
         push!(t_history, t)
@@ -117,10 +180,13 @@ function simulate_euler_equations(
             is_speed_of_sound = any(st) do f
                 f.func == :speed_of_sound
             end
-            is_speed_of_sound || throw(err)
-            P_over_ρ = err.val / DRY_AIR.γ
-            @error "Non-physical state reached in simulation. 
+            if is_speed_of_sound
+                P_over_ρ = err.val / DRY_AIR.γ
+                @error "Non-physical state reached in simulation. 
                     Likely cause is a boundary interaction. Aborting simulation early." P_over_ρ e
+            else
+                @error "Unexpected DomainError!" err
+            end
             break
         end
         Δt = min(Δt, T_end - t)
@@ -193,5 +259,3 @@ function load_euler_sim(path; T = Float64, show_info = false)
         return EulerSim(ncells, n_tsteps, bounds, t, u)
     end
 end
-
-function save_euler_sim(path, e::EulerSim{N,NA,T}) where {N,NA,T} end
