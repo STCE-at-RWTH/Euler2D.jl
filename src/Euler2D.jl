@@ -6,6 +6,8 @@ using ShockwaveProperties
 using Unitful
 
 include("flux1d.jl")
+include("boundary_conditions.jl")
+include("cell.jl")
 # include("flux2d.jl")
 include("fvm.jl")
 include("simulations.jl")
