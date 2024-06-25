@@ -1,25 +1,25 @@
-abstract type CellBoundary end
+abstract type QuadCellFace end
 
-struct FacesCell{T} <: CellBoundary
+struct CellCellFace{T} <: QuadCellFace
     normal::SVector{2, T}
     other::Ref{QuadCell{T}}
 end
 
-struct FacesBoundary{T} <: CellBoundary 
+struct CellBoundaryFace{T} <: QuadCellFace 
     normal::SVector{2, T}
     boundary_condition::EdgeBoundary
 end
 
-NeighborsList = @NamedTuple begin
-    north::CellBoundary
-    south::CellBoundary
-    east::CellBoundary
-    west::CellBoundary
+QuadCellIFaces = NamedTuple{(:north, :south, :east, :west), <:NTuple{4, QuadCellFace}}
+
+struct Neighbor{T}
+    id
 end
 
-struct QuadCell
+struct QuadCell{T}
     id::Int
     u::ConservedProps
-    neighbors::NeighborsList
+    neighbors::NTuple{4, Int}
 end
 
+inward_normals(QuadCell{})

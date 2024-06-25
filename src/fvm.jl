@@ -152,7 +152,7 @@ function step_euler_hll!(u_next, u, Δt, dV, boundary_conditions, gas::Calorical
         # there must be a better way
         dims = ((i + 1 for i ∈ 1:N if i ≠ space_dim)...,)
         u_slices = collect(zip(eachslice(u_next; dims), eachslice(u; dims)))
-        Threads.@threads for i in eachindex(u_slices)
+        Threads.@threads for i ∈ eachindex(u_slices)
             u_next_slice, u_slice = u_slices[i]
             # compute flux difference
             bulk_step_1d_slice!(u_next_slice, u_slice, Δt, Δx, space_dim, gas)
