@@ -70,7 +70,7 @@ function plotframe(frame, data::EulerSim{1, 3, T}, bounds) where {T}
 	end
 	p_data = map(eachcol(u_data)) do u
 		c = ConservedProps(u)
-		return uconvert(u"Pa", pressure(c; gas=DRY_AIR))
+		return uconvert(u"Pa", pressure(c, DRY_AIR))
 	end
 	pressure_plot=plot(xs, p_data, ylabel=L"P", legend=false)
 	velocity_plot=plot(xs, v_data, ylabel=L"v", legend=false)
@@ -203,7 +203,7 @@ function plotframe2d(frame, data::EulerSim{2, 4, T}) where {T}
 	pressure_plot = heatmap(xs, ys, pressure_data, aspect_ratio=:equal)
 	density_plot = heatmap(xs, ys, u_data[1, :, :], aspect_ratio=:equal)
 
-	plot(pressure_plot, density_plot)
+	plot(density_plot, dpi=600, size=(1200, 800))
 end
 
 # ╔═╡ 001d96d7-115e-4eaa-a716-84fc4922f4f1
@@ -226,11 +226,11 @@ Tullio = "bc48ee85-29a4-5162-ae0b-a64e1601d4bc"
 Unitful = "1986cc42-f94f-5a68-af5c-568840ba703d"
 
 [compat]
-Euler2D = "~0.2.1"
+Euler2D = "~0.2.2"
 LaTeXStrings = "~1.3.1"
 Plots = "~1.40.4"
-PlutoUI = "~0.7.58"
-ShockwaveProperties = "~0.1.11"
+PlutoUI = "~0.7.59"
+ShockwaveProperties = "~0.2.0"
 Tullio = "~0.3.7"
 Unitful = "~1.20.0"
 """
@@ -241,13 +241,13 @@ PLUTO_MANIFEST_TOML_CONTENTS = """
 
 julia_version = "1.10.4"
 manifest_format = "2.0"
-project_hash = "2b9eee7289e101b7b9c88017ccdc59300173828d"
+project_hash = "386034839d4274195daed0066751eb81e4863ee2"
 
 [[deps.AbstractPlutoDingetjes]]
 deps = ["Pkg"]
-git-tree-sha1 = "c278dfab760520b8bb7e9511b968bf4ba38b7acc"
+git-tree-sha1 = "6e1d2a35f2f90a4bc7c2ed98079b2ba09c35b83a"
 uuid = "6e696c72-6542-2067-7265-42206c756150"
-version = "1.2.3"
+version = "1.3.2"
 
 [[deps.ArgTools]]
 uuid = "0dad84c5-d112-42e6-8d28-ef12dabb789f"
@@ -392,9 +392,9 @@ version = "0.0.20230411+0"
 
 [[deps.Euler2D]]
 deps = ["LinearAlgebra", "ShockwaveProperties", "Tullio", "Unitful", "UnitfulChainRules"]
-git-tree-sha1 = "4fe10953077fe27f303f11288d36bf2b35f6bee0"
+git-tree-sha1 = "1781a00b1b38998ff4b8acf805a5f406a90276ce"
 uuid = "c24a2923-03cb-4692-957a-ccd31f2ad327"
-version = "0.2.1"
+version = "0.2.2"
 
 [[deps.ExceptionUnwrapping]]
 deps = ["Test"]
@@ -460,15 +460,15 @@ version = "3.3.9+0"
 
 [[deps.GR]]
 deps = ["Artifacts", "Base64", "DelimitedFiles", "Downloads", "GR_jll", "HTTP", "JSON", "Libdl", "LinearAlgebra", "Preferences", "Printf", "Random", "Serialization", "Sockets", "TOML", "Tar", "Test", "p7zip_jll"]
-git-tree-sha1 = "ddda044ca260ee324c5fc07edb6d7cf3f0b9c350"
+git-tree-sha1 = "3e527447a45901ea392fe12120783ad6ec222803"
 uuid = "28b8d3ca-fb5f-59d9-8090-bfdbd6d07a71"
-version = "0.73.5"
+version = "0.73.6"
 
 [[deps.GR_jll]]
 deps = ["Artifacts", "Bzip2_jll", "Cairo_jll", "FFMPEG_jll", "Fontconfig_jll", "FreeType2_jll", "GLFW_jll", "JLLWrappers", "JpegTurbo_jll", "Libdl", "Libtiff_jll", "Pixman_jll", "Qt6Base_jll", "Zlib_jll", "libpng_jll"]
-git-tree-sha1 = "278e5e0f820178e8a26df3184fcb2280717c79b1"
+git-tree-sha1 = "182c478a179b267dd7a741b6f8f4c3e0803795d6"
 uuid = "d2c73de3-f751-5644-a686-071e5b155ba9"
-version = "0.73.5+0"
+version = "0.73.6+0"
 
 [[deps.Gettext_jll]]
 deps = ["Artifacts", "CompilerSupportLibraries_jll", "JLLWrappers", "Libdl", "Libiconv_jll", "Pkg", "XML2_jll"]
@@ -519,9 +519,9 @@ version = "0.9.5"
 
 [[deps.IOCapture]]
 deps = ["Logging", "Random"]
-git-tree-sha1 = "8b72179abc660bfab5e28472e019392b97d0985c"
+git-tree-sha1 = "b6d6bfdd7ce25b0f9b2f6b3dd56b2673a66c8770"
 uuid = "b5f81e59-6552-4d32-b1f0-c071b021bf89"
-version = "0.2.4"
+version = "0.2.5"
 
 [[deps.InteractiveUtils]]
 deps = ["Markdown"]
@@ -863,9 +863,9 @@ version = "1.40.4"
 
 [[deps.PlutoUI]]
 deps = ["AbstractPlutoDingetjes", "Base64", "ColorTypes", "Dates", "FixedPointNumbers", "Hyperscript", "HypertextLiteral", "IOCapture", "InteractiveUtils", "JSON", "Logging", "MIMEs", "Markdown", "Random", "Reexport", "URIs", "UUIDs"]
-git-tree-sha1 = "71a22244e352aa8c5f0f2adde4150f62368a3f2e"
+git-tree-sha1 = "ab55ee1510ad2af0ff674dbcced5e94921f867a9"
 uuid = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
-version = "0.7.58"
+version = "0.7.59"
 
 [[deps.PrecompileTools]]
 deps = ["Preferences"]
@@ -885,9 +885,9 @@ uuid = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 
 [[deps.Qt6Base_jll]]
 deps = ["Artifacts", "CompilerSupportLibraries_jll", "Fontconfig_jll", "Glib_jll", "JLLWrappers", "Libdl", "Libglvnd_jll", "OpenSSL_jll", "Vulkan_Loader_jll", "Xorg_libSM_jll", "Xorg_libXext_jll", "Xorg_libXrender_jll", "Xorg_libxcb_jll", "Xorg_xcb_util_cursor_jll", "Xorg_xcb_util_image_jll", "Xorg_xcb_util_keysyms_jll", "Xorg_xcb_util_renderutil_jll", "Xorg_xcb_util_wm_jll", "Zlib_jll", "libinput_jll", "xkbcommon_jll"]
-git-tree-sha1 = "37b7bb7aabf9a085e0044307e1717436117f2b3b"
+git-tree-sha1 = "492601870742dcd38f233b23c3ec629628c1d724"
 uuid = "c0090381-4147-56d7-9ebc-da0b1113ec56"
-version = "6.5.3+1"
+version = "6.7.1+1"
 
 [[deps.REPL]]
 deps = ["InteractiveUtils", "Markdown", "Sockets", "Unicode"]
@@ -940,10 +940,10 @@ version = "1.2.1"
 uuid = "9e88b42a-f829-5b0c-bbe9-9e923198166b"
 
 [[deps.ShockwaveProperties]]
-deps = ["ChainRulesCore", "LinearAlgebra", "Unitful", "UnitfulChainRules"]
-git-tree-sha1 = "b5c1b1cc410447f01e3a16ccd174af56a39d2310"
+deps = ["ChainRulesCore", "LinearAlgebra", "StaticArrays", "Unitful", "UnitfulChainRules"]
+git-tree-sha1 = "250b3a0984aba7a83337e46d09218faf07d3b918"
 uuid = "77d2bf28-a3e9-4b9c-9fcf-b85f74cc8a50"
-version = "0.1.11"
+version = "0.2.0"
 
 [[deps.Showoff]]
 deps = ["Dates", "Grisu"]
@@ -979,6 +979,22 @@ weakdeps = ["ChainRulesCore"]
 
     [deps.SpecialFunctions.extensions]
     SpecialFunctionsChainRulesCoreExt = "ChainRulesCore"
+
+[[deps.StaticArrays]]
+deps = ["LinearAlgebra", "PrecompileTools", "Random", "StaticArraysCore"]
+git-tree-sha1 = "6e00379a24597be4ae1ee6b2d882e15392040132"
+uuid = "90137ffa-7385-5640-81b9-e52037218182"
+version = "1.9.5"
+weakdeps = ["ChainRulesCore", "Statistics"]
+
+    [deps.StaticArrays.extensions]
+    StaticArraysChainRulesCoreExt = "ChainRulesCore"
+    StaticArraysStatisticsExt = "Statistics"
+
+[[deps.StaticArraysCore]]
+git-tree-sha1 = "192954ef1208c7019899fbf8049e717f92959682"
+uuid = "1e83bf80-4336-4d27-bf5d-d5a4f845583c"
+version = "1.4.3"
 
 [[deps.Statistics]]
 deps = ["LinearAlgebra", "SparseArrays"]
@@ -1023,9 +1039,9 @@ deps = ["InteractiveUtils", "Logging", "Random", "Serialization"]
 uuid = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [[deps.TranscodingStreams]]
-git-tree-sha1 = "a947ea21087caba0a798c5e494d0bb78e3a1a3a0"
+git-tree-sha1 = "d73336d81cafdc277ff45558bb7eaa2b04a8e472"
 uuid = "3bb67fe8-82b1-5028-8e26-92a6c54297fa"
-version = "0.10.9"
+version = "0.10.10"
 weakdeps = ["Random", "Test"]
 
     [deps.TranscodingStreams.extensions]
@@ -1424,7 +1440,7 @@ version = "1.4.1+1"
 # ╠═601460fe-f9fb-4d72-8c7e-74660ae62a67
 # ╠═70618278-9bff-40b1-873f-87a6377b8319
 # ╠═9638073a-c4ca-4113-8d24-fc5630df1af0
-# ╠═001d96d7-115e-4eaa-a716-84fc4922f4f1
+# ╟─001d96d7-115e-4eaa-a716-84fc4922f4f1
 # ╠═8c0ea7bf-5eb3-4dcd-85bb-8dfdc1a786af
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

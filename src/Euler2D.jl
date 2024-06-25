@@ -3,12 +3,13 @@ module Euler2D
 using LinearAlgebra
 using Tullio
 using ShockwaveProperties
+using StaticArrays
 using Unitful
 
 include("flux1d.jl")
 include("boundary_conditions.jl")
 include("cell.jl")
-# include("flux2d.jl")
+include("structured_quad_mesh.jl")
 include("fvm.jl")
 include("simulations.jl")
 
