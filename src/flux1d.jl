@@ -12,12 +12,12 @@ Outputs a matrix with one column for each space dimension.
 function F_euler(u, gas::CaloricallyPerfectGas)
     ρv = @view u[2:end-1]
     v = ρv / u[1]
-    P = ustrip(pressure(u[1], ρv, u[end]; gas))
+    P = ustrip(pressure(u[1], ρv, u[end], gas))
     return vcat(ρv', ρv * v' + I * P, (v * (u[end] + P))')
 end
 
 function F_euler(u::ConservedProps, gas::CaloricallyPerfectGas)
-    P = pressure(u; gas)
+    P = pressure(u, gas)
     v = velocity(u)
     return vcat(
         momentum_density(u)',
@@ -35,14 +35,14 @@ F_n(u, n̂, gas::CaloricallyPerfectGas) = F_euler(u, gas) * n̂
 
 # do we need the multiple eigenvalues in the middle? I do not know...
 """
-    eigenvalues_∇F(u, dims; gas)
+    eigenvalues_∇F(u, dims, gas)
 
 Computes the eigenvalues of the Jacobian of the Euler flux function in each of `dims`, 
 which may be a vector/slice of indices or single index.
 """
 function eigenvalues_∇F_euler(u, dims, gas::CaloricallyPerfectGas)
     v = @view u[2:end-1]
-    a = ustrip(speed_of_sound(u[1], v, u[end]; gas))
+    a = ustrip(speed_of_sound(u[1], v, u[end], gas))
     out = reduce(vcat, ((v[dims] / u[1])' for i ∈ 1:length(u)))
     @. out[1, :] -= a
     @. out[end, :] += a
@@ -58,7 +58,7 @@ We compute enthalphy density `ρH` as the sum of internal energy density and pre
 See Equations 10 and 11 in Roe.
 """
 function roe_parameter_vector(u, gas::CaloricallyPerfectGas)
-    rhoH = ustrip(total_enthalpy_density(u[1], u[2:end-1], u[end]; gas))
+    rhoH = ustrip(total_enthalpy_density(u[1], u[2:end-1], u[end], gas))
     return vcat(u[1], u[2:end-1], rhoH) ./ sqrt(u[1])
 end
 

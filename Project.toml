@@ -1,7 +1,7 @@
 name = "Euler2D"
 uuid = "c24a2923-03cb-4692-957a-ccd31f2ad327"
 authors = ["Alexander Fleming <fleming@stce.rwth-aachen.de>"]
-version = "0.2.2"
+version = "0.2.4"
 
 [deps]
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
@@ -12,7 +12,7 @@ Unitful = "1986cc42-f94f-5a68-af5c-568840ba703d"
 UnitfulChainRules = "f31437dd-25a7-4345-875f-756556e6935d"
 
 [compat]
-ShockwaveProperties = ">= 0.1.10"
+ShockwaveProperties = ">=0.2.0"
 
 [extras]
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
