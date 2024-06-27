@@ -202,7 +202,7 @@ function plotframe2d(frame, data::EulerSim{2, 4, T}) where {T}
 	end
 	pressure_plot = heatmap(xs, ys, pressure_data, aspect_ratio=:equal, xlabel=L"x", ylabel=L"y", colorbar_title="P")
 	density_plot = heatmap(xs, ys, u_data[1, :, :], aspect_ratio=:equal)
-	titlestr = @sprintf("n=%d, t=%1.4e", frame, t)
+	titlestr = @sprintf("n=%3d, t=%1.4e", frame, t)
 	plot(pressure_plot, dpi=600, size=(1200, 1200), title=titlestr, titlefontface="Computer Modern", titlefontsize=18)
 end
 
