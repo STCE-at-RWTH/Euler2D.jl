@@ -10,7 +10,7 @@ Outputs a matrix with one column for each space dimension.
 This will strip out units, and convert down to metric base units in the process. 
 """
 function F_euler(u, gas::CaloricallyPerfectGas)
-    ρv = SVector{length(u)-2}(u[2:end-1])
+    ρv = SVector{length(u) - 2}(u[2:end-1])
     v = SVector{length(ρv)}(ρv / u[1])
     P = ustrip(u"Pa", pressure(u[1], ρv, u[end], gas))
     return vcat(ρv', ρv * v' + I * P, (v * (u[end] + P))')
@@ -107,7 +107,10 @@ struct RoeProps{N,DTYPE,U1<:RoeDensity{DTYPE},U2<:RoeMomentum{DTYPE},U3<:RoeEner
     ρE::U3
 end
 
-function roe_parameter_vector(u::ConservedProps{N,T,Q1,Q2,Q3}, gas::CaloricallyPerfectGas) where {N, T, Q1, Q2, Q3}
+function roe_parameter_vector(
+    u::ConservedProps{N,T,Q1,Q2,Q3},
+    gas::CaloricallyPerfectGas,
+) where {N,T,Q1,Q2,Q3}
     ρH = ustrip(ShockwaveProperties._units_ρE, total_enthalpy_density(u, gas))
     root_rho = sqrt(ustrip(ShockwaveProperties._units_ρ, density(u)))
     return SVector{N + 2}(

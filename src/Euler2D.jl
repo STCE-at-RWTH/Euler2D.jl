@@ -9,7 +9,7 @@ using Unitful
 include("flux1d.jl")
 include("boundary_conditions.jl")
 include("fvm.jl")
-include("cell_simulations.jl")
+# include("cell_simulations.jl")
 include("array_simulations.jl")
 
 # boundary condition types

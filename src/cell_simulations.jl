@@ -1,8 +1,13 @@
+using Euler2D
+using Euler2D: nneighbors
 using LinearAlgebra
+using ShockwaveProperties
 using ShockwaveProperties: MomentumDensity, EnergyDensity
+using StaticArrays
+using Unitful
 using Unitful: Density
 
-mutable struct RegularQuadCell{T,Q1<:Density,Q2<:MomentumDensity,Q3<:EnergyDensity}
+struct RegularQuadCell{T,Q1<:Density,Q2<:MomentumDensity,Q3<:EnergyDensity}
     id::Int
     idx::CartesianIndex{2}
     center::Tuple{T,T}
@@ -97,15 +102,14 @@ function active_cell_ids_from_mask(active_mask)
     return cell_ids
 end
 
-const _cell_neighbor_offsets = (
-    north = CartesianIndex(0, 1),
-    south = CartesianIndex(0, -1),
-    east = CartesianIndex(1, 0),
-    west = CartesianIndex(-1, 0),
-)
-
 function cell_neighbor_status(i, cell_ids, active_mask)
     idx = CartesianIndices(size(cell_ids))[i]
+    _cell_neighbor_offsets = (
+        north = CartesianIndex(0, 1),
+        south = CartesianIndex(0, -1),
+        east = CartesianIndex(1, 0),
+        west = CartesianIndex(-1, 0),
+    )
     map(_cell_neighbor_offsets) do offset
         neighbor = idx + offset
         if neighbor[1] < 1
@@ -146,15 +150,19 @@ function quadcell_list_and_id_grid(u0, bounds, ncells, obstacles)
     return cell_list, active_ids
 end
 
-function phantom_neighbor(cell, active_cells, dir, bc, gas)
-    boundary_neighbors_u = Matrix{dtype(cell),2}(undef, (4, nneighbors(bc)))
-    opposite_dir = _cardinals_dirs_opposites[dir]
-    cur = Ref(cell)
+function phantom_neighbor(id, active_cells, dir, bc, gas)
+    boundary_neighbors_u = Matrix{dtype(active_cells[id])}(undef, (4, nneighbors(bc)))
+    cardinal_dirs_opposites = (north = :south, south = :north, east = :west, west = :east)
+    cardinal_dirs_dims = (north = 2, south = 2, east = 1, west = 1)
+    opposite_dir = cardinal_dirs_opposites[dir]
+
+    cur = Ref(active_cells[id])
     for col ∈ eachcol(boundary_neighbors_u)
         col .= state_to_vector(cur[].u)
-        cur = Ref(active_cells[cell.neighbors[opposite_dir]])
+        cur = Ref(active_cells[cur[].neighbors[opposite_dir][2]])
     end
-    dim = _cardinal_dirs_dims[dir]
+
+    dim = cardinal_dirs_dims[dir]
     reverse_bc = _cardinal_dirs_reverse_bcs[dir] && reverse_right_edge(bc)
     if reverse_bc
         boundary_neighbors_u[dim+1, :] .*= -1
@@ -172,23 +180,40 @@ function single_cell_neighbor_data(
     boundary_conditions,
     gas::CaloricallyPerfectGas,
 )
-    center_cell = active_cells[id]
-    return map(pairs(center_cell.neighbors)) do (dir, (kind, id))
+    neighbors = active_cells[id].neighbors
+    map(ntuple(i -> ((keys(neighbors)[i], neighbors[i])), 4)) do (dir, (kind, id))
         if kind == :boundary
-            return phantom_neighbor(
-                center_cell,
-                active_cells,
-                dir,
-                boundary_conditions[id],
-                gas,
-            )
+            return phantom_neighbor(id, active_cells, dir, boundary_conditions[id], gas)
         else
             return state_to_vector(active_cells[id].u)
         end
-    end
+    end |> NamedTuple{(:north, :south, :east, :west)}
 end
 
-function compute_cell_update(cell, neighbors)
+function compute_cell_update(cell_id, cell_data, neighbor_data, Δx, Δy, gas)
+    ifaces = (
+        north = (2, Ref(cell_data), Ref(neighbor_data.north)),
+        south = (2, Ref(neighbor_data.south), Ref(cell_data)),
+        east = (1, Ref(cell_data), Ref(neighbor_data.east)),
+        west = (1, Ref(neighbor_data.west), Ref(cell_data)),
+    )
+
+    maximum_signal_speed = mapreduce(max, ifaces) do (dim, uL, uR)
+        max(abs.(interface_signal_speeds(uL[], uR[], dim, gas))...)
+    end
+
+    ϕ = map(ifaces) do (dim, uL, uR)
+        ϕ_hll(uL[], uR[], dim, gas)
+    end
+    # we want to write this as u_next = u + Δt * diff
+    Δu = inv(Δx) * (ϕ.west - ϕ.east) + inv(Δy) * (ϕ.south - ϕ.north)
+
+    return (cell_id, maximum_signal_speed, Δu)
+end
+
+function step_cell_simulation()
+    
+end
 
 struct CellBasedEulerSim{T}
     ncells::Tuple{T,T}
