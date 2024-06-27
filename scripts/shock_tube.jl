@@ -9,19 +9,19 @@ using Unitful
 vL = [0.0u"m/s", 0.0u"m/s"]
 PL = 10.0u"Pa"
 TL = uconvert(u"K", PL / (ρL * DRY_AIR.R))
-ML = vL / speed_of_sound(ρL, PL; gas = DRY_AIR)
+ML = vL / speed_of_sound(ρL, PL, DRY_AIR)
 
 ρR = 0.125 * ρL
 vR = [0.0u"m/s", 0.0u"m/s"]
 PR = 0.1 * PL
 TR = uconvert(u"K", PR / (ρR * DRY_AIR.R))
-MR = vR / speed_of_sound(ρR, PR; gas = DRY_AIR)
+MR = vR / speed_of_sound(ρR, PR, DRY_AIR)
 
-s_high = ConservedProps(PrimitiveProps(ρL, [ML[1]], TL); gas = DRY_AIR)
-s_low = ConservedProps(PrimitiveProps(ρR, [MR[2]], TR); gas = DRY_AIR)
+s_high = ConservedProps(PrimitiveProps(ρL, [ML[1]], TL), DRY_AIR)
+s_low = ConservedProps(PrimitiveProps(ρR, [MR[2]], TR), DRY_AIR)
 
-s_high_2d = ConservedProps(PrimitiveProps(ρL, ML, TL); gas = DRY_AIR)
-s_low_2d = ConservedProps(PrimitiveProps(ρR, MR, TR); gas = DRY_AIR)
+s_high_2d = ConservedProps(PrimitiveProps(ρL, ML, TL), DRY_AIR)
+s_low_2d = ConservedProps(PrimitiveProps(ρR, MR, TR), DRY_AIR)
 
 u0_1d(x) = state_to_vector(x < 0.5 ? s_high : s_low)
 u0_2d(x, y) = state_to_vector(x < 0.5 ? s_high_2d : s_low_2d)

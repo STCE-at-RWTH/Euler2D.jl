@@ -156,7 +156,7 @@ struct SupersonicInflow <: PhantomEdge{1}
     prescribed_state::ConservedProps
 
     function SupersonicInflow(u::ConservedProps, gas::CaloricallyPerfectGas)
-        all(>(1.0), mach_number(u; gas)) ||
+        all(>(1.0), mach_number(u, gas)) ||
             ArgumentError("Cannot construct a supersonic inflow boundary with M_∞ ≤ 1.0!")
         return new(u)
     end

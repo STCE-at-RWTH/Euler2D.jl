@@ -156,7 +156,6 @@ function simulate_euler_equations(
     end
     u_history = typeof(u)[]
     t_history = eltype(u)[]
-    @show u_history, eltype(u_history)
     if history_in_memory
         push!(u_history, copy(u))
         push!(t_history, t)
@@ -239,7 +238,7 @@ function simulate_euler_equations(
     )
 end
 
-function load_euler_sim(path; T = Float64, show_info = false)
+function load_euler_sim(path; T = Float64, show_info = true)
     return open(path, "r") do f
         n_tsteps = read(f, Int)
         N = read(f, Int)
