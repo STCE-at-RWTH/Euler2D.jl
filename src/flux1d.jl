@@ -1,29 +1,46 @@
-## 1D Riemann problem for the euler equations
-
-using LinearAlgebra
-using ShockwaveProperties
+using Unitful: Temperature, Pressure, Density, Velocity, @derived_dimension
+using Unitful: 𝐋, 𝐓, 𝐌, 𝚯, 𝐍
 
 """
     F_euler(u, gas)
 
 Computes the value of the flux function ``F(u)`` for the Euler equations.
 Outputs a matrix with one column for each space dimension.
+
+This will strip out units, and convert down to metric base units in the process. 
 """
 function F_euler(u, gas::CaloricallyPerfectGas)
-    ρv = @view u[2:end-1]
-    v = ρv / u[1]
-    P = ustrip(pressure(u[1], ρv, u[end], gas))
+    ρv = SVector{length(u)-2}(u[2:end-1])
+    v = SVector{length(ρv)}(ρv / u[1])
+    P = ustrip(u"Pa", pressure(u[1], ρv, u[end], gas))
     return vcat(ρv', ρv * v' + I * P, (v * (u[end] + P))')
 end
 
 function F_euler(u::ConservedProps, gas::CaloricallyPerfectGas)
-    P = pressure(u, gas)
-    v = velocity(u)
+    P = ustrip(u"Pa", pressure(u, gas))
+    v = ustrip.(u"m/s", velocity(u))
     return vcat(
-        momentum_density(u)',
-        momentum_density(u) * v' + I * P,
-        (v * (total_internal_energy_density(u) + P))',
+        ustrip.(ShockwaveProperties._units_ρv, momentum_density(u))',
+        ustrip.(ShockwaveProperties._units_ρv, momentum_density(u)) * v' + I * P,
+        (
+            v *
+            (ustrip(ShockwaveProperties._units_ρE, total_internal_energy_density(u)) + P)
+        )',
     )
+end
+
+"""
+    apply_units_F(F; units)
+
+Re-apply SI base units to the columns of the flux array.
+"""
+function apply_units_F(
+    F_unitless;
+    units = (1.0u"kg*m^-2*s^-1", 1.0u"kg*m^-1*s^2", 1.0u"kg*m^-1*s^2", 1.0u"kg*s^-3"),
+)
+    return stack(eachcol(F_unitless)) do Fi
+        Fi .* units
+    end
 end
 
 """
@@ -40,12 +57,27 @@ F_n(u, n̂, gas::CaloricallyPerfectGas) = F_euler(u, gas) * n̂
 Computes the eigenvalues of the Jacobian of the Euler flux function in each of `dims`, 
 which may be a vector/slice of indices or single index.
 """
-function eigenvalues_∇F_euler(u, dims, gas::CaloricallyPerfectGas)
+function eigenvalues_∇F_euler(u::AbstractVector, dims, gas::CaloricallyPerfectGas)
     v = @view u[2:end-1]
     a = ustrip(speed_of_sound(u[1], v, u[end], gas))
-    out = reduce(vcat, ((v[dims] / u[1])' for i ∈ 1:length(u)))
-    @. out[1, :] -= a
-    @. out[end, :] += a
+    eminus = SMatrix{1,length(dims)}((v[dims] .- a)')
+    esonic = SMatrix{1,length(dims)}.((v[dims] for i ∈ dims))
+    eplus = SMatrix{1,length(dims)}((v[dims] .+ a)')
+    out = vcat(eminus, esonic..., eplus)
+    return out
+end
+
+function eigenvalues_∇F_euler(
+    u::ConservedProps{N,T,Q1,Q2,Q3},
+    dims,
+    gas::CaloricallyPerfectGas,
+) where {N,T,Q1,Q2,Q3}
+    v = ustrip.(u"m/s", velocity(u))
+    a = ustrip(u"m/s", speed_of_sound(u, gas))
+    eminus = SMatrix{1,length(dims)}((v[dims] .- a)')
+    esonic = SMatrix{1,length(dims)}.((v[dims] for i ∈ dims))
+    eplus = SMatrix{1,length(dims)}((v[dims] .+ a)')
+    out = vcat(eminus, esonic..., eplus)
     return out
 end
 
@@ -58,8 +90,31 @@ We compute enthalphy density `ρH` as the sum of internal energy density and pre
 See Equations 10 and 11 in Roe.
 """
 function roe_parameter_vector(u, gas::CaloricallyPerfectGas)
-    rhoH = ustrip(total_enthalpy_density(u[1], u[2:end-1], u[end], gas))
+    rhoH = ustrip(total_enthalpy_density(u[1], @view(u[2:end-1]), u[end], gas))
     return vcat(u[1], u[2:end-1], rhoH) ./ sqrt(u[1])
+end
+
+@derived_dimension RoeDensity 𝐌^(1 / 2) * 𝐋^(-3 / 2)
+@derived_dimension RoeMomentum 𝐌^(1 / 2) * 𝐋^(-1 / 2) * 𝐓^-1
+@derived_dimension RoeEnergy 𝐌^(1 / 2) * 𝐋^(1 / 2) * 𝐓^-2
+
+"""
+    RoeProps{N, T, U1, U2, U3}
+"""
+struct RoeProps{N,DTYPE,U1<:RoeDensity{DTYPE},U2<:RoeMomentum{DTYPE},U3<:RoeEnergy{DTYPE}}
+    ρ::U1
+    ρv::SVector{N,U2}
+    ρE::U3
+end
+
+function roe_parameter_vector(u::ConservedProps{N,T,Q1,Q2,Q3}, gas::CaloricallyPerfectGas) where {N, T, Q1, Q2, Q3}
+    ρH = ustrip(ShockwaveProperties._units_ρE, total_enthalpy_density(u, gas))
+    root_rho = sqrt(ustrip(ShockwaveProperties._units_ρ, density(u)))
+    return SVector{N + 2}(
+        root_rho,
+        (ustrip.(ShockwaveProperties._units_ρv, momentum_density(u)) ./ root_rho)...,
+        ρH / root_rho,
+    )
 end
 
 """
@@ -75,9 +130,10 @@ function roe_matrix_eigenvalues(uL, uR, dims, gas::CaloricallyPerfectGas)
     v̄ = w̄[2:end-1] / w̄[1]
     H̄ = w̄[end] / w̄[1]
     a = sqrt((gas.γ - 1) * (H̄ - (v̄ ⋅ v̄) / 2))
-    out = reduce(vcat, (v̄[dims]' for i ∈ eachindex(w̄)))
-    @. out[1, :] -= a
-    @. out[end, :] += a
+    eminus = SMatrix{1,length(dims)}((v̄[dims] .- a)')
+    esonic = SMatrix{1,length(dims)}.((v̄[dims] for i ∈ dims))
+    eplus = SMatrix{1,length(dims)}((v̄[dims] .+ a)')
+    out = vcat(eminus, esonic..., eplus)
     return out
 end
 

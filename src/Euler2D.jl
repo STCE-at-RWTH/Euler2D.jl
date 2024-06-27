@@ -8,10 +8,9 @@ using Unitful
 
 include("flux1d.jl")
 include("boundary_conditions.jl")
-include("cell.jl")
-include("structured_quad_mesh.jl")
 include("fvm.jl")
-include("simulations.jl")
+include("cell_simulations.jl")
+include("array_simulations.jl")
 
 # boundary condition types
 export BoundaryCondition, PeriodicAxis, EdgeBoundary
