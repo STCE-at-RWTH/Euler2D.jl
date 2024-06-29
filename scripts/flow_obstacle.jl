@@ -1,4 +1,6 @@
 using Euler2D
+using Euler2D: quadcell_list_and_id_grid
+using Euler2D: ϕ_hll
 using LinearAlgebra
 using ShockwaveProperties
 using StaticArrays

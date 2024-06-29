@@ -10,7 +10,7 @@ using Unitful: Density
 struct RegularQuadCell{T,Q1<:Density,Q2<:MomentumDensity,Q3<:EnergyDensity}
     id::Int
     idx::CartesianIndex{2}
-    center::Tuple{T,T}
+    center::SVector{2,T}
     u::ConservedProps{2,T,Q1,Q2,Q3}
     # either (:boundary, :cell)
     # and then the ID of the appropriate boundary
@@ -75,6 +75,8 @@ function point_inside(s::TriangularObstacle, pt)
         (p2 - p1) ⋅ (pt - p1) > 0
     end
 end
+
+point_inside(s::Obstacle, q::RegularQuadCell) = point_inside(s, q.center)
 
 function active_cell_mask(cell_centers_x, cell_centers_y, obstacles)
     return map(Iterators.product(cell_centers_x, cell_centers_y)) do pt
@@ -151,7 +153,7 @@ function quadcell_list_and_id_grid(u0, bounds, ncells, obstacles)
         x_i = centers[1][m]
         y_j = centers[2][n]
         neighbors = cell_neighbor_status(i, active_ids, active_mask)
-        cell_list[j] = RegularQuadCell(j, i, (x_i, y_j), u0_grid[i], neighbors)
+        cell_list[j] = RegularQuadCell(j, i, SVector(x_i, y_j), u0_grid[i], neighbors)
     end
     return cell_list, active_ids
 end
@@ -219,8 +221,8 @@ function compute_cell_update(cell_data, neighbor_data, Δx, Δy, gas)
 end
 
 function compute_next_u(cell, Δt, Δu)
-    u_next = state_to_vector(active_cells[i]) + Δt * update_infos[i].cell_Δu
-    RegularQuadCell(cell.id, cell.idx, cell.center, u_next, cell.neightbors)
+    u_next = state_to_vector(cell.u) + Δt * Δu
+    RegularQuadCell(cell.id, cell.idx, cell.center, ConservedProps(u_next), cell.neighbors)
 end
 
 function step_cell_simulation!(
@@ -234,18 +236,18 @@ function step_cell_simulation!(
 )
     T = dtype(active_cells[1])
     step_tasks = map(enumerate(active_cells)) do (idx, cell)
-        n_data = single_cell_neighbor_data($idx, active_cells, $boundary_conditions, $gas)
+        n_data = single_cell_neighbor_data(idx, active_cells, boundary_conditions, gas)
         c_data = state_to_vector(cell.u)
         Threads.@spawn begin
             return compute_cell_update(c_data, n_data, $Δx, $Δy, $gas)
         end
     end
-    update_infos::Vector{Tuple{Int,T,SVector{4,T}}} = fetch.(step_tasks)
+    update_infos::Vector{@NamedTuple{cell_speed::T, cell_Δu::SVector{4,T}}} =
+        fetch.(step_tasks)
     a_max = mapreduce(el -> el.cell_speed, max, update_infos)
     Δt = cfl_limit * Δx / a_max
     for i ∈ eachindex(update_infos, cells_next, active_cells)
-        u_next = state_to_vector(active_cells[i]) + Δt * update_infos[i].cell_Δu
-        cells_next[i] = RegularQuadCell(active_cells[i].id)
+        cells_next[i] = compute_next_u(active_cells[i], Δt, update_infos[i].cell_Δu)
     end
 end
 
