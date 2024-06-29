@@ -10,7 +10,7 @@ Outputs a matrix with one column for each space dimension.
 This will strip out units, and convert down to metric base units in the process. 
 """
 function F_euler(u, gas::CaloricallyPerfectGas)
-    ρv = SVector{length(u) - 2}(u[2:end-1])
+    ρv = SVector{length(u) - 2}(@view(u[2:end-1])...)
     v = SVector{length(ρv)}(ρv / u[1])
     P = ustrip(u"Pa", pressure(u[1], ρv, u[end], gas))
     return vcat(ρv', ρv * v' + I * P, (v * (u[end] + P))')
@@ -21,7 +21,7 @@ function F_euler(u::ConservedProps, gas::CaloricallyPerfectGas)
     v = ustrip.(u"m/s", velocity(u))
     return vcat(
         ustrip.(ShockwaveProperties._units_ρv, momentum_density(u))',
-        ustrip.(ShockwaveProperties._units_ρv, momentum_density(u)) * v' + I * P,
+        ustrip.(ShockwaveProperties._units_ρv, momentum_density(u)) .* v' + I * P,
         (
             v *
             (ustrip(ShockwaveProperties._units_ρE, total_internal_energy_density(u)) + P)
@@ -54,31 +54,22 @@ F_n(u, n̂, gas::CaloricallyPerfectGas) = F_euler(u, gas) * n̂
 """
     eigenvalues_∇F(u, dims, gas)
 
-Computes the eigenvalues of the Jacobian of the Euler flux function in each of `dims`, 
-which may be a vector/slice of indices or single index.
+Computes the eigenvalues of the Jacobian of the Euler flux function in dimension `dim`.
 """
-function eigenvalues_∇F_euler(u::AbstractVector, dims, gas::CaloricallyPerfectGas)
+function eigenvalues_∇F_euler(u::AbstractVector, dim, gas::CaloricallyPerfectGas)
     v = @view u[2:end-1]
     a = ustrip(speed_of_sound(u[1], v, u[end], gas))
-    eminus = SMatrix{1,length(dims)}((v[dims] .- a)')
-    esonic = SMatrix{1,length(dims)}.((v[dims] for i ∈ dims))
-    eplus = SMatrix{1,length(dims)}((v[dims] .+ a)')
-    out = vcat(eminus, esonic..., eplus)
-    return out
+    return SVector(v[dim] - a, ntuple(Returns(v[dim]), length(v))..., v[dim] + a)
 end
 
 function eigenvalues_∇F_euler(
     u::ConservedProps{N,T,Q1,Q2,Q3},
-    dims,
+    dim,
     gas::CaloricallyPerfectGas,
 ) where {N,T,Q1,Q2,Q3}
     v = ustrip.(u"m/s", velocity(u))
     a = ustrip(u"m/s", speed_of_sound(u, gas))
-    eminus = SMatrix{1,length(dims)}((v[dims] .- a)')
-    esonic = SMatrix{1,length(dims)}.((v[dims] for i ∈ dims))
-    eplus = SMatrix{1,length(dims)}((v[dims] .+ a)')
-    out = vcat(eminus, esonic..., eplus)
-    return out
+    return SVector(v[dim] - a, ntuple(Returns(v[dim])..., length(v))..., v[dim] + a)
 end
 
 """
@@ -91,7 +82,7 @@ See Equations 10 and 11 in Roe.
 """
 function roe_parameter_vector(u, gas::CaloricallyPerfectGas)
     rhoH = ustrip(total_enthalpy_density(u[1], @view(u[2:end-1]), u[end], gas))
-    return vcat(u[1], u[2:end-1], rhoH) ./ sqrt(u[1])
+    return SVector(u[1], @view(u[2:end-1])..., rhoH) ./ sqrt(u[1])
 end
 
 @derived_dimension RoeDensity 𝐌^(1 / 2) * 𝐋^(-3 / 2)
@@ -125,7 +116,7 @@ end
 
 Find the eigenvalues of the Roe matrix at the boundary determined by ``uL`` and ``uR``. 
 """
-function roe_matrix_eigenvalues(uL, uR, dims, gas::CaloricallyPerfectGas)
+function roe_matrix_eigenvalues(uL, uR, dim, gas::CaloricallyPerfectGas)
     wL = roe_parameter_vector(uL, gas)
     wR = roe_parameter_vector(uR, gas)
     # take arithmetic mean of the left and right states
@@ -133,11 +124,7 @@ function roe_matrix_eigenvalues(uL, uR, dims, gas::CaloricallyPerfectGas)
     v̄ = w̄[2:end-1] / w̄[1]
     H̄ = w̄[end] / w̄[1]
     a = sqrt((gas.γ - 1) * (H̄ - (v̄ ⋅ v̄) / 2))
-    eminus = SMatrix{1,length(dims)}((v̄[dims] .- a)')
-    esonic = SMatrix{1,length(dims)}.((v̄[dims] for i ∈ dims))
-    eplus = SMatrix{1,length(dims)}((v̄[dims] .+ a)')
-    out = vcat(eminus, esonic..., eplus)
-    return out
+    return SVector(v̄[dim] - a, ntuple(Returns(v̄[dim]), length(uL) - 2)..., v̄[dim] + a)
 end
 
 """
@@ -168,10 +155,10 @@ Compute the HLL numerical flux across the L-R boundary.
 - `dim` : Direction to calculate F_hll
 """
 function ϕ_hll(uL, uR, dim, gas::CaloricallyPerfectGas)
-    fL = F_euler(uL, gas)[:, dim]
-    fR = F_euler(uR, gas)[:, dim]
+    fL = F_euler(uL, gas)
+    fR = F_euler(uR, gas)
     sL, sR = interface_signal_speeds(uL, uR, dim, gas)
-    return ϕ_hll(uL, uR, fL, fR, sL, sR)
+    return ϕ_hll(uL, uR, SVector(@view(fL[:, dim])...), SVector(@view(fR[:, dim])...), sL, sR)
 end
 
 """
@@ -184,7 +171,7 @@ Compute the HLL numerical flux across the L-R boundary.
 """
 function ϕ_hll(uL, uR, fL, fR, dim, gas::CaloricallyPerfectGas)
     sL, sR = interface_signal_speeds(uL, uR, dim, gas)
-    return ϕ_hll(uL, uR, @view(fL[:, dim]), @view(fR[:, dim]), sL, sR)
+    return ϕ_hll(uL, uR, SVector(@view(fL[:, dim])...), SVector(@view(fR[:, dim])...), sL, sR)
 end
 
 """

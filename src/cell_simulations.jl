@@ -1,5 +1,5 @@
 using Euler2D
-using Euler2D: nneighbors
+using Euler2D: nneighbors, phantom_cell, reverse_right_edge, ϕ_hll
 using LinearAlgebra
 using ShockwaveProperties
 using ShockwaveProperties: MomentumDensity, EnergyDensity
@@ -39,11 +39,6 @@ end
 
 inward_normals(c::RegularQuadCell) = inward_normals(dtype(c))
 outward_normals(c::RegularQuadCell) = outward_normals(dtype(c))
-
-const _cardinal_dirs_dims = (north = 2, south = 2, east = 1, west = 1)
-const _cardinal_dirs_opposites =
-    (north = :south, south = :north, east = :west, west = :east)
-const _cardinal_dirs_reverse_bcs = (north = true, south = false, east = false, west = true)
 
 abstract type Obstacle end
 
@@ -128,50 +123,62 @@ function cell_neighbor_status(i, cell_ids, active_mask)
     end
 end
 
+props_dtype(::ConservedProps{N,T,U1,U2,U3}) where {N,T,U1,U2,U3} = T
+props_unitstypes(::ConservedProps{N,T,U1,U2,U3}) where {N,T,U1,U2,U3} = (U1, U2, U3)
+function quadcell_dtype(::ConservedProps{N,T,U1,U2,U3}) where {N,T,U1,U2,U3}
+    return RegularQuadCell{T,U1,U2,U3}
+end
+
 function quadcell_list_and_id_grid(u0, bounds, ncells, obstacles)
-    faces = map(zip(bounds, ncells)) do (b, n)
-        range(b...; length = n + 1)
+    centers = map(zip(bounds, ncells)) do (b, n)
+        v = range(b...; length = n + 1)
+        return v[1:end-1] .+ step(v) / 2
     end
-    centers = map(faces) do f
-        f[1:(end-1)] .+ step(f) / 2
-    end
+
     dx, dy = step.(centers)
+    # u0 is probably cheap
+    u0_grid = map(u0, Iterators.product(centers...))
+
     active_mask = active_cell_mask(centers..., obstacles)
     active_ids = active_cell_ids_from_mask(active_mask)
-    cell_list = map(eachindex(IndexCartesian(), active_ids)) do idx
-        (i, j) = Tuple(idx)
-        x_i = centers[1][i]
-        y_j = centers[2][j]
-        u = u0(x_i, y_j)
-        neighbors = cell_neighbor_status(idx, active_ids, active_mask)
+    @assert sum(active_mask) == last(active_ids)
 
-        RegularQuadCell(active_ids[idx], idx, (x_i, y_j), u, neighbors)
+    cell_list = Vector{quadcell_dtype(first(u0_grid))}(undef, sum(active_mask))
+    for i ∈ eachindex(IndexCartesian(), active_ids, active_mask)
+        active_mask[i] || continue
+        j = active_ids[i]
+        (m, n) = Tuple(i)
+        x_i = centers[1][m]
+        y_j = centers[2][n]
+        neighbors = cell_neighbor_status(i, active_ids, active_mask)
+        cell_list[j] = RegularQuadCell(j, i, (x_i, y_j), u0_grid[i], neighbors)
     end
     return cell_list, active_ids
 end
 
 function phantom_neighbor(id, active_cells, dir, bc, gas)
-    boundary_neighbors_u = Matrix{dtype(active_cells[id])}(undef, (4, nneighbors(bc)))
     cardinal_dirs_opposites = (north = :south, south = :north, east = :west, west = :east)
+    cardinal_dirs_reverse_bcs = (north = true, south = false, east = true, west = false)
     cardinal_dirs_dims = (north = 2, south = 2, east = 1, west = 1)
     opposite_dir = cardinal_dirs_opposites[dir]
 
+    T = dtype(active_cells[id])
+    dim = cardinal_dirs_dims[dir]
+    reverse_bc = cardinal_dirs_reverse_bcs[dir] && reverse_right_edge(bc)
+    velocity_scaling = SVector(ntuple(Returns(one(T)), 4))
+    if reverse_bc
+        setindex(velocity_scaling, -one(T), dim + 1)
+    end
+
+    boundary_neighbors_u = MMatrix{4,nneighbors(bc),T}(undef)
     cur = Ref(active_cells[id])
-    for col ∈ eachcol(boundary_neighbors_u)
-        col .= state_to_vector(cur[].u)
+    for j ∈ 1:nneighbors(bc)
+        boundary_neighbors_u[:, j] .= state_to_vector(cur[].u) .* velocity_scaling
         cur = Ref(active_cells[cur[].neighbors[opposite_dir][2]])
     end
 
-    dim = cardinal_dirs_dims[dir]
-    reverse_bc = _cardinal_dirs_reverse_bcs[dir] && reverse_right_edge(bc)
-    if reverse_bc
-        boundary_neighbors_u[dim+1, :] .*= -1
-    end
-    phantom = phantom_cell(bc, boundary_neighbors_u, dim, gas)
-    if reverse_bc
-        phantom[dim+1] *= -1
-    end
-    return SVector{4}(phantom)
+    phantom = phantom_cell(bc, boundary_neighbors_u, dim, gas) .* velocity_scaling
+    return SVector(phantom)
 end
 
 function single_cell_neighbor_data(
@@ -190,7 +197,7 @@ function single_cell_neighbor_data(
     end |> NamedTuple{(:north, :south, :east, :west)}
 end
 
-function compute_cell_update(cell_id, cell_data, neighbor_data, Δx, Δy, gas)
+function compute_cell_update(cell_data, neighbor_data, Δx, Δy, gas)
     ifaces = (
         north = (2, Ref(cell_data), Ref(neighbor_data.north)),
         south = (2, Ref(neighbor_data.south), Ref(cell_data)),
@@ -208,11 +215,38 @@ function compute_cell_update(cell_id, cell_data, neighbor_data, Δx, Δy, gas)
     # we want to write this as u_next = u + Δt * diff
     Δu = inv(Δx) * (ϕ.west - ϕ.east) + inv(Δy) * (ϕ.south - ϕ.north)
 
-    return (cell_id, maximum_signal_speed, Δu)
+    return (cell_speed = maximum_signal_speed, cell_Δu = Δu)
 end
 
-function step_cell_simulation()
-    
+function compute_next_u(cell, Δt, Δu)
+    u_next = state_to_vector(active_cells[i]) + Δt * update_infos[i].cell_Δu
+    RegularQuadCell(cell.id, cell.idx, cell.center, u_next, cell.neightbors)
+end
+
+function step_cell_simulation!(
+    cells_next,
+    active_cells,
+    boundary_conditions,
+    cfl_limit,
+    Δx,
+    Δy,
+    gas::CaloricallyPerfectGas;
+)
+    T = dtype(active_cells[1])
+    step_tasks = map(enumerate(active_cells)) do (idx, cell)
+        n_data = single_cell_neighbor_data($idx, active_cells, $boundary_conditions, $gas)
+        c_data = state_to_vector(cell.u)
+        Threads.@spawn begin
+            return compute_cell_update(c_data, n_data, $Δx, $Δy, $gas)
+        end
+    end
+    update_infos::Vector{Tuple{Int,T,SVector{4,T}}} = fetch.(step_tasks)
+    a_max = mapreduce(el -> el.cell_speed, max, update_infos)
+    Δt = cfl_limit * Δx / a_max
+    for i ∈ eachindex(update_infos, cells_next, active_cells)
+        u_next = state_to_vector(active_cells[i]) + Δt * update_infos[i].cell_Δu
+        cells_next[i] = RegularQuadCell(active_cells[i].id)
+    end
 end
 
 struct CellBasedEulerSim{T}
