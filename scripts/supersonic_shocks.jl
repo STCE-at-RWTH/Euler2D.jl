@@ -8,8 +8,8 @@ using Unitful
 # SHOCK AT X = 0
 # SUPERSONIC FLOW IMPACTS STATIC ATMOSPHERIC AIR
 
-uL_1 = ConservedProps(PrimitiveProps(1.225, [1.5], 300.0); gas = DRY_AIR)
-uR_1 = ConservedProps(PrimitiveProps(1.225, [0.0], 350.0); gas = DRY_AIR)
+uL_1 = ConservedProps(PrimitiveProps(1.225, [1.5], 300.0), DRY_AIR)
+uR_1 = ConservedProps(PrimitiveProps(1.225, [0.0], 350.0), DRY_AIR)
 
 bounds_1 = (-25.0, 225.0)
 bcs_1 = EdgeBoundary(SupersonicInflow(uL_1, DRY_AIR), ExtrapolateToPhantom())
@@ -30,9 +30,9 @@ end
 # SHOCKS AT X = -50 and X = 50
 # SUPERSONIC INFLOW ON BOTH SIDES
 
-uL_2 = ConservedProps(PrimitiveProps(1.225, [1.5], 300.0); gas = DRY_AIR)
-uM_2 = ConservedProps(PrimitiveProps(1.225, [0.0], 350.0); gas = DRY_AIR)
-uR_2 = ConservedProps(PrimitiveProps(1.225, [-1.5], 300.0); gas = DRY_AIR)
+uL_2 = ConservedProps(PrimitiveProps(1.225, [1.5], 300.0), DRY_AIR)
+uM_2 = ConservedProps(PrimitiveProps(1.225, [0.0], 350.0), DRY_AIR)
+uR_2 = ConservedProps(PrimitiveProps(1.225, [-1.5], 300.0), DRY_AIR)
 
 bcs_2 = EdgeBoundary(SupersonicInflow(uL_2, DRY_AIR), SupersonicInflow(uR_2, DRY_AIR))
 simulate_euler_equations(

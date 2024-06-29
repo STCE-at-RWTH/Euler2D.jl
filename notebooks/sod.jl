@@ -1,5 +1,5 @@
 ### A Pluto.jl notebook ###
-# v0.19.42
+# v0.19.43
 
 using Markdown
 using InteractiveUtils
@@ -198,12 +198,12 @@ function plotframe2d(frame, data::EulerSim{2, 4, T}) where {T}
 	end
 	pressure_data = map(eachslice(u_data; dims=(2,3))) do u
 		c = ConservedProps(u[1:end])
-		return uconvert(u"Pa", pressure(c; gas=DRY_AIR))
+		return uconvert(u"Pa", pressure(c, DRY_AIR))
 	end
-	pressure_plot = heatmap(xs, ys, pressure_data, aspect_ratio=:equal)
+	pressure_plot = heatmap(xs, ys, pressure_data, aspect_ratio=:equal, xlabel=L"x", ylabel=L"y", colorbar_title="P")
 	density_plot = heatmap(xs, ys, u_data[1, :, :], aspect_ratio=:equal)
-
-	plot(density_plot, dpi=600, size=(1200, 800))
+	titlestr = @sprintf("n=%d, t=%1.4e", frame, t)
+	plot(pressure_plot, dpi=600, size=(1200, 1200), title=titlestr, titlefontface="Computer Modern", titlefontsize=18)
 end
 
 # ╔═╡ 001d96d7-115e-4eaa-a716-84fc4922f4f1
@@ -226,11 +226,11 @@ Tullio = "bc48ee85-29a4-5162-ae0b-a64e1601d4bc"
 Unitful = "1986cc42-f94f-5a68-af5c-568840ba703d"
 
 [compat]
-Euler2D = "~0.2.2"
+Euler2D = "~0.2.5"
 LaTeXStrings = "~1.3.1"
 Plots = "~1.40.4"
 PlutoUI = "~0.7.59"
-ShockwaveProperties = "~0.2.0"
+ShockwaveProperties = "~0.2.1"
 Tullio = "~0.3.7"
 Unitful = "~1.20.0"
 """
@@ -241,7 +241,7 @@ PLUTO_MANIFEST_TOML_CONTENTS = """
 
 julia_version = "1.10.4"
 manifest_format = "2.0"
-project_hash = "386034839d4274195daed0066751eb81e4863ee2"
+project_hash = "14c23c5d376dd7fe8471925b280439c982a2c581"
 
 [[deps.AbstractPlutoDingetjes]]
 deps = ["Pkg"]
@@ -392,9 +392,9 @@ version = "0.0.20230411+0"
 
 [[deps.Euler2D]]
 deps = ["LinearAlgebra", "ShockwaveProperties", "Tullio", "Unitful", "UnitfulChainRules"]
-git-tree-sha1 = "1781a00b1b38998ff4b8acf805a5f406a90276ce"
+git-tree-sha1 = "c5c06d5a802d4403b1b889b7b498d86e3d39b111"
 uuid = "c24a2923-03cb-4692-957a-ccd31f2ad327"
-version = "0.2.2"
+version = "0.2.5"
 
 [[deps.ExceptionUnwrapping]]
 deps = ["Test"]
@@ -941,9 +941,9 @@ uuid = "9e88b42a-f829-5b0c-bbe9-9e923198166b"
 
 [[deps.ShockwaveProperties]]
 deps = ["ChainRulesCore", "LinearAlgebra", "StaticArrays", "Unitful", "UnitfulChainRules"]
-git-tree-sha1 = "250b3a0984aba7a83337e46d09218faf07d3b918"
+git-tree-sha1 = "3246b146ae92d4c401fb330fcdff3b15813c8c64"
 uuid = "77d2bf28-a3e9-4b9c-9fcf-b85f74cc8a50"
-version = "0.2.0"
+version = "0.2.1"
 
 [[deps.Showoff]]
 deps = ["Dates", "Grisu"]
@@ -1235,9 +1235,9 @@ version = "0.1.1+0"
 
 [[deps.Xorg_libxcb_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "XSLT_jll", "Xorg_libXau_jll", "Xorg_libXdmcp_jll", "Xorg_libpthread_stubs_jll"]
-git-tree-sha1 = "b4bfde5d5b652e22b9c790ad00af08b6d042b97d"
+git-tree-sha1 = "bcd466676fef0878338c61e655629fa7bbc69d8e"
 uuid = "c7cfdc94-dc32-55de-ac96-5a1b8d977c5b"
-version = "1.15.0+0"
+version = "1.17.0+0"
 
 [[deps.Xorg_libxkbfile_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Xorg_libX11_jll"]
