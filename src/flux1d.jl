@@ -13,15 +13,19 @@ function F_euler(u, gas::CaloricallyPerfectGas)
     ρv = SVector{length(u) - 2}(@view(u[2:end-1])...)
     v = SVector{length(ρv)}(ρv / u[1])
     P = ustrip(u"Pa", pressure(u[1], ρv, u[end], gas))
-    return vcat(ρv', ρv * v' + I * P, (v * (u[end] + P))')
+    ρv_flux = ρv * v' + I * P
+    return vcat(ρv', ρv_flux, (v * (u[end] + P))')
 end
+
+_ndims_props(::ConservedProps{N,T,U1,U2,U3}) where {N,T,U1,U2,U3} = N
 
 function F_euler(u::ConservedProps, gas::CaloricallyPerfectGas)
     P = ustrip(u"Pa", pressure(u, gas))
     v = ustrip.(u"m/s", velocity(u))
+    momentum_flux = ustrip.(ShockwaveProperties._units_ρv, momentum_density(u)) * v' + I * P
     return vcat(
         ustrip.(ShockwaveProperties._units_ρv, momentum_density(u))',
-        ustrip.(ShockwaveProperties._units_ρv, momentum_density(u)) .* v' + I * P,
+        momentum_flux,
         (
             v *
             (ustrip(ShockwaveProperties._units_ρE, total_internal_energy_density(u)) + P)
@@ -121,7 +125,7 @@ function roe_matrix_eigenvalues(uL, uR, dim, gas::CaloricallyPerfectGas)
     wR = roe_parameter_vector(uR, gas)
     # take arithmetic mean of the left and right states
     w̄ = (wL + wR) / 2
-    v̄ = w̄[2:end-1] / w̄[1]
+    v̄ = SVector(@view(w̄[2:end-1])...) / w̄[1]
     H̄ = w̄[end] / w̄[1]
     a = sqrt((gas.γ - 1) * (H̄ - (v̄ ⋅ v̄) / 2))
     return SVector(v̄[dim] - a, ntuple(Returns(v̄[dim]), length(uL) - 2)..., v̄[dim] + a)
@@ -158,7 +162,14 @@ function ϕ_hll(uL, uR, dim, gas::CaloricallyPerfectGas)
     fL = F_euler(uL, gas)
     fR = F_euler(uR, gas)
     sL, sR = interface_signal_speeds(uL, uR, dim, gas)
-    return ϕ_hll(uL, uR, SVector(@view(fL[:, dim])...), SVector(@view(fR[:, dim])...), sL, sR)
+    return ϕ_hll(
+        uL,
+        uR,
+        SVector(@view(fL[:, dim])...),
+        SVector(@view(fR[:, dim])...),
+        sL,
+        sR,
+    )
 end
 
 """
@@ -171,7 +182,14 @@ Compute the HLL numerical flux across the L-R boundary.
 """
 function ϕ_hll(uL, uR, fL, fR, dim, gas::CaloricallyPerfectGas)
     sL, sR = interface_signal_speeds(uL, uR, dim, gas)
-    return ϕ_hll(uL, uR, SVector(@view(fL[:, dim])...), SVector(@view(fR[:, dim])...), sL, sR)
+    return ϕ_hll(
+        uL,
+        uR,
+        SVector(@view(fL[:, dim])...),
+        SVector(@view(fR[:, dim])...),
+        sL,
+        sR,
+    )
 end
 
 """
