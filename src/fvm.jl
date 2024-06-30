@@ -80,8 +80,10 @@ function bulk_step_1d_slice!(u_next, u, Δt, Δx, dim, gas::CaloricallyPerfectGa
     # this expression is different from enforce_boundary because
     #   tullio cannot parse -=
     @tullio u_next[:, i] += (
-        Δt / Δx *
-        (ϕ_hll(u[:, i-1], u[:, i], dim, gas) - ϕ_hll(u[:, i], u[:, i+1], dim, gas))
+        Δt / Δx * (
+            ϕ_hll(@view(u[:, i-1]), @view(u[:, i]), dim, gas) -
+            ϕ_hll(@view(u[:, i]), @view(u[:, i+1]), dim, gas)
+        )
     )
 end
 
