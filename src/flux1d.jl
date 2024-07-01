@@ -17,8 +17,6 @@ function F_euler(u, gas::CaloricallyPerfectGas)
     return vcat(ρv', ρv_flux, (v * (u[end] + P))')
 end
 
-_ndims_props(::ConservedProps{N,T,U1,U2,U3}) where {N,T,U1,U2,U3} = N
-
 function F_euler(u::ConservedProps, gas::CaloricallyPerfectGas)
     P = ustrip(u"Pa", pressure(u, gas))
     v = ustrip.(u"m/s", velocity(u))
@@ -60,7 +58,7 @@ F_n(u, n̂, gas::CaloricallyPerfectGas) = F_euler(u, gas) * n̂
 
 Computes the eigenvalues of the Jacobian of the Euler flux function in dimension `dim`.
 """
-function eigenvalues_∇F_euler(u::AbstractVector, dim, gas::CaloricallyPerfectGas)
+function eigenvalues_∇F_euler(u, dim, gas::CaloricallyPerfectGas)
     v = @view u[2:end-1]
     a = ustrip(speed_of_sound(u[1], v, u[end], gas))
     return SVector(v[dim] - a, ntuple(Returns(v[dim]), length(v))..., v[dim] + a)
