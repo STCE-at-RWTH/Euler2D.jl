@@ -12,6 +12,7 @@ Unitful = "1986cc42-f94f-5a68-af5c-568840ba703d"
 UnitfulChainRules = "f31437dd-25a7-4345-875f-756556e6935d"
 
 [compat]
+julia = "1.9"
 ShockwaveProperties = ">=0.2.0"
 
 [extras]

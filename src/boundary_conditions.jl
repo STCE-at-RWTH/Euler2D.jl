@@ -79,7 +79,7 @@ function phantom_cell(
     dim,
     gas::CaloricallyPerfectGas,
 ) where {T}
-    phantom = u
+    phantom = reshape(u, length(u))
     phantom[1+dim, :] *= -1
     return phantom
 end
@@ -130,11 +130,11 @@ struct ExtrapolateToPhantom <: PhantomEdge{1} end
 
 function phantom_cell(
     bc::ExtrapolateToPhantom,
-    u::AbstractArray{T,2},
+    u,
     dim,
     gas::CaloricallyPerfectGas,
-) where {T}
-    return u
+)
+    return reshape(u, length(u))
 end
 
 """
@@ -150,14 +150,14 @@ struct SupersonicInflow <: PhantomEdge{1}
     prescribed_state::ConservedProps
 
     function SupersonicInflow(u::ConservedProps, gas::CaloricallyPerfectGas)
-        all(>(1.0), mach_number(u; gas)) ||
+        all(>(1.0), mach_number(u, gas)) ||
             ArgumentError("Cannot construct a supersonic inflow boundary with M_∞ ≤ 1.0!")
         return new(u)
     end
 end
 
 function SupersonicInflow(s::PrimitiveProps, gas::CaloricallyPerfectGas)
-    return SupersonicInflow(ConservedProps(s; gas))
+    return SupersonicInflow(ConservedProps(s, gas))
 end
 
 function phantom_cell(
