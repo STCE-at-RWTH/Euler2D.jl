@@ -6,12 +6,19 @@ Outputs a matrix with one column for each space dimension.
 
 This will strip out units, and convert down to metric base units in the process. 
 """
-function F_euler(u, gas::CaloricallyPerfectGas)
+function F_euler(u::StaticArray, gas::CaloricallyPerfectGas)
     ρv = SVector{length(u) - 2}(@view(u[2:end-1])...)
     v = SVector{length(ρv)}(ρv / u[1])
     P = ustrip(u"Pa", pressure(u[1], ρv, u[end], gas))
     ρv_flux = ρv * v' + I * P
     return vcat(ρv', ρv_flux, (v * (u[end] + P))')
+end
+
+function F_euler(u, gas::CaloricallyPerfectGas)
+    ρv = @view(u[2:end-1])
+    P = ustrip(u"Pa", pressure(u[1], ρv, u[end], gas))
+    ρv_flux = (ρv * ρv') / u[1] + I * P
+    return vcat(ρv', ρv_flux, (ρv * (u[end] + P) / u[1])')
 end
 
 function F_euler(u::ConservedProps, gas::CaloricallyPerfectGas)
@@ -55,10 +62,16 @@ F_n(u, n̂, gas::CaloricallyPerfectGas) = F_euler(u, gas) * n̂
 
 Computes the eigenvalues of the Jacobian of the Euler flux function in dimension `dim`.
 """
-function eigenvalues_∇F_euler(u, dim, gas::CaloricallyPerfectGas)
+function eigenvalues_∇F_euler(u::StaticArray, dim, gas::CaloricallyPerfectGas)
     v = @view u[2:end-1]
     a = ustrip(speed_of_sound(u[1], v, u[end], gas))
     return SVector(v[dim] - a, ntuple(Returns(v[dim]), length(v))..., v[dim] + a)
+end
+
+function eigenvalues_∇F_euler(u, dim, gas::CaloricallyPerfectGas)
+    v = @view u[2:end-1]
+    a = ustrip(speed_of_sound(u[1], v, u[end], gas))
+    return vcat(v[dim] - a, ntuple(Returns(v[dim]), length(v))..., v[dim] + a)
 end
 
 function eigenvalues_∇F_euler(
@@ -68,7 +81,7 @@ function eigenvalues_∇F_euler(
 ) where {N,T,Q1,Q2,Q3}
     v = ustrip.(u"m/s", velocity(u))
     a = ustrip(u"m/s", speed_of_sound(u, gas))
-    return SVector(v[dim] - a, ntuple(Returns(v[dim])..., length(v))..., v[dim] + a)
+    return SVector(v[dim] - a, ntuple(Returns(v[dim])..., N)..., v[dim] + a)
 end
 
 """
@@ -79,9 +92,14 @@ We compute enthalphy density `ρH` as the sum of internal energy density and pre
 
 See Equations 10 and 11 in Roe.
 """
-function roe_parameter_vector(u, gas::CaloricallyPerfectGas)
+function roe_parameter_vector(u::StaticArray, gas::CaloricallyPerfectGas)
     rhoH = ustrip(total_enthalpy_density(u[1], @view(u[2:end-1]), u[end], gas))
     return SVector(u[1], @view(u[2:end-1])..., rhoH) ./ sqrt(u[1])
+end
+
+function roe_parameter_vector(u, gas::CaloricallyPerfectGas)
+    rhoH = ustrip(total_enthalpy_density(u[1], @view(u[2:end-1]), u[end], gas))
+    return vcat(u[1], @view(u[2:end-1]), rhoH) ./ sqrt(u[1])
 end
 
 """
@@ -89,7 +107,7 @@ end
 
 Find the eigenvalues of the Roe matrix at the boundary determined by ``uL`` and ``uR``. 
 """
-function roe_matrix_eigenvalues(uL, uR, dim, gas::CaloricallyPerfectGas)
+function roe_matrix_eigenvalues(uL::StaticArray, uR::StaticArray, dim, gas::CaloricallyPerfectGas)
     wL = roe_parameter_vector(uL, gas)
     wR = roe_parameter_vector(uR, gas)
     # take arithmetic mean of the left and right states
@@ -98,6 +116,17 @@ function roe_matrix_eigenvalues(uL, uR, dim, gas::CaloricallyPerfectGas)
     H̄ = w̄[end] / w̄[1]
     a = sqrt((gas.γ - 1) * (H̄ - (v̄ ⋅ v̄) / 2))
     return SVector(v̄[dim] - a, ntuple(Returns(v̄[dim]), length(uL) - 2)..., v̄[dim] + a)
+end
+
+function roe_matrix_eigenvalues(uL, uR, dim, gas::CaloricallyPerfectGas)
+    wL = roe_parameter_vector(uL, gas)
+    wR = roe_parameter_vector(uR, gas)
+    # take arithmetic mean of the left and right states
+    w̄ = (wL + wR) / 2
+    v̄ = (@view(w̄[2:end-1])...) / w̄[1]
+    H̄ = w̄[end] / w̄[1]
+    a = sqrt((gas.γ - 1) * (H̄ - (v̄ ⋅ v̄) / 2))
+    return vcat(v̄[dim] - a, ntuple(Returns(v̄[dim]), length(uL) - 2)..., v̄[dim] + a)
 end
 
 """
@@ -134,8 +163,8 @@ function ϕ_hll(uL, uR, dim, gas::CaloricallyPerfectGas)
     return ϕ_hll(
         uL,
         uR,
-        SVector(@view(fL[:, dim])...),
-        SVector(@view(fR[:, dim])...),
+        @view(fL[:, dim]),
+        @view(fR[:, dim]),
         sL,
         sR,
     )
@@ -154,8 +183,8 @@ function ϕ_hll(uL, uR, fL, fR, dim, gas::CaloricallyPerfectGas)
     return ϕ_hll(
         uL,
         uR,
-        SVector(@view(fL[:, dim])...),
-        SVector(@view(fR[:, dim])...),
+        @view(fL[:, dim]),
+        @view(fR[:, dim]),
         sL,
         sR,
     )

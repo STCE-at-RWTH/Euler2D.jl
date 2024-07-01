@@ -56,7 +56,18 @@ end
 Compute the maximum possible `Δt` for the data `u` with cell spacing `dV`, 
     given `boundary_conditions` and a `cfl_limit`. 
 """
-function maximum_Δt(u, dV, boundary_conditions, CFL, gas::CaloricallyPerfectGas)
+function maximum_Δt(
+    u,
+    dV,
+    boundary_conditions,
+    CFL,
+    gas::CaloricallyPerfectGas;
+    thread_pool = :default,
+    tasks_per_thread = 8,
+)
+    N = length(dV)
+    @assert u_array_space_dims(u) == N
+
     Δt = mapreduce(min, enumerate(zip(dV, boundary_conditions))) do (space_dim, (Δx, bc))
         dims = ((i + 1 for i ∈ 1:length(dV) if i ≠ space_dim)...,)
         u_ax = eachslice(u; dims)
@@ -94,11 +105,7 @@ Enforce a boundary condition on a 1-d slice of data ``[ρ, ρv⃗, ρE]``.
 
 ## Arguments
 - `u_next`: Output array of data for the results at the next time step
-- `u`: Input data at the current time step
-- `Δt`: Time step size
-- `Δx`: The inter-cell spacing on real axis `dim`
-- `boundary_conditions`: The boundary condition to enforce
-- `dim`: The real axis being sliced
+- `u`: Input data at the current time step((i + 1 for i ∈ 1:N if i ≠ space_dim)...,)
 - `gas`
 """
 function enforce_boundary_1d_slice!(
@@ -145,14 +152,14 @@ end
 Step the Euler equations one `Δt` into the future, and write the result into `u_next`.
 """
 function step_euler_hll!(u_next, u, Δt, dV, boundary_conditions, gas::CaloricallyPerfectGas)
-    @assert length(dV) == length(boundary_conditions)
+    @assert length(dV) == length(boundary_conditions) == length(size(u)) - 1
     @assert size(u_next) == size(u)
     N = length(dV)
     # first part of the update step
     copyto!(u_next, u)
     for (space_dim, (Δx, bcs)) ∈ enumerate(zip(dV, boundary_conditions))
         # there must be a better way
-        dims = ((i + 1 for i ∈ 1:N if i ≠ space_dim)...,)
+        dims = free_space_dims(N, space_dim)
         u_slices = collect(zip(eachslice(u_next; dims), eachslice(u; dims)))
         Threads.@threads for i ∈ eachindex(u_slices)
             u_next_slice, u_slice = u_slices[i]
