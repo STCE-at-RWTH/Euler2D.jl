@@ -1,6 +1,3 @@
-using Unitful: Temperature, Pressure, Density, Velocity, @derived_dimension
-using Unitful: 𝐋, 𝐓, 𝐌, 𝚯, 𝐍
-
 """
     F_euler(u, gas)
 
@@ -85,32 +82,6 @@ See Equations 10 and 11 in Roe.
 function roe_parameter_vector(u, gas::CaloricallyPerfectGas)
     rhoH = ustrip(total_enthalpy_density(u[1], @view(u[2:end-1]), u[end], gas))
     return SVector(u[1], @view(u[2:end-1])..., rhoH) ./ sqrt(u[1])
-end
-
-@derived_dimension RoeDensity 𝐌^(1 / 2) * 𝐋^(-3 / 2)
-@derived_dimension RoeMomentum 𝐌^(1 / 2) * 𝐋^(-1 / 2) * 𝐓^-1
-@derived_dimension RoeEnergy 𝐌^(1 / 2) * 𝐋^(1 / 2) * 𝐓^-2
-
-"""
-    RoeProps{N, T, U1, U2, U3}
-"""
-struct RoeProps{N,DTYPE,U1<:RoeDensity{DTYPE},U2<:RoeMomentum{DTYPE},U3<:RoeEnergy{DTYPE}}
-    ρ::U1
-    ρv::SVector{N,U2}
-    ρE::U3
-end
-
-function roe_parameter_vector(
-    u::ConservedProps{N,T,Q1,Q2,Q3},
-    gas::CaloricallyPerfectGas,
-) where {N,T,Q1,Q2,Q3}
-    ρH = ustrip(ShockwaveProperties._units_ρE, total_enthalpy_density(u, gas))
-    root_rho = sqrt(ustrip(ShockwaveProperties._units_ρ, density(u)))
-    return SVector{N + 2}(
-        root_rho,
-        (ustrip.(ShockwaveProperties._units_ρv, momentum_density(u)) ./ root_rho)...,
-        ρH / root_rho,
-    )
 end
 
 """
