@@ -60,7 +60,7 @@ function loadsim(path, dtype)
 end
 
 # ╔═╡ 5c34532c-c1a2-4bea-8f25-5c60248365f9
-esim = loadsim("../data/experiment.celltape", Float64)
+esim = loadsim("../data/circular_obstacle_radius_1.celltape", Float64)
 
 # ╔═╡ 35061132-50bf-4dd8-8178-ddf25a78b2f6
 function plotframe(frame, esim)
@@ -70,24 +70,41 @@ function plotframe(frame, esim)
 		return r[1:end-1] .+ step(r)/2
 	end
 	cell_pressures = map(CartesianIndices(esim.n_cells)) do idx
-		esim.active_ids[idx] > 0 || return 0.0u"Pa"
+		esim.active_ids[idx] > 0 || return 0.0u"kPa"
 		c = ConservedProps(@view(u_k[:, esim.active_ids[idx]]))
-		uconvert(u"Pa", pressure(c, DRY_AIR))
+		uconvert(u"kPa", pressure(c, DRY_AIR))
 	end
-	mach_x = map(CartesianIndices(esim.n_cells)) do idx
+	mach_num = map(CartesianIndices(esim.n_cells)) do idx
 		esim.active_ids[idx] > 0 || return 0.0
 		c = ConservedProps(@view(u_k[:, esim.active_ids[idx]]))
-		mach_number(c, DRY_AIR)[1]
+		norm(mach_number(c, DRY_AIR))
 	end
-	tstring = @sprintf("n=%4d t=% 2.4e", frame, esim.tsteps[frame])
-	heatmap(xs, ys, cell_pressures, aspect_ratio=:equal, dpi=600, size=(1000,1000), xlabel=L"y", ylabel=L"x", title=tstring, titlefontface="Computer Modern")
+	tstring = @sprintf("Pressure Field. n=%4d t=% 2.4e", frame, esim.tsteps[frame])
+	heatmap(xs, ys, mach_num, aspect_ratio=:equal, dpi=600, size=(1000,1000), xlabel=L"y", ylabel=L"x", title=tstring, titlefontface="Computer Modern", colorbar_title="Pressure")
 end
 
 # ╔═╡ 55c06a26-bc2e-45f4-bb6f-68e1f000aa57
 @bind i_esim Slider(1:esim.n_tsteps)
 
 # ╔═╡ 14085c9d-f7fa-42e8-a50d-027751243bec
-plotframe(i_esim, esim)
+let
+	p = plotframe(i_esim, esim)
+	savefig(p, "../gfx/clumsy_mach_plot.pdf")
+	p
+end
+
+# ╔═╡ c7b29d92-899f-432e-8132-b1c06c6dde66
+trisim = loadsim("../data/funky_triangle.celltape", Float64)
+
+# ╔═╡ 9b405a6a-1aec-45ad-b519-399b916c1091
+@bind i_tsim Slider(1:trisim.n_tsteps)
+
+# ╔═╡ aa543a48-a816-426e-9afa-8b8ab4e31d47
+let
+	p = plotframe(i_tsim, trisim)
+	scatter!(p, [-0.0], [-.5])
+	p
+end
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
@@ -1293,7 +1310,10 @@ version = "1.4.1+1"
 # ╟─dd40825e-3d19-4332-be61-8cfe5de1d064
 # ╠═5c34532c-c1a2-4bea-8f25-5c60248365f9
 # ╠═35061132-50bf-4dd8-8178-ddf25a78b2f6
-# ╟─14085c9d-f7fa-42e8-a50d-027751243bec
+# ╠═14085c9d-f7fa-42e8-a50d-027751243bec
 # ╠═55c06a26-bc2e-45f4-bb6f-68e1f000aa57
+# ╠═c7b29d92-899f-432e-8132-b1c06c6dde66
+# ╠═aa543a48-a816-426e-9afa-8b8ab4e31d47
+# ╠═9b405a6a-1aec-45ad-b519-399b916c1091
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002
