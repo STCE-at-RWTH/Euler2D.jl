@@ -1,7 +1,3 @@
-using LinearAlgebra
-using Tullio
-using ShockwaveProperties
-
 ##
 
 """

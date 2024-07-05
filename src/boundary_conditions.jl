@@ -84,6 +84,16 @@ function phantom_cell(
     return phantom
 end
 
+function phantom_cell(
+    ::StrongWall,
+    u::ConservedProps{N,T,U1,U2,U3},
+    dim,
+    gas::CaloricallyPerfectGas,
+) where {N,T,U1,U2,U3}
+    scaling = SVector(ntuple(i -> i == dim ? -one(T) : one(T), N))
+    return ConservedProps(u.ρ, scaling .* u.ρv, u.ρE)
+end
+
 """
     FixedPhantomOutside
 
@@ -119,6 +129,10 @@ function phantom_cell(
     return state_to_vector(bc.prescribed_state)
 end
 
+function phantom_cell(bc::FixedPhantomOutside, u::ConservedProps, dim, gas)
+    return bc.prescribed_state
+end
+
 """
     ExtrapolateToPhantom
 
@@ -128,13 +142,17 @@ This BC is appropriate to use if the interesting behavior of the solution
 """
 struct ExtrapolateToPhantom <: PhantomEdge{1} end
 
+function phantom_cell(bc::ExtrapolateToPhantom, u, dim, gas::CaloricallyPerfectGas)
+    return reshape(u, length(u))
+end
+
 function phantom_cell(
     bc::ExtrapolateToPhantom,
-    u,
+    u::ConservedProps,
     dim,
     gas::CaloricallyPerfectGas,
 )
-    return reshape(u, length(u))
+    return copy(u)
 end
 
 """
@@ -169,55 +187,13 @@ function phantom_cell(
     return state_to_vector(bc.prescribed_state)
 end
 
-"""
-    FixedPressureOutflow
-
-Represents an outflow with fixed pressure conditions. It doesn't work.
-
-Fields
----
-- `P`: The pressure at the boundary.
-"""
-struct FixedPressureOutflow <: PhantomEdge{1}
-    P
-end
-
-"""
-    phantom_cell(bc::FixedPressureOutflow, ...)
-
-We take this from the NASA report on Fun3D and fixed-pressure boundary conditions.
-Essentially, if the flow is subsonic at the boundary, we fix the pressure 
-  and compute density in the phantom.
-Otherwise, we assume information gets projected out of the domain.
-
-Note: This will break if the flow becomes supersonic back into the domain. 
-That seems reasonable to me.
-"""
 function phantom_cell(
-    bc::FixedPressureOutflow,
-    u::AbstractArray{T,2},
+    bc::SupersonicInflow,
+    u::ConservedProps,
     dim,
     gas::CaloricallyPerfectGas,
 ) where {T}
-    v_i = u[dim+1, 1] / u[1, 1]
-    # TODO in 2-D case we will need a boundary normal vector
-    M = mach_number(u; gas)[dim]
-    # return early if the flow is supersonic
-    if abs(M) > 1.0
-        return u
-    end
-
-    P_i = pressure_u(u[:, 1]; gas)
-    ## subsonic flow -> enforce BC, otherwise extrapolate
-    P_b = bc.P
-    ρ_b = P_b / P_i * u[1, 1]
-    # internal energy is c_v⋅T
-    T_b = P_b / (u[1, 1] * ustrip(gas.R))
-    e_b = T_b / ustrip(gas.c_v)
-    ρE_b = ρ_b * (e_b + v_i ⋅ v_i / 2)
-
-    phantom = vcat(ρ_b, ρ_b .* v_i, ρE_b)
-    return phantom
+    return bc.prescribed_state
 end
 
 function left_edge_ϕ(

@@ -1,13 +1,3 @@
-using Base.Threads: nthreads, @spawn
-using Euler2D
-using Euler2D: nneighbors, phantom_cell, reverse_right_edge, ϕ_hll
-using LinearAlgebra
-using ShockwaveProperties
-using ShockwaveProperties: MomentumDensity, EnergyDensity
-using StaticArrays
-using Unitful
-using Unitful: Density
-
 struct RegularQuadCell{T,Q1<:Density,Q2<:MomentumDensity,Q3<:EnergyDensity}
     id::Int
     idx::CartesianIndex{2}
@@ -18,19 +8,15 @@ struct RegularQuadCell{T,Q1<:Density,Q2<:MomentumDensity,Q3<:EnergyDensity}
     neighbors::NamedTuple{(:north, :south, :east, :west),NTuple{4,Tuple{Symbol,Int}}}
 end
 
-function convert(
+function Base.convert(
     ::Type{RegularQuadCell{T,A1,A2,A3}},
     cell::RegularQuadCell{T,B1,B2,B3},
 ) where {T,A1,A2,A3,B1,B2,B3}
-    return RegularQuadCell{T,A1,A2,A3}(
+    return RegularQuadCell(
         cell.id,
         cell.idx,
         cell.center,
-        ConservedProps(
-            uconvert(unit(A1), density(cell.u)),
-            uconvert.(unit(A2), momentum_density(cell.u)),
-            uconvert(unit(A3), total_internal_energy_density(cell.u)),
-        ),
+        convert(ConservedProps{2,T,A1,A2,A3}, cell.u),
         cell.neighbors,
     )
 end
@@ -57,6 +43,12 @@ end
 
 inward_normals(c::RegularQuadCell) = inward_normals(dtype(c))
 outward_normals(c::RegularQuadCell) = outward_normals(dtype(c))
+
+props_dtype(::ConservedProps{N,T,U1,U2,U3}) where {N,T,U1,U2,U3} = T
+props_unitstypes(::ConservedProps{N,T,U1,U2,U3}) where {N,T,U1,U2,U3} = (U1, U2, U3)
+function quadcell_dtype(::ConservedProps{N,T,U1,U2,U3}) where {N,T,U1,U2,U3}
+    return RegularQuadCell{T,U1,U2,U3}
+end
 
 abstract type Obstacle end
 
@@ -94,15 +86,17 @@ end
 
 function point_inside(s::TriangularObstacle, pt)
     return all(zip(s.points, s.points[[2, 3, 1]])) do (p1, p2)
-        (p2 - p1) ⋅ (pt - p1) > 0
+        (SMatrix{2,2}(0, -1, 1, 0) * (p2 - p1)) ⋅ (pt - p1) > 0
     end
 end
 
+# TODO we should actually be more serious about compting these overlaps
+#  and then computing volume-averaged quantities
 point_inside(s::Obstacle, q::RegularQuadCell) = point_inside(s, q.center)
 
 function active_cell_mask(cell_centers_x, cell_centers_y, obstacles)
-    return map(Iterators.product(cell_centers_x, cell_centers_y)) do pt
-        p = SVector(pt...)
+    return map(Iterators.product(cell_centers_x, cell_centers_y)) do (x, y)
+        p = SVector{2}(x, y)
         return all(obstacles) do o
             !point_inside(o, p)
         end
@@ -147,12 +141,6 @@ function cell_neighbor_status(i, cell_ids, active_mask)
     end
 end
 
-props_dtype(::ConservedProps{N,T,U1,U2,U3}) where {N,T,U1,U2,U3} = T
-props_unitstypes(::ConservedProps{N,T,U1,U2,U3}) where {N,T,U1,U2,U3} = (U1, U2, U3)
-function quadcell_dtype(::ConservedProps{N,T,U1,U2,U3}) where {N,T,U1,U2,U3}
-    return RegularQuadCell{T,U1,U2,U3}
-end
-
 function quadcell_list_and_id_grid(u0, bounds, ncells, obstacles)
     centers = map(zip(bounds, ncells)) do (b, n)
         v = range(b...; length = n + 1)
@@ -178,6 +166,8 @@ function quadcell_list_and_id_grid(u0, bounds, ncells, obstacles)
     return cell_list, active_ids
 end
 
+# FIXME this allocates twice according to BenchmarkTools
+# 
 function phantom_neighbor(id, active_cells, dir, bc, gas)
     dirs_opposite = (north = :south, south = :north, east = :west, west = :east)
     dirs_reverse_bc = (north = true, south = false, east = true, west = false)
@@ -202,6 +192,7 @@ function phantom_neighbor(id, active_cells, dir, bc, gas)
     return SVector{4}(phantom)
 end
 
+# FIXME this allocates
 function single_cell_neighbor_data(
     cell_id,
     active_cells,
@@ -219,6 +210,7 @@ function single_cell_neighbor_data(
     end |> NamedTuple{(:north, :south, :east, :west)}
 end
 
+# does not allocate
 function compute_cell_update(cell_data, neighbor_data, Δx, Δy, gas)
     ifaces = (
         north = (2, cell_data, neighbor_data.north),
@@ -253,7 +245,8 @@ function step_cell_simulation!(
     cfl_limit,
     Δx,
     Δy,
-    gas::CaloricallyPerfectGas,
+    gas::CaloricallyPerfectGas;
+    tpool = :default,
 )
     T = dtype(active_cells[1])
     step_tasks = map(enumerate(active_cells)) do (idx, cell)
