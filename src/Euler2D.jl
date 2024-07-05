@@ -12,8 +12,8 @@ using Unitful: @derived_dimension, Density, Pressure
 
 include("utils.jl")
 include("transport.jl")
-include("riemann_problem.jl")
 include("boundary_conditions.jl")
+include("riemann_problem.jl")
 include("fvm.jl")
 include("array_simulations.jl")
 include("cell_simulations.jl")

@@ -67,7 +67,7 @@ function roe_matrix_eigenvalues(uL, uR, dim, gas::CaloricallyPerfectGas)
     # FIXME how to avoid a huge performance hit here?
     return vcat_ρ_ρv_ρE_preserve_static(
         v̄[dim] - a,
-        SVector(ntuple(Returns(v̄[dim]), length(uL) - 2)),
+        SVector(ntuple(Returns(v̄[dim]), length(v̄))),
         v̄[dim] + a,
     )
 end
@@ -142,4 +142,31 @@ function ϕ_hll(uL, uR, fL, fR, sL, sR)
         # shared flow
         return (sR * fL - sL * fR + sR * sL * (uR - uL)) / (sR - sL)
     end
+end
+
+function left_edge_ϕ(
+    bc::PhantomEdge{N},
+    u::AbstractArray{T,2},
+    dim,
+    gas::CaloricallyPerfectGas,
+) where {T,N}
+    phantom = phantom_cell(bc, @view(u[:, 1:N]), dim, gas)
+    return ϕ_hll(phantom, @view(u[:, 1]), dim, gas)
+end
+
+function right_edge_ϕ(
+    bc::PhantomEdge{N},
+    u::AbstractArray{T,2},
+    dim,
+    gas::CaloricallyPerfectGas,
+) where {T,N}
+    neighbors = u[:, end:-1:(end-N+1)] # copy
+    # reverse momentum on the right edge
+    neighbors[dim+1, :] .*= -1.0
+    phantom = phantom_cell(bc, neighbors, dim, gas)
+    # reverse the appropriate velocity component
+    if reverse_right_edge(bc)
+        phantom[1+dim] *= -1
+    end
+    return ϕ_hll(@view(u[:, end]), phantom, dim, gas)
 end

@@ -95,8 +95,17 @@ Computes the flux normal to a given unit vector ``n̂``. Useful for verifying th
 """
 F_n(u, n̂, gas::CaloricallyPerfectGas) = F_euler_normal(F_euler(u, gas), n̂)
 
-function select_space_dim(F_e::ConservedPropsTransport, dim)
-    return vcat_ρ_ρv_ρE_preserve_static(F_e.F_ρ[dim], F_e.F_ρv[:, dim], F_e.F_ρE[dim])
+# TODO this allocates, is type unstable
+function select_space_dim(
+    F_e::ConservedPropsTransport{N,T,U1,U2,U3},
+    dim,
+) where {N,T,U1,U2,U3}
+    idxs = SVector(ntuple(i -> i, N))
+    return vcat_ρ_ρv_ρE_preserve_static(
+        ustrip(_units_ρ_transport, F_e.F_ρ[dim]),
+        ustrip.(_units_ρv_transport, F_e.F_ρv[idxs, dim]),
+        ustrip(_units_ρE_transport, F_e.F_ρE[dim]),
+    )
 end
 
 select_space_dim(F_e, dim) = F_e[:, dim]

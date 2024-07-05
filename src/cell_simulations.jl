@@ -1,3 +1,18 @@
+# I always think in "north south east west"... who knows why.
+#   anyway
+@enum CellBoundaries::Int begin
+    NORTH_BOUNDARY = 1
+    SOUTH_BOUNDARY = 2
+    EAST_BOUNDARY = 3
+    WEST_BOUNDARY = 4
+    INTERNAL_STRONGWALL = 5
+end
+
+@enum CellNeighboring::Int begin
+    OTHER_QUADCELL
+    BOUNDARY_CONDITION
+end
+
 struct RegularQuadCell{T,Q1<:Density,Q2<:MomentumDensity,Q3<:EnergyDensity}
     id::Int
     idx::CartesianIndex{2}
@@ -5,7 +20,10 @@ struct RegularQuadCell{T,Q1<:Density,Q2<:MomentumDensity,Q3<:EnergyDensity}
     u::ConservedProps{2,T,Q1,Q2,Q3}
     # either (:boundary, :cell)
     # and then the ID of the appropriate boundary
-    neighbors::NamedTuple{(:north, :south, :east, :west),NTuple{4,Tuple{Symbol,Int}}}
+    neighbors::NamedTuple{
+        (:north, :south, :east, :west),
+        NTuple{4,Tuple{CellNeighboring,Int}},
+    }
 end
 
 function Base.convert(
@@ -46,6 +64,15 @@ outward_normals(c::RegularQuadCell) = outward_normals(dtype(c))
 
 props_dtype(::ConservedProps{N,T,U1,U2,U3}) where {N,T,U1,U2,U3} = T
 props_unitstypes(::ConservedProps{N,T,U1,U2,U3}) where {N,T,U1,U2,U3} = (U1, U2, U3)
+
+function cprops_dtype(::RegularQuadCell{T,Q1,Q2,Q3}) where {T,Q1,Q2,Q3}
+    return ConservedProps{2,T,Q1,Q2,Q3}
+end
+
+function cprops_dtype(::Type{RegularQuadCell{T,Q1,Q2,Q3}}) where {T,Q1,Q2,Q3}
+    return ConservedProps{2,T,Q1,Q2,Q3}
+end
+
 function quadcell_dtype(::ConservedProps{N,T,U1,U2,U3}) where {N,T,U1,U2,U3}
     return RegularQuadCell{T,U1,U2,U3}
 end
@@ -126,17 +153,17 @@ function cell_neighbor_status(i, cell_ids, active_mask)
     map(_cell_neighbor_offsets) do offset
         neighbor = idx + offset
         if neighbor[1] < 1
-            return (:boundary, 1)
+            return (BOUNDARY_CONDITION, Int(WEST_BOUNDARY))
         elseif neighbor[1] > size(cell_ids)[1]
-            return (:boundary, 2)
+            return (BOUNDARY_CONDITION, Int(EAST_BOUNDARY))
         elseif neighbor[2] < 1
-            return (:boundary, 3)
+            return (BOUNDARY_CONDITION, Int(SOUTH_BOUNDARY))
         elseif neighbor[2] > size(cell_ids)[2]
-            return (:boundary, 4)
+            return (BOUNDARY_CONDITION, Int(NORTH_BOUNDARY))
         elseif active_mask[neighbor]
-            return (:cell, cell_ids[neighbor])
+            return (OTHER_QUADCELL, cell_ids[neighbor])
         else
-            return (:boundary, 5)
+            return (BOUNDARY_CONDITION, Int(INTERNAL_STRONGWALL))
         end
     end
 end
@@ -166,30 +193,19 @@ function quadcell_list_and_id_grid(u0, bounds, ncells, obstacles)
     return cell_list, active_ids
 end
 
-# FIXME this allocates twice according to BenchmarkTools
-# 
 function phantom_neighbor(id, active_cells, dir, bc, gas)
-    dirs_opposite = (north = :south, south = :north, east = :west, west = :east)
+    # TODO use nneighbors as intended.
+    @assert nneighbors(bc) == 1 "dirty hack alert, this function needs to be extended for bcs with more neighbors"
+
     dirs_reverse_bc = (north = true, south = false, east = true, west = false)
     dirs_dim = (north = 2, south = 2, east = 1, west = 1)
-    opposite_dir = dirs_opposite[dir]
 
-    T = dtype(active_cells[id])
-    dim = dirs_dim[dir]
     reverse_phantom = dirs_reverse_bc[dir] && reverse_right_edge(bc)
-    velocity_scaling = boundary_velocity_scaling(T, dim, dirs_reverse_bc[dir])
-    boundary_neighbors_u = MMatrix{4,nneighbors(bc),T}(undef)
-
-    cur = active_cells[id]
-    for j ∈ 1:nneighbors(bc)
-        boundary_neighbors_u[:, j] .= state_to_vector(cur.u) .* velocity_scaling
-        cur = active_cells[cur.neighbors[opposite_dir][2]]
-    end
-    phantom = phantom_cell(bc, boundary_neighbors_u, dim, gas)
+    phantom = phantom_cell(bc, active_cells[id].u, dirs_dim[dir], gas)
     if reverse_phantom
-        phantom = phantom .* velocity_scaling
+        return flip_velocity(phantom, dirs_dim[dir])
     end
-    return SVector{4}(phantom)
+    return phantom
 end
 
 # FIXME this allocates
@@ -202,15 +218,15 @@ function single_cell_neighbor_data(
     neighbors = active_cells[cell_id].neighbors
     cells_view = @view active_cells[:]
     map((ntuple(i -> ((keys(neighbors)[i], neighbors[i])), 4))) do (dir, (kind, id))
-        if kind == :boundary
+        if kind == BOUNDARY_CONDITION
             return phantom_neighbor(id, cells_view, dir, boundary_conditions[id], gas)
         else
-            return state_to_vector(cells_view[id].u)
+            return cells_view[id].u
         end
     end |> NamedTuple{(:north, :south, :east, :west)}
 end
 
-# does not allocate
+# accepts SVectors!
 function compute_cell_update(cell_data, neighbor_data, Δx, Δy, gas)
     ifaces = (
         north = (2, cell_data, neighbor_data.north),
@@ -250,10 +266,13 @@ function step_cell_simulation!(
 )
     T = dtype(active_cells[1])
     step_tasks = map(enumerate(active_cells)) do (idx, cell)
+        #@show cell
         n_data = single_cell_neighbor_data(idx, active_cells, boundary_conditions, gas)
-        c_data = state_to_vector(cell.u)
+        c_data = cell.u
         Threads.@spawn begin
-            return compute_cell_update($c_data, $n_data, $Δx, $Δy, gas)
+            mid = state_to_vector($c_data)
+            nbrs = map(state_to_vector, $n_data)
+            return compute_cell_update(mid, nbrs, $Δx, $Δy, gas)
         end
     end
     next::Vector{@NamedTuple{cell_speed::T, cell_Δu::SVector{4,T}}} = fetch.(step_tasks)

@@ -22,7 +22,7 @@ bcs = (
 )
 bounds = ((-4.0, 4.0), (-4.0, 4.0))
 obstacle = [CircularObstacle((0.0, 0.0), 0.75)]
-ncells = (250, 250)
+ncells = (100, 100)
 
 Euler2D.simulate_euler_equations_cells(
     0.1,

@@ -90,8 +90,7 @@ function phantom_cell(
     dim,
     gas::CaloricallyPerfectGas,
 ) where {N,T,U1,U2,U3}
-    scaling = SVector(ntuple(i -> i == dim ? -one(T) : one(T), N))
-    return ConservedProps(u.ρ, scaling .* u.ρv, u.ρE)
+    return flip_velocity(u, dim)
 end
 
 """
@@ -152,7 +151,8 @@ function phantom_cell(
     dim,
     gas::CaloricallyPerfectGas,
 )
-    return copy(u)
+    #TODO update ShockwaveProperties to have copy and parametrized methods for construction
+    return u
 end
 
 """
@@ -192,33 +192,6 @@ function phantom_cell(
     u::ConservedProps,
     dim,
     gas::CaloricallyPerfectGas,
-) where {T}
+)
     return bc.prescribed_state
-end
-
-function left_edge_ϕ(
-    bc::PhantomEdge{N},
-    u::AbstractArray{T,2},
-    dim,
-    gas::CaloricallyPerfectGas,
-) where {T,N}
-    phantom = phantom_cell(bc, @view(u[:, 1:N]), dim, gas)
-    return ϕ_hll(phantom, @view(u[:, 1]), dim, gas)
-end
-
-function right_edge_ϕ(
-    bc::PhantomEdge{N},
-    u::AbstractArray{T,2},
-    dim,
-    gas::CaloricallyPerfectGas,
-) where {T,N}
-    neighbors = u[:, end:-1:(end-N+1)] # copy
-    # reverse momentum on the right edge
-    neighbors[dim+1, :] .*= -1.0
-    phantom = phantom_cell(bc, neighbors, dim, gas)
-    # reverse the appropriate velocity component
-    if reverse_right_edge(bc)
-        phantom[1+dim] *= -1
-    end
-    return ϕ_hll(@view(u[:, end]), phantom, dim, gas)
 end
