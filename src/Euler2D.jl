@@ -14,9 +14,10 @@ include("utils.jl")
 include("transport.jl")
 include("boundary_conditions.jl")
 include("riemann_problem.jl")
-include("fvm.jl")
-include("array_simulations.jl")
-include("cell_simulations.jl")
+include("array_simulations/fvm.jl")
+include("array_simulations/array_simulations.jl")
+include("cell_simulations/obstacle.jl")
+include("cell_simulations/cell_simulations.jl")
 
 # methods
 export F_euler
