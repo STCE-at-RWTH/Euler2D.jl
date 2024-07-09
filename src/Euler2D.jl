@@ -1,5 +1,11 @@
 module Euler2D
 
+@doc let
+    path = joinpath(dirname(@__DIR__), "README.md")
+    include_dependency(path)
+    read(path, String)
+end Euler2D
+
 using Base.Threads: nthreads, @spawn
 using LinearAlgebra
 using Tullio
@@ -30,7 +36,11 @@ export PhantomEdge
 export StrongWall, FixedPhantomOutside, ExtrapolateToPhantom
 export SupersonicInflow
 
+# TODO provide property field methods for EulerSim and CellBasedEulerSim structs
+# TODO this is helpful for the groups that want itself
+
 # EulerSim methods
+# TODO optimize these to use arrays of SArrays
 export EulerSim
 export cell_boundaries, cell_centers, nth_step, eachstep
 export n_data_dims, n_space_dims, n_tsteps

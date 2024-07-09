@@ -103,7 +103,7 @@ function active_cell_ids_from_mask(active_mask)
 end
 
 function cell_neighbor_status(i, cell_ids, active_mask)
-    idx = CartesianIndices(size(cell_ids))[i]
+    idx = CartesianIndices(a)[i]
     _cell_neighbor_offsets = (
         north = CartesianIndex(0, 1),
         south = CartesianIndex(0, -1),
@@ -156,19 +156,21 @@ end
 function phantom_neighbor(id, active_cells, dir, bc, gas)
     # TODO use nneighbors as intended.
     @assert nneighbors(bc) == 1 "dirty hack alert, this function needs to be extended for bcs with more neighbors"
-
-    dirs_reverse_bc = (north = true, south = false, east = true, west = false)
+    dirs_bc_is_reversed = (north = true, south = false, east = false, west = true)
     dirs_dim = (north = 2, south = 2, east = 1, west = 1)
-
-    reverse_phantom = dirs_reverse_bc[dir] && reverse_right_edge(bc)
-    phantom = phantom_cell(bc, active_cells[id].u, dirs_dim[dir], gas)
+    reverse_phantom = dirs_bc_is_reversed[dir] && reverse_right_edge(bc)
+    u = if dirs_bc_is_reversed[dir]
+        flip_velocity(active_cells[id].u, dirs_dim[dir])
+    else
+        active_cells[id].u
+    end
+    phantom = phantom_cell(bc, u, dirs_dim[dir], gas)
     if reverse_phantom
         return flip_velocity(phantom, dirs_dim[dir])
     end
     return phantom
 end
 
-# FIXME this allocates
 function single_cell_neighbor_data(
     cell_id,
     active_cells,
@@ -176,12 +178,11 @@ function single_cell_neighbor_data(
     gas::CaloricallyPerfectGas,
 )
     neighbors = active_cells[cell_id].neighbors
-    cells_view = @view active_cells[:]
     map((ntuple(i -> ((keys(neighbors)[i], neighbors[i])), 4))) do (dir, (kind, id))
         if kind == BOUNDARY_CONDITION
-            return phantom_neighbor(id, cells_view, dir, boundary_conditions[id], gas)
+            return phantom_neighbor(id, active_cells, dir, boundary_conditions[id], gas)
         else
-            return cells_view[id].u
+            return active_cells[id].u
         end
     end |> NamedTuple{(:north, :south, :east, :west)}
 end
@@ -194,17 +195,14 @@ function compute_cell_update(cell_data, neighbor_data, Δx, Δy, gas)
         east = (1, cell_data, neighbor_data.east),
         west = (1, neighbor_data.west, cell_data),
     )
-
     maximum_signal_speed = mapreduce(max, ifaces) do (dim, uL, uR)
         max(abs.(interface_signal_speeds(uL, uR, dim, gas))...)
     end
-
     ϕ = map(ifaces) do (dim, uL, uR)
         ϕ_hll(uL, uR, dim, gas)
     end
     # we want to write this as u_next = u + Δt * diff
     Δu = inv(Δx) * (ϕ.west - ϕ.east) + inv(Δy) * (ϕ.south - ϕ.north)
-
     return (cell_speed = maximum_signal_speed, cell_Δu = Δu)
 end
 
@@ -244,6 +242,25 @@ function step_cell_simulation!(
     return Δt
 end
 
+function partition_cell_list(active_cells, cell_ids, bcs, tasks_per_axis)
+    # minimum partition size includes i - 1 and i + 1 neighbors
+    min_overlap = mapreduce(max, active_cells) do c
+        n::Int64 = 1
+        for (kind, id) ∈ c.neighbors
+            if kind == BOUNDARY_CONDITION
+                n = max(n, nneighbors(bcs[id]))
+            end
+        end
+        return n
+    end
+    (cells_x_per_task, cells_y_per_task) = size(cell_ids) .÷ tasks_per_axis
+end
+
+"""
+    CellBasedEulerSim{T, Q1, Q2, Q3}
+
+Data struct for a cell-based Euler equations simulation in two dimensions.
+"""
 struct CellBasedEulerSim{T,Q1,Q2,Q3}
     ncells::Tuple{Int,Int}
     nsteps::Int
@@ -270,7 +287,7 @@ end
 eachstep(csim::CellBasedEulerSim) = [nth_step(csim, n) for n ∈ 1:n_tsteps(csim)]
 
 """
-    simulate_euler_equations_cells(u0, T_end, boundary_conditions, bounds, ncells; gas, CFL, max_tsteps, write_output, output_tag)
+    simulate_euler_equations_cells(u0, T_end, boundary_conditions, bounds, ncells)
 
 Simulate the solution to the Euler equations from `t=0` to `t=T`, with `u(0, x) = u0(x)`. 
 Time step size is computed from the CFL condition.
@@ -290,16 +307,16 @@ Arguments
 
 Keyword Arguments
 ---
-- `gas=DRY_AIR`: The fluid to be simulated.
+- `gas::CaloricallyPerfectGas=DRY_AIR`: The fluid to be simulated.
 - `CFL=0.75`: The CFL condition to apply to `Δt`. Between zero and one, default `0.75`.
-- `max_tsteps`: Maximum number of time steps to take. Defaults to "very large".
+- `max_tsteps=typemax(Int)`: Maximum number of time steps to take. Defaults to "very large".
 - `write_result=true`: Should output be written to disk?
-- `history_in_memory`: Should we keep whole history in memory?
-- `return_complete_result`: Should a complete record of the simulation be returned by this function?
-- `output_tag`: File name for the tape and output summary.
-- `thread_pool`: Which thread pool should be used? 
+- `history_in_memory=false`: Should we keep whole history in memory?
+- `return_complete_result=false`: Should a complete record of the simulation be returned by this function?
+- `output_tag="cell_euler_sim"`: File name for the tape and output summary.
+- `thread_pool = :default`: Which thread pool should be used? 
     (currently unused, but this does multithread via Threads.@spawn)
-- `info_frequency`: How often should info be printed?
+- `info_frequency = 10`: How often should info be printed?
 """
 function simulate_euler_equations_cells(
     u0,
@@ -423,4 +440,24 @@ function simulate_euler_equations_cells(
         ids,
         reshape(u_cells, size(u_cells)..., 1),
     )
+end
+
+function load_euler_cell_sim(path; dtype = Float64)
+    return open(path, "r") do f
+        n_tsteps = read(f, Int)
+        n_active = read(f, Int)
+        n_dims = read(f, Int)
+        @assert n_dims == 2
+        ncells = (read(f, Int), read(f, Int))
+        bounds = ntuple(i -> (read(f, dtype), read(f, dtype)), 2)
+        ids = zeros(Int, ncells)
+        read!(f, ids)
+        t = Vector{dtype}(undef, n_tsteps)
+        u_vals = Array{dtype,3}(undef, 4, n_active, n_tsteps)
+        for i = 1:n_tsteps
+            t[i] = read(f, dtype)
+            read!(f, @view(u_vals[:, :, i]))
+        end
+        return CellSim{dtype}(n_tsteps, n_active, ncells, ids, bounds, t, u_vals)
+    end
 end

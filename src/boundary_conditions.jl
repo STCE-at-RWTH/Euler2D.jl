@@ -79,8 +79,9 @@ function phantom_cell(
     dim,
     gas::CaloricallyPerfectGas,
 ) where {T}
+    # HACK this isn't good.
     phantom = reshape(u, length(u))
-    phantom[1+dim, :] *= -1
+    phantom[1+dim] *= -1
     return phantom
 end
 

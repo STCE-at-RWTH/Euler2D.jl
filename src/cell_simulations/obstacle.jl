@@ -33,7 +33,7 @@ end
 
 Create a triangular obstacle from a clockwise-oriented list of its vertices.
 """
-function TriangularObstacle(pts)
+function TriangularObstacle(pts...)
     return TriangularObstacle(tuple((SVector{2}(p) for p ∈ pts)...))
 end
 

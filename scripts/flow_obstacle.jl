@@ -13,26 +13,22 @@ ambient = launder_units(PrimitiveProps(0.662, (1.75, 0.0), 220.0))
 amb2 = launder_units(PrimitiveProps(0.662, (0.0, 0.0), 220.0))
 
 bc_right = SupersonicInflow(ambient, DRY_AIR)
-bcs = (
-    bc_right,
-    ExtrapolateToPhantom(),
-    ExtrapolateToPhantom(),
-    ExtrapolateToPhantom(),
-    StrongWall(),
-)
+bc_fix = FixedPhantomOutside(ambient)
+bcs = (bc_fix, bc_fix, bc_fix, bc_fix, StrongWall())
 bounds = ((-4.0, 4.0), (-4.0, 4.0))
-obstacle = [CircularObstacle((0.0, 0.0), 0.75)]
-ncells = (100, 100)
+just_circle = [CircularObstacle((0.0, 0.0), 0.75)]
+just_triangle = [TriangularObstacle((-0.5, 0.0), (0.25, 0.5), (0.25, -0.5))]
+ncells = (400, 400)
 
 Euler2D.simulate_euler_equations_cells(
     0.1,
     bcs,
-    obstacle,
+    just_circle,
     bounds,
     ncells;
     gas = DRY_AIR,
     info_frequency = 25,
-    max_tsteps = 1500,
+    max_tsteps = 500,
     output_tag = "circular_obstacle_radius_1",
 ) do (x, y)
     ambient
@@ -41,7 +37,21 @@ end
 Euler2D.simulate_euler_equations_cells(
     0.1,
     bcs,
-    [TriangularObstacle([SVector(-1.0, -2.0), SVector(2.0, -0.75), SVector(0.5, -0.75)])],
+    just_circle,
+    bounds,
+    ncells;
+    gas = DRY_AIR,
+    info_frequency = 25,
+    max_tsteps = 10,
+    output_tag = "circular_obstacle_radius_1_compound_shock",
+) do (x, y)
+    y > 0.0 ? amb2 : ambient
+end
+
+Euler2D.simulate_euler_equations_cells(
+    0.1,
+    bcs,
+    just_triangle,
     bounds,
     ncells;
     gas = DRY_AIR,
