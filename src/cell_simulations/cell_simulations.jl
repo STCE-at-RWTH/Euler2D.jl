@@ -102,8 +102,8 @@ function active_cell_ids_from_mask(active_mask)
     return cell_ids
 end
 
-function cell_neighbor_status(i, cell_ids, active_mask)
-    idx = CartesianIndices(a)[i]
+function cell_neighbor_status(i, cell_ids)
+    idx = CartesianIndices(cell_ids)[i]
     _cell_neighbor_offsets = (
         north = CartesianIndex(0, 1),
         south = CartesianIndex(0, -1),
@@ -120,10 +120,10 @@ function cell_neighbor_status(i, cell_ids, active_mask)
             return (BOUNDARY_CONDITION, Int(SOUTH_BOUNDARY))
         elseif neighbor[2] > size(cell_ids)[2]
             return (BOUNDARY_CONDITION, Int(NORTH_BOUNDARY))
-        elseif active_mask[neighbor]
-            return (OTHER_QUADCELL, cell_ids[neighbor])
-        else
+        elseif cell_ids[neighbor] == 0
             return (BOUNDARY_CONDITION, Int(INTERNAL_STRONGWALL))
+        else
+            return (OTHER_QUADCELL, cell_ids[neighbor])
         end
     end
 end
@@ -442,7 +442,18 @@ function simulate_euler_equations_cells(
     )
 end
 
-function load_euler_cell_sim(path; dtype = Float64)
+function load_euler_cell_sim(
+    path;
+    dtype = Float64,
+    density_oneunit = 1.0 * ShockwaveProperties._units_ρ,
+    momentum_density_oneunit = 1.0 * ShockwaveProperties._units_ρv,
+    internal_energy_oneunit = 1.0 * ShockwaveProperties._units_ρE,
+    show_info = true,
+)
+    units_types =
+        typeof.(density_oneunit, momentum_density_oneunit, internal_energy_oneunit)
+    CPropsDtype = ConservedProps{2,dtype,units_types...}
+    CellDType = RegularQuadCell{dtype,units_types...}
     return open(path, "r") do f
         n_tsteps = read(f, Int)
         n_active = read(f, Int)
@@ -450,14 +461,43 @@ function load_euler_cell_sim(path; dtype = Float64)
         @assert n_dims == 2
         ncells = (read(f, Int), read(f, Int))
         bounds = ntuple(i -> (read(f, dtype), read(f, dtype)), 2)
-        ids = zeros(Int, ncells)
-        read!(f, ids)
+        cell_faces = [range(b...; length = n) for (b, n) ∈ zip(bounds, ncells)]
+        cell_centers = [r[1:end-1] .+ step(r) / 2 for r ∈ cell_faces]
+        if show_info
+            @info "Loaded metadata for cell-based Euler simulation at $path." n_tsteps n_active n_dims ncells bounds cell_centers
+        end
+
+        active_cell_ids = zeros(Int, ncells)
+        read!(f, active_cell_ids)
+
         t = Vector{dtype}(undef, n_tsteps)
-        u_vals = Array{dtype,3}(undef, 4, n_active, n_tsteps)
+        cell_vals = Array{CellDType,2}(undef, (n_active, n_tsteps))
         for i = 1:n_tsteps
             t[i] = read(f, dtype)
-            read!(f, @view(u_vals[:, :, i]))
+            ith_data = @view cell_vals[:, i]
+            for j ∈ eachindex(IndexCartesian(), active_cell_ids)
+                id = active_cell_ids[j]
+                # skip if not active
+                id == 0 && continue
+                ρ = density_oneunit * read(f, dtype)
+                ρv = momentum_density_oneunit * SVector{2}(read(f, dtype), read(f, dtype))
+                ρE = internal_energy_oneunit * read(f, dtype)
+                props = ConservedProps(ρ, ρv, ρE)
+
+                neighbors = cell_neighbor_status(id, active_cell_ids)
+                cell_x = cell_centers[1][j[1]] # wtf
+                cell_y = cell_centers[2][j[2]] # WTF
+                ith_data[id] = RegularQuadCell(id, j, (cell_x, cell_y), props, neighbors)
+            end
         end
-        return CellSim{dtype}(n_tsteps, n_active, ncells, ids, bounds, t, u_vals)
+        
+        return CellBasedEulerSim(
+            ncells,
+            n_tsteps,
+            bounds,
+            tsteps,
+            active_cell_ids,
+            cell_vals,
+        )
     end
 end
