@@ -1,5 +1,5 @@
 # API
 
 ```@autodocs
-Modules = [EulerSim]
+Modules = [Euler2D]
 ```
