@@ -21,7 +21,8 @@ Represents a completed simulation of the Euler equations on an N-dimensional gri
 - `cell_boundaries`: Get the co-ordinates of cell faces.
 - `nth_step`: Get the information at time step `n`.
 - `eachstep`: Get a vector of `(t_k, u_k)` tuples for easy iteration.
-
+- `density_field, momentum_density_field, total_internal_energy_density_field`: Get views of certain quantities at a time step.
+- `pressure_field, velocity_field, mach_number_field`: Compute quantities at a given time step.
 """
 struct EulerSim{N,NAXES,T}
     ncells::NTuple{N,Int}
@@ -56,19 +57,19 @@ Number of axes in the data array of an `EulerSim`.
 n_data_dims(::EulerSim{N,NAXES,T}) where {N,NAXES,T} = NAXES
 
 """
-    n_tsteps(esim)
+    n_tsteps(sim)
 
-Number of time steps taken in an EulerSim.
+Number of time steps taken in an EulerSim or CellBasedEulerSim.
 """
-n_tsteps(e) = e.nsteps
+n_tsteps(sim) = sim.nsteps
 
 """ 
-    cell_boundaries(esim::EulerSim, n)
+    cell_boundaries(sim, n)
 
-Return `StepRange` of all the cell face positions for the `n`th space dimension in `esim`.
+Return `StepRange` of all the cell face positions for the `n`th space dimension in `sim`.
 """
-function cell_boundaries(e, dim)
-    return range(e.bounds[dim]...; length = e.ncells[dim] + 1)
+function cell_boundaries(sim, dim)
+    return range(sim.bounds[dim]...; length = sim.ncells[dim] + 1)
 end
 
 """
@@ -81,12 +82,12 @@ function cell_boundaries(e::EulerSim{N,NAXES,T}) where {N,NAXES,T}
 end
 
 """
-    cell_centers(esim::EulerSim, n)
+    cell_centers(sim, n)
 
-Return `StepRange` of all the cell center positions for the `n`th space dimension in `esim`.
+Return `StepRange` of all the cell center positions for the `n`th space dimension in `sim`.
 """
-function cell_centers(e, dim)
-    ifaces = cell_boundaries(e, dim)
+function cell_centers(sim, dim)
+    ifaces = cell_boundaries(sim, dim)
     return ifaces[1:end-1] .+ step(ifaces) / 2
 end
 
@@ -137,7 +138,7 @@ function pressure_field(
                 pressure(uij[1], @view(uij[2:end-1]), uij[end], gas),
             )
         end,
-        space_dims_size(esim),
+        grid_size(esim),
     )
     return P
 end
@@ -166,6 +167,17 @@ function momentum_density_field(esim::EulerSim, n)
 end
 
 """
+    total_internal_energy_density_field(esim::EulerSim, n)
+
+Get a view of the total internal energy density field for an array-based euler simulation at time step `n`.
+"""
+function total_internal_energy_density_field(esim::EulerSim, n)
+    _, u = nth_step(esim, n)
+    free_idxs = ntuple(Returns(Colon()), n_space_dims(esim))
+    return view(u, 4, free_idxs...)
+end
+
+"""
     velocity_field(esim::EulerSim, n)
 
 Compute the velocity field for an array-based euler simulation at time step `n`.
@@ -174,7 +186,7 @@ function velocity_field(esim::EulerSim, n)
     ρ = density_field(esim, n)
     ρv = momentum_density_field(esim, n)
     v = similar(ρv)
-    for i ∈ CartesianIndices(grid_size(u))
+    for i ∈ CartesianIndices(grid_size(esim))
         v[:, i] .= ρv[:, i] ./ ρ[i]
     end
     return v
@@ -183,13 +195,13 @@ end
 """
     mach_number_field(esim::EulerSim, n, gas::CaloricallyPerfectGas)
 
-Compute the mach number field 
+Compute the mach number field for an array-based euler simulation at time step `n` in gas `gas`.
 """
 function mach_number_field(esim::EulerSim, n, gas::CaloricallyPerfectGas)
     _, u = nth_step(esim, n)
     v = velocity_field(esim, n)
     M = similar(v)
-    for i ∈ CartesianIndices(grid_size(u))
+    for i ∈ CartesianIndices(grid_size(esim))
         a_loc = ustrip(
             ShockwaveProperties._units_v,
             speed_of_sound(u[1, i], u[2:end-1, i], u[end, i], gas),

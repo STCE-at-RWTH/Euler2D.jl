@@ -12,3 +12,7 @@ The package provides two types of simulations:
 ## Scripts
 
 The `scripts` directory contains scripts to generate data files for further analysis.
+
+## Documentation
+
+Documentation is on its way... the docstrings should be good enough... as soon as I figure out how to use GH Actions for deploying docs, they will exist.

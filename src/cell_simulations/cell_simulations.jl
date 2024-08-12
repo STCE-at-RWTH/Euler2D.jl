@@ -147,22 +147,22 @@ function quadcell_list_and_id_grid(u0, bounds, ncells, obstacles)
         (m, n) = Tuple(i)
         x_i = centers[1][m]
         y_j = centers[2][n]
-        neighbors = cell_neighbor_status(i, active_ids, active_mask)
+        neighbors = cell_neighbor_status(i, active_ids)
         cell_list[j] = RegularQuadCell(j, i, SVector(x_i, y_j), u0_grid[i], neighbors)
     end
     return cell_list, active_ids
 end
 
-function phantom_neighbor(id, active_cells, dir, bc, gas)
-    # TODO use nneighbors as intended.
+function phantom_neighbor(cell_id, active_cells, dir, bc, gas)
+    # HACK use nneighbors as intended.
     @assert nneighbors(bc) == 1 "dirty hack alert, this function needs to be extended for bcs with more neighbors"
     dirs_bc_is_reversed = (north = true, south = false, east = false, west = true)
     dirs_dim = (north = 2, south = 2, east = 1, west = 1)
     reverse_phantom = dirs_bc_is_reversed[dir] && reverse_right_edge(bc)
     u = if dirs_bc_is_reversed[dir]
-        flip_velocity(active_cells[id].u, dirs_dim[dir])
+        flip_velocity(active_cells[cell_id].u, dirs_dim[dir])
     else
-        active_cells[id].u
+        active_cells[cell_id].u
     end
     phantom = phantom_cell(bc, u, dirs_dim[dir], gas)
     if reverse_phantom
@@ -179,12 +179,98 @@ function single_cell_neighbor_data(
 )
     neighbors = active_cells[cell_id].neighbors
     map((ntuple(i -> ((keys(neighbors)[i], neighbors[i])), 4))) do (dir, (kind, id))
-        if kind == BOUNDARY_CONDITION
-            return phantom_neighbor(id, active_cells, dir, boundary_conditions[id], gas)
+        res = if kind == BOUNDARY_CONDITION
+            phantom_neighbor(cell_id, active_cells, dir, boundary_conditions[id], gas)
         else
-            return active_cells[id].u
+            active_cells[id].u
         end
+        return state_to_vector(res)
     end |> NamedTuple{(:north, :south, :east, :west)}
+end
+
+function split_axis(len, n)
+    l = len ÷ n
+    rem = len - (n * l)
+    tpl_ranges = [(i * l + 1, (i + 1) * l) for i = 0:(n-1)]
+    if rem > 0
+        tpl_ranges[end] = (l * (n - 1) + 1, len)
+    end
+    return tpl_ranges
+end
+
+function expand_to_neighbors(left_idx, right_idx, axis_size)
+    len = right_idx - left_idx + 1
+    if left_idx > 1
+        new_l = left_idx - 1
+        left_idx = 2
+    else
+        new_l = 1
+        left_idx = 1
+    end
+
+    if right_idx < axis_size
+        new_r = right_idx + 1
+        right_idx = left_idx + len - 1
+    else
+        new_r = right_idx
+        right_idx = left_idx + len - 1
+    end
+    return (new_l, new_r), (left_idx, right_idx)
+end
+
+struct CellGridPartition{T,Q1,Q2,Q3}
+    # which slice of the global grid was copied into this partition?
+    global_extent::NTuple{2,NTuple{2,Int}}
+    # which (global) indices is this partition responsible for updating?
+    global_computation_indices::NTuple{2,NTuple{2,Int}}
+    # which (local) indices is this partition responsible for updating?
+    computation_indices::NTuple{2,NTuple{2,Int}}
+    # what cell IDs were copied into this partition?
+    cells_copied_ids::Array{Int,2}
+    #TODO Switch to Dictionaries.jl?
+    cells_map::Dict{Int,RegularQuadCell{T,Q1,Q2,Q3}}
+end
+
+"""
+    dtype(::CellGridPartition)
+    dtype(::Type{CellGridPartition})
+
+Underlying numeric data type of this partition.
+"""
+dtype(::CellGridPartition{T,Q1,Q2,Q3}) where {T,Q1,Q2,Q3} = T
+dtype(::Type{CellGridPartition{T,Q1,Q2,Q3}}) where {T,Q1,Q2,Q3} = T
+
+# TODO if we want to move beyond a structured grid, we have to redo this method. I have no idea how to do this.
+# TODO how slow is this function? we may be wasting a lot of time partitioning that we don't recover by multithreading. Certainly memory use goes up.
+
+function partition_cell_list(global_active_cells, global_cell_ids, tasks_per_axis)
+    # minimum partition size includes i - 1 and i + 1 neighbors
+    grid_size = size(global_cell_ids)
+    (all_part_x, all_part_y) = split_axis.(grid_size, tasks_per_axis)
+    res = map(Iterators.product(all_part_x, all_part_y)) do (part_x, part_y)
+        # adust slice width...
+        task_x, task_working_x = expand_to_neighbors(part_x..., grid_size[1])
+        task_y, task_working_y = expand_to_neighbors(part_y..., grid_size[2])
+        # cells copied for this task
+        task_cell_ids = global_cell_ids[range(task_x...), range(task_y...)]
+        # total number of cells this task has a copy of
+        task_cell_count = length(filter(>(0), task_cell_ids))
+        cell_ids_map = Dict{Int,eltype(global_active_cells)}()
+        sizehint!(cell_ids_map, task_cell_count)
+        for i ∈ eachindex(task_cell_ids)
+            cell_id = task_cell_ids[i]
+            cell_id == 0 && continue
+            get!(cell_ids_map, cell_id, global_active_cells[cell_id])
+        end
+        return CellGridPartition(
+            (task_x, task_y),
+            (part_x, part_y),
+            (task_working_x, task_working_y),
+            task_cell_ids,
+            cell_ids_map,
+        )
+    end
+    return res
 end
 
 # accepts SVectors!
@@ -206,60 +292,120 @@ function compute_cell_update(cell_data, neighbor_data, Δx, Δy, gas)
     return (cell_speed = maximum_signal_speed, cell_Δu = Δu)
 end
 
+function compute_partition_update(
+    cell_partition::CellGridPartition{T,Q1,Q2,Q3},
+    boundary_conditions,
+    Δx,
+    Δy,
+    gas::CaloricallyPerfectGas,
+) where {T,Q1,Q2,Q3}
+    computation_region = view(
+        cell_partition.cells_copied_ids,
+        range(cell_partition.computation_indices[1]...),
+        range(cell_partition.computation_indices[2]...),
+    )
+    maximum_wave_speed = zero(T)
+    Δu = Dict{Int64,SVector{4,T}}
+    sizehint!(Δu, count(≠(0), computation_region))
+    for id ∈ computation_region
+        id == 0 && continue
+        nbr_data = single_cell_neighbor_data(
+            cell_id,
+            cell_partition.cells_map,
+            boundary_conditions,
+            gas,
+        )
+        cell_data = state_to_vector(cell_partition.cells_map[cell_id].u)
+        ifaces = (
+            north = (2, cell_data, nbr_data.north),
+            south = (2, nbr_data.south, cell_data),
+            east = (1, cell_data, nbr_data.east),
+            west = (1, nbr_data.west, cell_data),
+        )
+        # maximum wave speed in this partition
+        maximum_wave_speed = max(
+            maximum_wave_speed,
+            mapreduce(max, ifaces) do (dim, uL, uR)
+                max(abs.(interface_signal_speeds(uL, uR, dim, gas))...)
+            end,
+        )
+        # flux through cell faces
+        ϕ = map(ifaces) do (dim, uL, uR)
+            ϕ_hll(uL, uR, dim, gas)
+        end
+        # we want to write this as u_next = u + Δt * diff
+        Δu = inv(Δx) * (ϕ.west - ϕ.east) + inv(Δy) * (ϕ.south - ϕ.north)
+        return cell_id => Δu
+    end |> Dict
+    return (a_max = maximum_wave_speed, Δu = Δu)
+end
+
+function apply_partition_update!(partition, Δt, Δu)
+    for (k, v) ∈ pairs(Δu)
+        partition.cells_map[k] = compute_next_u(partition.cells_map[k], Δt, v)
+    end
+end
+
 function compute_next_u(cell, Δt, Δu)
     u_next = state_to_vector(cell.u) + Δt * Δu
     RegularQuadCell(cell.id, cell.idx, cell.center, ConservedProps(u_next), cell.neighbors)
 end
 
 function step_cell_simulation!(
-    cells_next,
-    active_cells,
+    cell_partitions,
     Δt_maximum,
     boundary_conditions,
     cfl_limit,
     Δx,
     Δy,
-    gas::CaloricallyPerfectGas;
-    tpool = :default,
+    gas::CaloricallyPerfectGas,
 )
-    T = dtype(active_cells[1])
-    step_tasks = map(enumerate(active_cells)) do (idx, cell)
-        #@show cell
-        n_data = single_cell_neighbor_data(idx, active_cells, boundary_conditions, gas)
-        c_data = cell.u
+    T = dtype(eltype(cell_partitions))
+    # compute Δu from flux functions
+    compute_partition_update_tasks = map(cell_partitions) do cell_partition
         Threads.@spawn begin
-            mid = state_to_vector($c_data)
-            nbrs = map(state_to_vector, $n_data)
-            return compute_cell_update(mid, nbrs, $Δx, $Δy, gas)
+            # not sure what to interpolate here
+            compute_partition_update(cell_partition, $boundary_conditions, Δx, Δy, $gas)
         end
     end
-    next::Vector{@NamedTuple{cell_speed::T, cell_Δu::SVector{4,T}}} = fetch.(step_tasks)
-    a_max = mapreduce(el -> el.cell_speed, max, next)
-    Δt = min(Δt_maximum, cfl_limit * Δx / a_max)
-    for i ∈ eachindex(next, cells_next, active_cells)
-        cells_next[i] = compute_next_u(active_cells[i], Δt, next[i].cell_Δu)
+    result_dtype = @NamedTuple{a_max::T, Δu::Dict{Int64,SVector{4,T}}}
+    partition_updates::Array{result_dtype,length(size(compute_partition_update_tasks))} =
+        fetch.(compute_partition_update_tasks)
+    # find Δt
+    a_max = mapreduce(el -> el.a_max, max, partition_updates)
+    Δt = min(Δt_maximum, cfl_limit * min(Δx, Δy) / a_max)
+    # apply update
+    Threads.@threads for p_idx ∈ eachindex(cell_partitions, partition_updates)
+        apply_partition_update!(cell_partitions[p_idx], Δt, partition_updates[p_idx].Δu)
     end
     return Δt
 end
 
-function partition_cell_list(active_cells, cell_ids, bcs, tasks_per_axis)
-    # minimum partition size includes i - 1 and i + 1 neighbors
-    min_overlap = mapreduce(max, active_cells) do c
-        n::Int64 = 1
-        for (kind, id) ∈ c.neighbors
-            if kind == BOUNDARY_CONDITION
-                n = max(n, nneighbors(bcs[id]))
-            end
-        end
-        return n
-    end
-    (cells_x_per_task, cells_y_per_task) = size(cell_ids) .÷ tasks_per_axis
-end
-
 """
-    CellBasedEulerSim{T, Q1, Q2, Q3}
+    CellBasedEulerSim{T, Q1<:Density, Q2<:MomentumDensity, Q3<:EnergyDensity}
 
-Data struct for a cell-based Euler equations simulation in two dimensions.
+Represents a completed simulation of the Euler equations on a mesh of 2-dimensional quadrilateral cells.
+
+## Type Parameters
+- `T`: Data type for all computations.
+- `Q1, Q2, Q3`: Quantity types for density, momentum density, and energy density.
+
+## Fields
+- `ncells::(Int, Int)`: Number of cells in each of of the simulation density.
+- `nsteps::Int`: Number of time steps taken in the simulation
+- `bounds::{(T, T), (T, T)}`: Bounds of the simulation in each of the dimensions.
+- `tsteps::Vector{T}`: Time steps.
+- `cell_ids::Matrix{Int}`: Matrix of active cell IDs. Inactive cells
+- `u::Array{ConservedProps{T, Q1, Q2, Q3}, 2}`: Array of cell data in each time step.
+
+## Methods
+- `n_space_dims`, `n_tsteps``, ``grid_size``
+- `cell_centers`: Get the co-ordinates of cell centers.
+- `cell_boundaries`: Get the co-ordinates of cell faces.
+- `nth_step`: Get the information at time step `n`.
+- `eachstep`: Get a vector of `(t_k, u_k)` tuples for easy iteration.
+- `density_field, momentum_density_field, total_internal_energy_density_field`: Compute quantities at a given time step.
+- `pressure_field, velocity_field, mach_number_field`: Compute quantities at a given time step.
 """
 struct CellBasedEulerSim{T,Q1,Q2,Q3}
     ncells::Tuple{Int,Int}
@@ -271,6 +417,7 @@ struct CellBasedEulerSim{T,Q1,Q2,Q3}
 end
 
 n_space_dims(::CellBasedEulerSim) = 2
+grid_size(csim::CellBasedEulerSim) = csim.ncells
 
 function cell_boundaries(e::CellBasedEulerSim)
     return ntuple(i -> cell_boundaries(e, i), 2)
@@ -280,19 +427,136 @@ function cell_centers(e::CellBasedEulerSim)
     return ntuple(i -> cell_boundaries(e, i), 2)
 end
 
+"""
+    nth_step(csim::CellBasedEulerSim, n)
+
+Return `(t, cells)` for time step `n`. `cells` will be a view.
+"""
 function nth_step(csim::CellBasedEulerSim, n)
-    return csim.tsteps[n], view(esim.cells, Colon(), n)
+    return csim.tsteps[n], view(csim.cells, Colon(), n)
 end
 
 eachstep(csim::CellBasedEulerSim) = [nth_step(csim, n) for n ∈ 1:n_tsteps(csim)]
 
 """
+    cell_from_grid_pos(csim::CellBasedEulerSim, idx)
+
+Redirect from any valid grid index `idx` for a cell to a view of that cell over all time steps.
+"""
+function cell_from_grid_pos(csim::CellBasedEulerSim, idx...)
+    id = csim.cell_ids[idx...]
+    return view(csim.cells, id, Colon())
+end
+
+"""
+    density_field(csim::CellBasedEulerSim, n)
+
+Compute the density field for a cell-based Euler simulation `csim` at time step `n`.
+"""
+function density_field(csim::CellBasedEulerSim{T,Q1,Q2,Q3}, n) where {T,Q1,Q2,Q3}
+    _, u_cells = nth_step(csim, n)
+    ρ = Array{Union{Q1,Nothing},2}(undef, grid_size(csim))
+    fill!(ρ, nothing)
+    for rqc ∈ u_cells
+        ρ[rqc.idx] = density(rqc.u)
+    end
+    return ρ
+end
+
+"""
+    momentum_density_field(csim::CellBasedEulerSim, n)
+
+Compute the momentum density field for a cell-based Euler simulation `csim` at time step `n`.
+"""
+function momentum_density_field(csim::CellBasedEulerSim{T,Q1,Q2,Q3}, n) where {T,Q1,Q2,Q3}
+    _, u_cells = nth_step(csim, n)
+    ρv = Array{Union{Q2,Nothing},3}(undef, (2, grid_size(csim)...))
+    fill!(ρv, nothing)
+    for rqc ∈ u_cells
+        ρv[:, rqc.idx] = momentum_density(rqc.u)
+    end
+    return ρv
+end
+
+"""
+    velocity_field(csim::CellBasedEulerSim, n)
+
+Compute the velocity field for a cell-based Euler simulation `csim` at time step `n`.
+"""
+function velocity_field(csim::CellBasedEulerSim, n)
+    _, u_cells = nth_step(csim, n)
+    # is this a huge runtime problem? who can know.
+    T = eltype(velocity(u_cells[1].u))
+    v = Array{Union{T,Nothing},3}(undef, (2, grid_size(csim)...))
+    fill!(v, nothing)
+    for rqc ∈ u_cells
+        v[:, rqc.idx] = velocity(rqc.u)
+    end
+    return v
+end
+
+"""
+    total_internal_energy_density_field(csim::CellBasedEulerSim, n)
+
+Compute the total internal energy density field for a cell-based Euler simulation at time step `n`.
+"""
+function total_internal_energy_density_field(
+    csim::CellBasedEulerSim{T,Q1,Q2,Q3},
+    n,
+) where {T,Q1,Q2,Q3}
+    _, u_cells = nth_step(csim, n)
+    ρE = Array{Union{Q3,nothing},2}(undef, grid_size(csim))
+    fill!(ρE, nothing)
+    for rqc ∈ u_cells
+        ρE[rqc.idx] = total_internal_energy_density(rqc.u)
+    end
+    return ρE
+end
+
+"""
+    pressure_field(csim::CellBasedEulerSim, n, gas)
+
+Compute the pressure field for a cell-based Euler simulation `csim` at time step `n` in gas `gas`.
+"""
+function pressure_field(csim::CellBasedEulerSim, n, gas::CaloricallyPerfectGas)
+    _, u_cells = nth_step(csim, n)
+    # is this a huge runtime problem? who can know.
+    T = typeof(pressure(u_cells[1].u, gas))
+    P = Array{Union{T,Nothing},2}(undef, grid_size(csim))
+    fill!(P, nothing)
+    for rqc ∈ u_cells
+        P[rqc.idx] = pressure(rqc.u, gas)
+    end
+    return P
+end
+
+"""
+    mach_number_field(csim::CellBasedEulerSim, n, gas)
+
+Compute the Mach number field for a cell-based Euler simulation `csim` at time step `n` in gas `gas`.
+"""
+function mach_number_field(
+    csim::CellBasedEulerSim{T,Q1,Q2,Q3},
+    n,
+    gas::CaloricallyPerfectGas,
+) where {T,Q1,Q2,Q3}
+    _, u_cells = nth_step(csim, n)
+    # is this a huge runtime problem? who can know.
+    M = Array{Union{T,Nothing},3}(undef, (2, grid_size(csim)...))
+    fill!(M, nothing)
+    for rqc ∈ u_cells
+        M[:, rqc.idx] = mach_number(rqc.u, gas)
+    end
+    return M
+end
+
+"""
     simulate_euler_equations_cells(u0, T_end, boundary_conditions, bounds, ncells)
 
-Simulate the solution to the Euler equations from `t=0` to `t=T`, with `u(0, x) = u0(x)`. 
+Simulate the solution to the Euler equations from `t=0` to `t=T`, with `u(0, x) = u0(x)`.
 Time step size is computed from the CFL condition.
 
-The simulation will fail if any nonphysical conditions are reached (speed of sound cannot be computed). 
+The simulation will fail if any nonphysical conditions are reached (speed of sound cannot be computed).
 
 The simulation can be written to disk.
 
@@ -314,7 +578,7 @@ Keyword Arguments
 - `history_in_memory=false`: Should we keep whole history in memory?
 - `return_complete_result=false`: Should a complete record of the simulation be returned by this function?
 - `output_tag="cell_euler_sim"`: File name for the tape and output summary.
-- `thread_pool = :default`: Which thread pool should be used? 
+- `thread_pool = :default`: Which thread pool should be used?
     (currently unused, but this does multithread via Threads.@spawn)
 - `info_frequency = 10`: How often should info be printed?
 """
@@ -442,7 +706,7 @@ function simulate_euler_equations_cells(
     )
 end
 
-function load_euler_cell_sim(
+function load_cell_sim(
     path;
     dtype = Float64,
     density_oneunit = 1.0 * ShockwaveProperties._units_ρ,
@@ -450,10 +714,8 @@ function load_euler_cell_sim(
     internal_energy_oneunit = 1.0 * ShockwaveProperties._units_ρE,
     show_info = true,
 )
-    units_types =
-        typeof.(density_oneunit, momentum_density_oneunit, internal_energy_oneunit)
-    CPropsDtype = ConservedProps{2,dtype,units_types...}
-    CellDType = RegularQuadCell{dtype,units_types...}
+    U = typeof.((density_oneunit, momentum_density_oneunit, internal_energy_oneunit))
+    CellDType = RegularQuadCell{dtype,U...}
     return open(path, "r") do f
         n_tsteps = read(f, Int)
         n_active = read(f, Int)
@@ -461,10 +723,10 @@ function load_euler_cell_sim(
         @assert n_dims == 2
         ncells = (read(f, Int), read(f, Int))
         bounds = ntuple(i -> (read(f, dtype), read(f, dtype)), 2)
-        cell_faces = [range(b...; length = n) for (b, n) ∈ zip(bounds, ncells)]
+        cell_faces = [range(b...; length = n + 1) for (b, n) ∈ zip(bounds, ncells)]
         cell_centers = [r[1:end-1] .+ step(r) / 2 for r ∈ cell_faces]
         if show_info
-            @info "Loaded metadata for cell-based Euler simulation at $path." n_tsteps n_active n_dims ncells bounds cell_centers
+            @info "Loaded metadata for cell-based Euler simulation at $path." n_tsteps n_active n_dims ncells
         end
 
         active_cell_ids = zeros(Int, ncells)
@@ -472,32 +734,30 @@ function load_euler_cell_sim(
 
         t = Vector{dtype}(undef, n_tsteps)
         cell_vals = Array{CellDType,2}(undef, (n_active, n_tsteps))
+        temp_cell_data = Array{dtype,2}(undef, (4, n_active))
         for i = 1:n_tsteps
             t[i] = read(f, dtype)
+            read!(f, temp_cell_data)
             ith_data = @view cell_vals[:, i]
-            for j ∈ eachindex(IndexCartesian(), active_cell_ids)
+            Threads.@threads for j ∈ eachindex(IndexCartesian(), active_cell_ids)
                 id = active_cell_ids[j]
                 # skip if not active
                 id == 0 && continue
-                ρ = density_oneunit * read(f, dtype)
-                ρv = momentum_density_oneunit * SVector{2}(read(f, dtype), read(f, dtype))
-                ρE = internal_energy_oneunit * read(f, dtype)
+                ρ = density_oneunit * temp_cell_data[1, id]
+                ρv =
+                    momentum_density_oneunit *
+                    SVector{2}(temp_cell_data[2, id], temp_cell_data[3, id])
+                ρE = internal_energy_oneunit * temp_cell_data[4, id]
                 props = ConservedProps(ρ, ρv, ρE)
 
                 neighbors = cell_neighbor_status(id, active_cell_ids)
                 cell_x = cell_centers[1][j[1]] # wtf
                 cell_y = cell_centers[2][j[2]] # WTF
-                ith_data[id] = RegularQuadCell(id, j, (cell_x, cell_y), props, neighbors)
+                ith_data[id] =
+                    RegularQuadCell(id, j, SVector(cell_x, cell_y), props, neighbors)
             end
         end
-        
-        return CellBasedEulerSim(
-            ncells,
-            n_tsteps,
-            bounds,
-            tsteps,
-            active_cell_ids,
-            cell_vals,
-        )
+
+        return CellBasedEulerSim(ncells, n_tsteps, bounds, t, active_cell_ids, cell_vals)
     end
 end

@@ -43,13 +43,16 @@ export SupersonicInflow
 # TODO optimize these to use arrays of SArrays
 export EulerSim
 export cell_boundaries, cell_centers, nth_step, eachstep
-export n_data_dims, n_space_dims, n_tsteps
+export grid_size, n_data_dims, n_space_dims, n_tsteps
 export load_euler_sim
 
 # CellSim methods
 export CellBasedEulerSim, RegularQuadCell
 export Obstacle, TriangularObstacle, RectangularObstacle, CircularObstacle
 export point_inside
-export load_cell_sim
+export load_cell_sim, cell_from_grid_pos
+
+# All sim methods
+export pressure_field, density_field, velocity_field, mach_number_field
 
 end
