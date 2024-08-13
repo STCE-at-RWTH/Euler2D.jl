@@ -16,8 +16,8 @@ function launder_units(pp)
     return ConservedProps(v1)
 end
 
-ambient = launder_units(PrimitiveProps(0.662, (0.0, 0.0), 220.0))
-amb2 = launder_units(PrimitiveProps(0.662, (0.0, 0.0), 220.0))
+ambient = launder_units(PrimitiveProps(0.662, (4.0, 0.0), 220.0))
+amb2 = launder_units(PrimitiveProps(0.662, (-4.0, 0.0), 220.0))
 
 bc_right = SupersonicInflow(ambient, DRY_AIR)
 bcs = (
@@ -29,12 +29,12 @@ bcs = (
 )
 bounds = ((-4.0, 4.0), (-4.0, 4.0))
 obstacle = [CircularObstacle((0.0, 0.0), 0.75)]
-ncells = (16, 16)
+ncells = (100, 100)
 active_cells, active_ids = quadcell_list_and_id_grid(bounds, ncells, obstacle) do (x, y)
-    ambient
+    x <= 0 ? ambient : amb2
 end;
 
-test_partition = partition_cell_list(active_cells, active_ids, 2)
+test_partition = partition_cell_list(active_cells, active_ids, 4);
 ##
 
 ndata = single_cell_neighbor_data(2, active_cells, bcs, DRY_AIR)

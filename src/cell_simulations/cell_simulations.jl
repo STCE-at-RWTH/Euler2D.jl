@@ -171,6 +171,12 @@ function phantom_neighbor(cell_id, active_cells, dir, bc, gas)
     return phantom
 end
 
+"""
+    single_cell_neighbor_data(cell_id, active_cells, boundary_conditions, gas)
+
+Extract the states of the neighboring cells to `cell_id` from `active_cells`. 
+Will compute them as necessary from `boundary_conditions` and `gas`. Returns a `NamedTuple` of `SVectors`.
+"""
 function single_cell_neighbor_data(
     cell_id,
     active_cells,
@@ -218,7 +224,7 @@ function expand_to_neighbors(left_idx, right_idx, axis_size)
     return (new_l, new_r), (left_idx, right_idx)
 end
 
-struct CellGridPartition{T,Q1,Q2,Q3}
+struct CellGridPartition{T,Q1<:Density,Q2<:MomentumDensity,Q3<:EnergyDensity}
     # which slice of the global grid was copied into this partition?
     global_extent::NTuple{2,NTuple{2,Int}}
     # which (global) indices is this partition responsible for updating?
@@ -239,6 +245,29 @@ Underlying numeric data type of this partition.
 """
 dtype(::CellGridPartition{T,Q1,Q2,Q3}) where {T,Q1,Q2,Q3} = T
 dtype(::Type{CellGridPartition{T,Q1,Q2,Q3}}) where {T,Q1,Q2,Q3} = T
+
+"""
+    propagate_updates_to!(dest, src, global_cell_ids)
+
+After computing and applying the cell updates for the regions 
+that a partition is responsible for, propagate the updates 
+to other partitions.
+"""
+function propagate_updates_to!(
+    dest::CellGridPartition{T,Q1,Q2,Q3},
+    src::CellGridPartition{T,R1,R2,R3},
+) where {T,Q1,Q2,Q3,R1,R2,R3}
+    src_region = view(
+        src.cells_copied_ids,
+        range(src.computation_indices[1]...),
+        range(src.computation_indices[2]...),
+    )
+    for idx ∈ eachindex(src_region)
+        if haskey(dest.cells_map, src_region[idx])
+            dest.cells_map[src_region[idx]] = src.cells_map[src_region[idx]]
+        end
+    end
+end
 
 # TODO if we want to move beyond a structured grid, we have to redo this method. I have no idea how to do this.
 # TODO how slow is this function? we may be wasting a lot of time partitioning that we don't recover by multithreading. Certainly memory use goes up.
@@ -292,6 +321,7 @@ function compute_cell_update(cell_data, neighbor_data, Δx, Δy, gas)
     return (cell_speed = maximum_signal_speed, cell_Δu = Δu)
 end
 
+# allocates 7 times according to BenchmarkTools; likely Dict doing things.
 function compute_partition_update(
     cell_partition::CellGridPartition{T,Q1,Q2,Q3},
     boundary_conditions,
@@ -305,10 +335,10 @@ function compute_partition_update(
         range(cell_partition.computation_indices[2]...),
     )
     maximum_wave_speed = zero(T)
-    Δu = Dict{Int64,SVector{4,T}}
+    Δu = Dict{Int64,SVector{4,T}}()
     sizehint!(Δu, count(≠(0), computation_region))
-    for id ∈ computation_region
-        id == 0 && continue
+    for cell_id ∈ computation_region
+        cell_id == 0 && continue
         nbr_data = single_cell_neighbor_data(
             cell_id,
             cell_partition.cells_map,
@@ -334,9 +364,9 @@ function compute_partition_update(
             ϕ_hll(uL, uR, dim, gas)
         end
         # we want to write this as u_next = u + Δt * diff
-        Δu = inv(Δx) * (ϕ.west - ϕ.east) + inv(Δy) * (ϕ.south - ϕ.north)
-        return cell_id => Δu
-    end |> Dict
+        Δu_cell = inv(Δx) * (ϕ.west - ϕ.east) + inv(Δy) * (ϕ.south - ϕ.north)
+        get!(Δu, cell_id, Δu_cell)
+    end
     return (a_max = maximum_wave_speed, Δu = Δu)
 end
 
@@ -413,11 +443,10 @@ struct CellBasedEulerSim{T,Q1,Q2,Q3}
     bounds::NTuple{2,Tuple{T,T}}
     tsteps::Vector{T}
     cell_ids::Array{Int,2}
-    cells::Array{RegularQuadCell{T,Q1,Q2,Q3},2}
+    cells::Array{Dict{Int64,RegularQuadCell{T,Q1,Q2,Q3}},1}
 end
 
 n_space_dims(::CellBasedEulerSim) = 2
-grid_size(csim::CellBasedEulerSim) = csim.ncells
 
 function cell_boundaries(e::CellBasedEulerSim)
     return ntuple(i -> cell_boundaries(e, i), 2)
@@ -433,20 +462,10 @@ end
 Return `(t, cells)` for time step `n`. `cells` will be a view.
 """
 function nth_step(csim::CellBasedEulerSim, n)
-    return csim.tsteps[n], view(csim.cells, Colon(), n)
+    return csim.tsteps[n], csim.cells[n]
 end
 
 eachstep(csim::CellBasedEulerSim) = [nth_step(csim, n) for n ∈ 1:n_tsteps(csim)]
-
-"""
-    cell_from_grid_pos(csim::CellBasedEulerSim, idx)
-
-Redirect from any valid grid index `idx` for a cell to a view of that cell over all time steps.
-"""
-function cell_from_grid_pos(csim::CellBasedEulerSim, idx...)
-    id = csim.cell_ids[idx...]
-    return view(csim.cells, id, Colon())
-end
 
 """
     density_field(csim::CellBasedEulerSim, n)
@@ -457,8 +476,9 @@ function density_field(csim::CellBasedEulerSim{T,Q1,Q2,Q3}, n) where {T,Q1,Q2,Q3
     _, u_cells = nth_step(csim, n)
     ρ = Array{Union{Q1,Nothing},2}(undef, grid_size(csim))
     fill!(ρ, nothing)
-    for rqc ∈ u_cells
-        ρ[rqc.idx] = density(rqc.u)
+    for i ∈ eachindex(IndexCartesian(), csim.cell_ids)
+        csim.cell_ids[i] == 0 && continue
+        ρ[i] = density(u_cells[csim.cell_ids[i]].u)
     end
     return ρ
 end
@@ -472,8 +492,9 @@ function momentum_density_field(csim::CellBasedEulerSim{T,Q1,Q2,Q3}, n) where {T
     _, u_cells = nth_step(csim, n)
     ρv = Array{Union{Q2,Nothing},3}(undef, (2, grid_size(csim)...))
     fill!(ρv, nothing)
-    for rqc ∈ u_cells
-        ρv[:, rqc.idx] = momentum_density(rqc.u)
+    for i ∈ eachindex(IndexCartesian(), csim.cell_ids)
+        csim.cell_ids[i] == 0 && continue
+        ρv[:, i] = momentum_density(u_cells[csim.cell_ids[i]].u)
     end
     return ρv
 end
@@ -489,8 +510,9 @@ function velocity_field(csim::CellBasedEulerSim, n)
     T = eltype(velocity(u_cells[1].u))
     v = Array{Union{T,Nothing},3}(undef, (2, grid_size(csim)...))
     fill!(v, nothing)
-    for rqc ∈ u_cells
-        v[:, rqc.idx] = velocity(rqc.u)
+    for i ∈ eachindex(IndexCartesian(), csim.cell_ids)
+        csim.cell_ids[i] == 0 && continue
+        v[:, i] = velocity(u_cells[csim.cell_ids[i]].u)
     end
     return v
 end
@@ -507,8 +529,9 @@ function total_internal_energy_density_field(
     _, u_cells = nth_step(csim, n)
     ρE = Array{Union{Q3,nothing},2}(undef, grid_size(csim))
     fill!(ρE, nothing)
-    for rqc ∈ u_cells
-        ρE[rqc.idx] = total_internal_energy_density(rqc.u)
+    for i ∈ eachindex(IndexCartesian(), csim.cell_ids)
+        csim.cell_ids[i] == 0 && continue
+        ρE[i] = total_internal_energy_density(u_cells[csim.cell_ids[i]].u)
     end
     return ρE
 end
@@ -524,8 +547,9 @@ function pressure_field(csim::CellBasedEulerSim, n, gas::CaloricallyPerfectGas)
     T = typeof(pressure(u_cells[1].u, gas))
     P = Array{Union{T,Nothing},2}(undef, grid_size(csim))
     fill!(P, nothing)
-    for rqc ∈ u_cells
-        P[rqc.idx] = pressure(rqc.u, gas)
+    for i ∈ eachindex(IndexCartesian(), csim.cell_ids)
+        csim.cell_ids[i] == 0 && continue
+        P[i] = pressure(u_cells[csim.cell_ids[i]].u, gas)
     end
     return P
 end
@@ -544,8 +568,9 @@ function mach_number_field(
     # is this a huge runtime problem? who can know.
     M = Array{Union{T,Nothing},3}(undef, (2, grid_size(csim)...))
     fill!(M, nothing)
-    for rqc ∈ u_cells
-        M[:, rqc.idx] = mach_number(rqc.u, gas)
+    for i ∈ eachindex(IndexCartesian(), csim.cell_ids)
+        csim.cell_ids[i] == 0 && continue
+        M[:, i] = mach_number(u_cells[csim.cell_ids[i]].u, gas)
     end
     return M
 end
@@ -596,8 +621,9 @@ function simulate_euler_equations_cells(
     return_complete_result = false,
     history_in_memory = false,
     output_tag = "cell_euler_sim",
+    show_info = true,
     info_frequency = 10,
-    thread_pool = :default,
+    tasks_per_axis = Threads.nthreads(),
 )
     N = length(ncells)
     T = typeof(T_end)
@@ -611,9 +637,9 @@ function simulate_euler_equations_cells(
     cell_centers = [ax[1:end-1] .+ step(ax) / 2 for ax ∈ cell_ifaces]
     dV = step.(cell_centers)
 
-    u_cells, ids = quadcell_list_and_id_grid(u0, bounds, ncells, obstacles)
-    @show ids[end]
-    u_cells_next = similar(u_cells)
+    global_cells, global_cell_ids = quadcell_list_and_id_grid(u0, bounds, ncells, obstacles)
+    show_info && @info "Total active cell count: " ncells = length(global_cells)
+    cell_partitions = partition_cell_list(global_cells, global_cell_ids, tasks_per_axis)
     n_tsteps = 1
     t = zero(T)
 
@@ -628,7 +654,7 @@ function simulate_euler_equations_cells(
         @info "Only the final value of the simulation will be available." T_end
     end
 
-    u_history = typeof(u_cells)[]
+    u_history = typeof(global_cells)[]
     t_history = typeof(t)[]
     if (history_in_memory)
         push!(u_history, copy(u))
@@ -636,42 +662,42 @@ function simulate_euler_equations_cells(
     end
     if write_result
         tape_stream = open(tape_file, "w+")
-        write(tape_stream, zero(Int), length(u_cells), length(ncells), ncells...)
+        write(tape_stream, zero(Int), length(global_cells), length(ncells), ncells...)
         for b ∈ bounds
             write(tape_stream, b...)
         end
-        write(tape_stream, ids, t)
-        for i ∈ eachindex(u_cells)
-            write(tape_stream, state_to_vector(u_cells[i].u))
+        write(tape_stream, global_cell_ids, t)
+        for i ∈ eachindex(global_cells)
+            write(tape_stream, state_to_vector(global_cells[i].u))
         end
     end
 
     while !(t > T_end || t ≈ T_end) && n_tsteps < max_tsteps
         Δt = step_cell_simulation!(
             u_cells_next,
-            u_cells,
+            global_cells,
             T_end - t,
             boundary_conditions,
             cfl_limit,
             dV...,
             gas,
         )
-        if (n_tsteps - 1) % info_frequency == 0
+        if show_info && ((n_tsteps - 1) % info_frequency == 0)
             @info "Time step..." n_tsteps t_k = t Δt
         end
         n_tsteps += 1
         t += Δt
-        u_cells .= u_cells_next
+        global_cells .= u_cells_next
 
         if write_result
             write(tape_stream, t)
-            for i ∈ eachindex(u_cells)
-                write(tape_stream, state_to_vector(u_cells[i].u))
+            for i ∈ eachindex(global_cells)
+                write(tape_stream, state_to_vector(global_cells[i].u))
             end
         end
 
         if history_in_memory
-            push!(u_history, copy(u_cells))
+            push!(u_history, copy(global_cells))
             push!(t_history, t)
         end
     end
@@ -690,7 +716,7 @@ function simulate_euler_equations_cells(
             n_tsteps,
             (((first(r), last(r)) for r ∈ cell_ifaces)...),
             t_history,
-            ids,
+            global_cell_ids,
             stack(u_history),
         )
     elseif return_complete_result && write_result
@@ -701,8 +727,8 @@ function simulate_euler_equations_cells(
         1,
         (((first(r), last(r)) for r ∈ cell_ifaces)...,),
         [t],
-        ids,
-        reshape(u_cells, size(u_cells)..., 1),
+        global_cell_ids,
+        reshape(global_cells, size(global_cells)..., 1),
     )
 end
 

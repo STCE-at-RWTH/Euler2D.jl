@@ -43,11 +43,11 @@ Number of spatial dimensions simulated in `e`.
 n_space_dims(::EulerSim{N,NAXES,T}) where {N,NAXES,T} = N
 
 """
-    grid_size(e::EulerSim)
+    grid_size(sim)
 
-Number of grid cells in `e`.
+Size of the spatial axes of this simulation.
 """
-grid_size(e::EulerSim) = e.ncells
+grid_size(sim) = sim.ncells
 
 """
     n_data_dims(e::EulerSim)
@@ -69,7 +69,7 @@ n_tsteps(sim) = sim.nsteps
 Return `StepRange` of all the cell face positions for the `n`th space dimension in `sim`.
 """
 function cell_boundaries(sim, dim)
-    return range(sim.bounds[dim]...; length = sim.ncells[dim] + 1)
+    return range(sim.bounds[dim]...; length = grid_size(sim)[dim] + 1)
 end
 
 """
