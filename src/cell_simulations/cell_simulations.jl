@@ -408,6 +408,13 @@ function step_cell_simulation!(
     Threads.@threads for p_idx ∈ eachindex(cell_partitions, partition_updates)
         apply_partition_update!(cell_partitions[p_idx], Δt, partition_updates[p_idx].Δu)
     end
+    # propagate updates to other partitions
+    Threads.@threads for src_idx ∈ each_index(cell_partitions)
+        for dest_idx ∈ each_index(cell_partitions)
+            propagate_updates_to!(cell_partitions[dest_idx], cell_partitions[src_idx])
+        end
+    end
+
     return Δt
 end
 
