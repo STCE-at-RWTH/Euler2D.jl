@@ -139,8 +139,8 @@ function quadcell_list_and_id_grid(u0, bounds, ncells, obstacles)
     active_mask = active_cell_mask(centers..., obstacles)
     active_ids = active_cell_ids_from_mask(active_mask)
     @assert sum(active_mask) == last(active_ids)
-
-    cell_list = Vector{quadcell_dtype(first(u0_grid))}(undef, sum(active_mask))
+    cell_list = Dict{Int,quadcell_dtype(first(u0_grid))}()
+    sizehint!(cell_list, sum(active_mask))
     for i ∈ eachindex(IndexCartesian(), active_ids, active_mask)
         active_mask[i] || continue
         j = active_ids[i]
@@ -225,6 +225,7 @@ function expand_to_neighbors(left_idx, right_idx, axis_size)
 end
 
 struct CellGridPartition{T,Q1<:Density,Q2<:MomentumDensity,Q3<:EnergyDensity}
+    id::Int
     # which slice of the global grid was copied into this partition?
     global_extent::NTuple{2,NTuple{2,Int}}
     # which (global) indices is this partition responsible for updating?
@@ -233,7 +234,7 @@ struct CellGridPartition{T,Q1<:Density,Q2<:MomentumDensity,Q3<:EnergyDensity}
     computation_indices::NTuple{2,NTuple{2,Int}}
     # what cell IDs were copied into this partition?
     cells_copied_ids::Array{Int,2}
-    #TODO Switch to Dictionaries.jl?
+    #TODO Switch to Dictionaries.jl? Peformance seems fine as of now.
     cells_map::Dict{Int,RegularQuadCell{T,Q1,Q2,Q3}}
 end
 
@@ -246,27 +247,21 @@ Underlying numeric data type of this partition.
 dtype(::CellGridPartition{T,Q1,Q2,Q3}) where {T,Q1,Q2,Q3} = T
 dtype(::Type{CellGridPartition{T,Q1,Q2,Q3}}) where {T,Q1,Q2,Q3} = T
 
-"""
-    propagate_updates_to!(dest, src, global_cell_ids)
+cell_type(::CellGridPartition{T,Q1,Q2,Q3}) where {T,Q1,Q2,Q3} = RegularQuadCell{T,Q1,Q2,Q3}
+function cell_type(::Type{CellGridPartition{T,Q1,Q2,Q3}}) where {T,Q1,Q2,Q3}
+    RegularQuadCell{T,Q1,Q2,Q3}
+end
 
-After computing and applying the cell updates for the regions 
-that a partition is responsible for, propagate the updates 
-to other partitions.
 """
-function propagate_updates_to!(
-    dest::CellGridPartition{T,Q1,Q2,Q3},
-    src::CellGridPartition{T,R1,R2,R3},
-) where {T,Q1,Q2,Q3,R1,R2,R3}
-    src_region = view(
-        src.cells_copied_ids,
-        range(src.computation_indices[1]...),
-        range(src.computation_indices[2]...),
-    )
-    for idx ∈ eachindex(src_region)
-        if haskey(dest.cells_map, src_region[idx])
-            dest.cells_map[src_region[idx]] = src.cells_map[src_region[idx]]
-        end
-    end
+    cells_map_type(::CellGridPartition)
+    cells_map_type(::Type{CellGridPartition})
+"""
+function cells_map_type(cgp::CellGridPartition{T,Q1,Q2,Q3}) where {T,Q1,Q2,Q3}
+    return Dict{Int,cell_type(cgp)}
+end
+
+function cells_map_type(cgp_t::Type{CellGridPartition{T,Q1,Q2,Q3}}) where {T,Q1,Q2,Q3}
+    return Dict{Int,cell_type(cgp_t)}
 end
 
 # TODO if we want to move beyond a structured grid, we have to redo this method. I have no idea how to do this.
@@ -276,30 +271,50 @@ function partition_cell_list(global_active_cells, global_cell_ids, tasks_per_axi
     # minimum partition size includes i - 1 and i + 1 neighbors
     grid_size = size(global_cell_ids)
     (all_part_x, all_part_y) = split_axis.(grid_size, tasks_per_axis)
-    res = map(Iterators.product(all_part_x, all_part_y)) do (part_x, part_y)
-        # adust slice width...
-        task_x, task_working_x = expand_to_neighbors(part_x..., grid_size[1])
-        task_y, task_working_y = expand_to_neighbors(part_y..., grid_size[2])
-        # cells copied for this task
-        task_cell_ids = global_cell_ids[range(task_x...), range(task_y...)]
-        # total number of cells this task has a copy of
-        task_cell_count = length(filter(>(0), task_cell_ids))
-        cell_ids_map = Dict{Int,eltype(global_active_cells)}()
-        sizehint!(cell_ids_map, task_cell_count)
-        for i ∈ eachindex(task_cell_ids)
-            cell_id = task_cell_ids[i]
-            cell_id == 0 && continue
-            get!(cell_ids_map, cell_id, global_active_cells[cell_id])
+
+    res =
+        map(enumerate(Iterators.product(all_part_x, all_part_y))) do (id, (part_x, part_y))
+            # adust slice width...
+            task_x, task_working_x = expand_to_neighbors(part_x..., grid_size[1])
+            task_y, task_working_y = expand_to_neighbors(part_y..., grid_size[2])
+            # cells copied for this task
+            task_cell_ids = global_cell_ids[range(task_x...), range(task_y...)]
+            # total number of cells this task has a copy of
+            task_cell_count = length(filter(>(0), task_cell_ids))
+            cell_ids_map = Dict{Int,valtype(global_active_cells)}()
+            sizehint!(cell_ids_map, task_cell_count)
+            for i ∈ eachindex(task_cell_ids)
+                cell_id = task_cell_ids[i]
+                cell_id == 0 && continue
+                get!(cell_ids_map, cell_id, global_active_cells[cell_id])
+            end
+            return CellGridPartition(
+                id,
+                (task_x, task_y),
+                (part_x, part_y),
+                (task_working_x, task_working_y),
+                task_cell_ids,
+                cell_ids_map,
+            )
         end
-        return CellGridPartition(
-            (task_x, task_y),
-            (part_x, part_y),
-            (task_working_x, task_working_y),
-            task_cell_ids,
-            cell_ids_map,
-        )
-    end
     return res
+end
+
+function departition_cell_list(cell_partitions, global_cell_ids)
+    u_global = empty(cell_partitions[1].cells_map)
+    sizehint!(u_global, count(≠(0), global_cell_ids))
+    for part ∈ cell_partitions
+        computation_region = view(
+            part.cells_copied_ids,
+            range(part.computation_indices[1]...),
+            range(part.computation_indices[2]...),
+        )
+        for id ∈ computation_region
+            id == 0 && continue
+            get!(u_global, id, part.cells_map[id])
+        end
+    end
+    return u_global
 end
 
 # accepts SVectors!
@@ -370,6 +385,35 @@ function compute_partition_update(
     return (a_max = maximum_wave_speed, Δu = Δu)
 end
 
+"""
+    propagate_updates_to!(dest, src, global_cell_ids)
+
+After computing and applying the cell updates for the regions 
+that a partition is responsible for, propagate the updates 
+to other partitions.
+
+Returns the number of cells updated.
+"""
+function propagate_updates_to!(
+    dest::CellGridPartition{T,Q1,Q2,Q3},
+    src::CellGridPartition{T,R1,R2,R3},
+) where {T,Q1,Q2,Q3,R1,R2,R3}
+    src_region = view(
+        src.cells_copied_ids,
+        range(src.computation_indices[1]...),
+        range(src.computation_indices[2]...),
+    )
+    count = 0
+    for idx ∈ eachindex(src_region)
+        if haskey(dest.cells_map, src_region[idx])
+            count += 1
+            dest.cells_map[src_region[idx]] = src.cells_map[src_region[idx]]
+        end
+    end
+    # @info "Propagated updates from... " src = src.id dest = dest.id shared_count = count
+    return count
+end
+
 function apply_partition_update!(partition, Δt, Δu)
     for (k, v) ∈ pairs(Δu)
         partition.cells_map[k] = compute_next_u(partition.cells_map[k], Δt, v)
@@ -404,14 +448,13 @@ function step_cell_simulation!(
     # find Δt
     a_max = mapreduce(el -> el.a_max, max, partition_updates)
     Δt = min(Δt_maximum, cfl_limit * min(Δx, Δy) / a_max)
-    # apply update
+    # apply update, does this really need to be threaded?
     Threads.@threads for p_idx ∈ eachindex(cell_partitions, partition_updates)
         apply_partition_update!(cell_partitions[p_idx], Δt, partition_updates[p_idx].Δu)
-    end
-    # propagate updates to other partitions
-    Threads.@threads for src_idx ∈ each_index(cell_partitions)
-        for dest_idx ∈ each_index(cell_partitions)
-            propagate_updates_to!(cell_partitions[dest_idx], cell_partitions[src_idx])
+        # propagate updates to other partitions
+        for dest_idx ∈ eachindex(cell_partitions)
+            dest_idx == p_idx && continue
+            propagate_updates_to!(cell_partitions[dest_idx], cell_partitions[p_idx])
         end
     end
 
@@ -582,6 +625,14 @@ function mach_number_field(
     return M
 end
 
+function write_tstep_to_stream(stream, t, global_cells)
+    write(stream, t)
+    for (id, cell) ∈ global_cells
+        @assert id == cell.id
+        write(stream, Ref(cell))
+    end
+end
+
 """
     simulate_euler_equations_cells(u0, T_end, boundary_conditions, bounds, ncells)
 
@@ -607,6 +658,7 @@ Keyword Arguments
 - `CFL=0.75`: The CFL condition to apply to `Δt`. Between zero and one, default `0.75`.
 - `max_tsteps=typemax(Int)`: Maximum number of time steps to take. Defaults to "very large".
 - `write_result=true`: Should output be written to disk?
+- `output_channel_size=10`: How many time steps should be buffered during I/O?
 - `history_in_memory=false`: Should we keep whole history in memory?
 - `return_complete_result=false`: Should a complete record of the simulation be returned by this function?
 - `output_tag="cell_euler_sim"`: File name for the tape and output summary.
@@ -625,6 +677,7 @@ function simulate_euler_equations_cells(
     cfl_limit = 0.75,
     max_tsteps = typemax(Int),
     write_result = true,
+    output_channel_size = 10,
     return_complete_result = false,
     history_in_memory = false,
     output_tag = "cell_euler_sim",
@@ -645,18 +698,20 @@ function simulate_euler_equations_cells(
     dV = step.(cell_centers)
 
     global_cells, global_cell_ids = quadcell_list_and_id_grid(u0, bounds, ncells, obstacles)
-    show_info && @info "Total active cell count: " ncells = length(global_cells)
     cell_partitions = partition_cell_list(global_cells, global_cell_ids, tasks_per_axis)
+    show_info &&
+        @info "Simulation starting information " ncells = length(global_cells) npartitions =
+            length(cell_partitions)
+
     n_tsteps = 1
     t = zero(T)
-
     if write_result
         if !isdir("data")
+            @info "Creating directory at" dir = joinpath(pwd(), "data")
             mkdir("data")
         end
         tape_file = joinpath("data", output_tag * ".celltape")
     end
-
     if !write_result && !history_in_memory
         @info "Only the final value of the simulation will be available." T_end
     end
@@ -667,22 +722,34 @@ function simulate_euler_equations_cells(
         push!(u_history, copy(u))
         push!(t_history, t)
     end
+
     if write_result
         tape_stream = open(tape_file, "w+")
         write(tape_stream, zero(Int), length(global_cells), length(ncells), ncells...)
         for b ∈ bounds
             write(tape_stream, b...)
         end
-        write(tape_stream, global_cell_ids, t)
-        for i ∈ eachindex(global_cells)
-            write(tape_stream, state_to_vector(global_cells[i].u))
+        # TODO we would like to preallocate buffers here... 
+        writer_taskref = Ref{Task}()
+        writer_channel = Channel{Union{Symbol,Tuple{T,typeof(global_cells)}}}(
+            output_channel_size;
+            taskref = writer_taskref,
+        ) do ch
+            while true
+                val = take!(ch)
+                if val == :stop
+                    break
+                end
+                println(stdout, "Writing...")
+                write_tstep_to_stream(tape_stream, val...)
+            end
         end
+        put!(writer_channel, (t, global_cells))
     end
 
     while !(t > T_end || t ≈ T_end) && n_tsteps < max_tsteps
         Δt = step_cell_simulation!(
-            u_cells_next,
-            global_cells,
+            cell_partitions,
             T_end - t,
             boundary_conditions,
             cfl_limit,
@@ -690,26 +757,31 @@ function simulate_euler_equations_cells(
             gas,
         )
         if show_info && ((n_tsteps - 1) % info_frequency == 0)
-            @info "Time step..." n_tsteps t_k = t Δt
+            @info "Time step..." k = n_tsteps t_k = t Δt
         end
         n_tsteps += 1
         t += Δt
-        global_cells .= u_cells_next
 
-        if write_result
-            write(tape_stream, t)
-            for i ∈ eachindex(global_cells)
-                write(tape_stream, state_to_vector(global_cells[i].u))
-            end
-        end
-
-        if history_in_memory
-            push!(u_history, copy(global_cells))
+        if write_result && history_in_memory
+            u_cur = departition_cell_list(cell_partitions, global_cell_ids)
+            put!(writer_channel, (t, u_cur))
+            push!(u_history, u_cur)
+            push!(t_history, t)
+        elseif write_result
+            put!(
+                writer_channel,
+                (t, departition_cell_list(cell_partitions, global_cell_ids)),
+            )
+        elseif history_in_memory
+            push!(u_history, departition_cell_list(cell_partitions, global_cell_ids))
             push!(t_history, t)
         end
     end
 
     if write_result
+        put!(writer_channel, :stop)
+        wait(writer_taskref[])
+
         seekstart(tape_stream)
         write(tape_stream, n_tsteps)
         seekend(tape_stream)
@@ -724,73 +796,69 @@ function simulate_euler_equations_cells(
             (((first(r), last(r)) for r ∈ cell_ifaces)...),
             t_history,
             global_cell_ids,
-            stack(u_history),
+            u_history,
         )
     elseif return_complete_result && write_result
         return load_cell_sim(tape_file)
     end
+
     return CellBasedEulerSim(
         (ncells...,),
         1,
         (((first(r), last(r)) for r ∈ cell_ifaces)...,),
         [t],
         global_cell_ids,
-        reshape(global_cells, size(global_cells)..., 1),
+        [departition_cell_list(cell_partitions, global_cell_ids)],
     )
 end
 
 function load_cell_sim(
     path;
-    dtype = Float64,
+    T = Float64,
     density_oneunit = 1.0 * ShockwaveProperties._units_ρ,
     momentum_density_oneunit = 1.0 * ShockwaveProperties._units_ρv,
     internal_energy_oneunit = 1.0 * ShockwaveProperties._units_ρE,
     show_info = true,
 )
     U = typeof.((density_oneunit, momentum_density_oneunit, internal_energy_oneunit))
-    CellDType = RegularQuadCell{dtype,U...}
+    CellDType = RegularQuadCell{T,U...}
     return open(path, "r") do f
         n_tsteps = read(f, Int)
         n_active = read(f, Int)
         n_dims = read(f, Int)
         @assert n_dims == 2
         ncells = (read(f, Int), read(f, Int))
-        bounds = ntuple(i -> (read(f, dtype), read(f, dtype)), 2)
+        bounds = ntuple(i -> (read(f, T), read(f, T)), 2)
         cell_faces = [range(b...; length = n + 1) for (b, n) ∈ zip(bounds, ncells)]
         cell_centers = [r[1:end-1] .+ step(r) / 2 for r ∈ cell_faces]
         if show_info
             @info "Loaded metadata for cell-based Euler simulation at $path." n_tsteps n_active n_dims ncells
         end
-
         active_cell_ids = zeros(Int, ncells)
         read!(f, active_cell_ids)
-
-        t = Vector{dtype}(undef, n_tsteps)
-        cell_vals = Array{CellDType,2}(undef, (n_active, n_tsteps))
-        temp_cell_data = Array{dtype,2}(undef, (4, n_active))
-        for i = 1:n_tsteps
-            t[i] = read(f, dtype)
-            read!(f, temp_cell_data)
-            ith_data = @view cell_vals[:, i]
-            Threads.@threads for j ∈ eachindex(IndexCartesian(), active_cell_ids)
-                id = active_cell_ids[j]
-                # skip if not active
-                id == 0 && continue
-                ρ = density_oneunit * temp_cell_data[1, id]
-                ρv =
-                    momentum_density_oneunit *
-                    SVector{2}(temp_cell_data[2, id], temp_cell_data[3, id])
-                ρE = internal_energy_oneunit * temp_cell_data[4, id]
-                props = ConservedProps(ρ, ρv, ρE)
-
-                neighbors = cell_neighbor_status(id, active_cell_ids)
-                cell_x = cell_centers[1][j[1]] # wtf
-                cell_y = cell_centers[2][j[2]] # WTF
-                ith_data[id] =
-                    RegularQuadCell(id, j, SVector(cell_x, cell_y), props, neighbors)
+        @show sizeof(CellDType)
+        time_steps = Vector{T}(undef, n_tsteps)
+        cell_vals = Vector{Dict{Int,CellDType}}(undef, n_tsteps)
+        # we wrote
+        # id, i, j, x, y, u
+        temp_cell_vals = Vector{CellDType}(undef, n_active)
+        for k = 1:n_tsteps
+            time_steps[k] = read(f, T)
+            read!(f, temp_cell_vals)
+            cell_vals[k] = Dict{Int,CellDType}()
+            sizehint!(cell_vals[k], n_active)
+            for cell ∈ temp_cell_vals
+                get!(cell_vals[k], cell.id, cell)
             end
         end
 
-        return CellBasedEulerSim(ncells, n_tsteps, bounds, t, active_cell_ids, cell_vals)
+        return CellBasedEulerSim(
+            ncells,
+            n_tsteps,
+            bounds,
+            time_steps,
+            active_cell_ids,
+            cell_vals,
+        )
     end
 end

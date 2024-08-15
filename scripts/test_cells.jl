@@ -6,7 +6,7 @@ using StaticArrays
 
 using Euler2D: active_cell_mask, active_cell_ids_from_mask, cell_neighbor_status
 using Euler2D: quadcell_list_and_id_grid, phantom_neighbor, single_cell_neighbor_data, split_axis, partition_cell_list, expand_to_neighbors
-using Euler2D: compute_cell_update, compute_partition_update, compute_next_u
+using Euler2D: compute_cell_update, compute_partition_update, compute_next_u, apply_partition_update!
 using Euler2D: step_cell_simulation!
 
 
@@ -29,12 +29,12 @@ bcs = (
 )
 bounds = ((-4.0, 4.0), (-4.0, 4.0))
 obstacle = [CircularObstacle((0.0, 0.0), 0.75)]
-ncells = (100, 100)
+ncells = (500, 500)
 active_cells, active_ids = quadcell_list_and_id_grid(bounds, ncells, obstacle) do (x, y)
     x <= 0 ? ambient : amb2
 end;
 
-test_partition = partition_cell_list(active_cells, active_ids, 4);
+test_partition = partition_cell_list(active_cells, active_ids, 1);
 ##
 
 ndata = single_cell_neighbor_data(2, active_cells, bcs, DRY_AIR)
