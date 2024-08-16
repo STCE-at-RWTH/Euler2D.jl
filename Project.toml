@@ -1,10 +1,9 @@
 name = "Euler2D"
 uuid = "c24a2923-03cb-4692-957a-ccd31f2ad327"
 authors = ["Alexander Fleming <fleming@stce.rwth-aachen.de>"]
-version = "0.2.5"
+version = "0.3.0"
 
 [deps]
-ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 ShockwaveProperties = "77d2bf28-a3e9-4b9c-9fcf-b85f74cc8a50"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
