@@ -128,7 +128,13 @@ function cell_neighbor_status(i, cell_ids)
     end
 end
 
-function quadcell_list_and_id_grid(u0, bounds, ncells, obstacles)
+"""
+    quadcell_list_and_id_grid(u0, bounds, ncells, obstacles)
+
+Computes a collection of active cells and their locations in a grid determined by `bounds` and `ncells`.
+`Obstacles` can be placed into the simulation grid.
+"""
+function quadcell_list_and_id_grid(u0, bounds, ncells, obstacles=[])
     centers = map(zip(bounds, ncells)) do (b, n)
         v = range(b...; length = n + 1)
         return v[1:end-1] .+ step(v) / 2
@@ -677,7 +683,7 @@ function simulate_euler_equations_cells(
     cfl_limit = 0.75,
     max_tsteps = typemax(Int),
     write_result = true,
-    output_channel_size = 10,
+    output_channel_size = 5,
     return_complete_result = false,
     history_in_memory = false,
     output_tag = "cell_euler_sim",
@@ -729,18 +735,21 @@ function simulate_euler_equations_cells(
         for b ∈ bounds
             write(tape_stream, b...)
         end
+        write(tape_stream, global_cell_ids)
         # TODO we would like to preallocate buffers here... 
         writer_taskref = Ref{Task}()
         writer_channel = Channel{Union{Symbol,Tuple{T,typeof(global_cells)}}}(
             output_channel_size;
             taskref = writer_taskref,
         ) do ch
+            k = 0
             while true
                 val = take!(ch)
                 if val == :stop
                     break
                 end
-                println(stdout, "Writing...")
+                k += 1
+                @info "Writing..." k t=val[1] ncells=length(val[2])
                 write_tstep_to_stream(tape_stream, val...)
             end
         end
@@ -757,7 +766,7 @@ function simulate_euler_equations_cells(
             gas,
         )
         if show_info && ((n_tsteps - 1) % info_frequency == 0)
-            @info "Time step..." k = n_tsteps t_k = t Δt
+            @info "Time step..." k = n_tsteps t_k = t Δt t_next=t+Δt
         end
         n_tsteps += 1
         t += Δt
@@ -815,12 +824,15 @@ end
 function load_cell_sim(
     path;
     T = Float64,
-    density_oneunit = 1.0 * ShockwaveProperties._units_ρ,
-    momentum_density_oneunit = 1.0 * ShockwaveProperties._units_ρv,
-    internal_energy_oneunit = 1.0 * ShockwaveProperties._units_ρE,
+    density_unit = ShockwaveProperties._units_ρ,
+    momentum_density_unit = ShockwaveProperties._units_ρv,
+    internal_energy_density_unit = ShockwaveProperties._units_ρE,
     show_info = true,
 )
-    U = typeof.((density_oneunit, momentum_density_oneunit, internal_energy_oneunit))
+    U =
+        typeof.(
+            one(T) .* (density_unit, momentum_density_unit, internal_energy_density_unit)
+        )
     CellDType = RegularQuadCell{T,U...}
     return open(path, "r") do f
         n_tsteps = read(f, Int)
@@ -829,21 +841,18 @@ function load_cell_sim(
         @assert n_dims == 2
         ncells = (read(f, Int), read(f, Int))
         bounds = ntuple(i -> (read(f, T), read(f, T)), 2)
-        cell_faces = [range(b...; length = n + 1) for (b, n) ∈ zip(bounds, ncells)]
-        cell_centers = [r[1:end-1] .+ step(r) / 2 for r ∈ cell_faces]
         if show_info
             @info "Loaded metadata for cell-based Euler simulation at $path." n_tsteps n_active n_dims ncells
         end
-        active_cell_ids = zeros(Int, ncells)
+        active_cell_ids = Array{Int, 2}(undef, ncells...)
         read!(f, active_cell_ids)
         @show sizeof(CellDType)
         time_steps = Vector{T}(undef, n_tsteps)
         cell_vals = Vector{Dict{Int,CellDType}}(undef, n_tsteps)
-        # we wrote
-        # id, i, j, x, y, u
         temp_cell_vals = Vector{CellDType}(undef, n_active)
         for k = 1:n_tsteps
             time_steps[k] = read(f, T)
+            @info "Reading..." k t_k = time_steps[k] n_active
             read!(f, temp_cell_vals)
             cell_vals[k] = Dict{Int,CellDType}()
             sizehint!(cell_vals[k], n_active)
