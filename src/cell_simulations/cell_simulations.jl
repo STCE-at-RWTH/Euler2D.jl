@@ -519,7 +519,7 @@ function cell_boundaries(e::CellBasedEulerSim)
 end
 
 function cell_centers(e::CellBasedEulerSim)
-    return ntuple(i -> cell_boundaries(e, i), 2)
+    return ntuple(i -> cell_centers(e, i), 2)
 end
 
 """
