@@ -1,52 +1,32 @@
-## 1D Riemann problem for the euler equations
-
-using LinearAlgebra
-using ShockwaveProperties
-
+# do we need the multiple eigenvalues in the middle? I do not know...
 """
-    F_euler(u, gas)
+    eigenvalues_∇F_euler(u, dims, gas)
 
-Computes the value of the flux function ``F(u)`` for the Euler equations.
-Outputs a matrix with one column for each space dimension.
+Computes the eigenvalues of the Jacobian of the Euler flux function in dimension `dim`.
 """
-function F_euler(u, gas::CaloricallyPerfectGas)
-    ρv = @view u[2:end-1]
-    v = ρv / u[1]
-    P = ustrip(pressure(u[1], ρv, u[end], gas))
-    return vcat(ρv', ρv * v' + I * P, (v * (u[end] + P))')
-end
-
-function F_euler(u::ConservedProps, gas::CaloricallyPerfectGas)
-    P = pressure(u, gas)
-    v = velocity(u)
-    return vcat(
-        momentum_density(u)',
-        momentum_density(u) * v' + I * P,
-        (v * (total_internal_energy_density(u) + P))',
+function eigenvalues_∇F_euler(u, dim, gas::CaloricallyPerfectGas)
+    ρv = select_middle(u)
+    v = ustrip.(ρv / u[1])
+    a = ustrip(speed_of_sound(u[1], ρv, u[end], gas))
+    return vcat_ρ_ρv_ρE_preserve_static(
+        v[dim] - a,
+        SVector(ntuple(Returns(v[dim]), length(v))),
+        v[dim] + a,
     )
 end
 
-"""
-    F_n(u, n, gas)
-
-Computes the flux normal to a given unit vector ``n̂``. Useful for verifying the Rankine-Hugoniot conditions.
-"""
-F_n(u, n̂, gas::CaloricallyPerfectGas) = F_euler(u, gas) * n̂
-
-# do we need the multiple eigenvalues in the middle? I do not know...
-"""
-    eigenvalues_∇F(u, dims, gas)
-
-Computes the eigenvalues of the Jacobian of the Euler flux function in each of `dims`, 
-which may be a vector/slice of indices or single index.
-"""
-function eigenvalues_∇F_euler(u, dims, gas::CaloricallyPerfectGas)
-    v = @view u[2:end-1]
-    a = ustrip(speed_of_sound(u[1], v, u[end], gas))
-    out = reduce(vcat, ((v[dims] / u[1])' for i ∈ 1:length(u)))
-    @. out[1, :] -= a
-    @. out[end, :] += a
-    return out
+function eigenvalues_∇F_euler(
+    u::ConservedProps{N,T,Q1,Q2,Q3},
+    dim,
+    gas::CaloricallyPerfectGas,
+) where {N,T,Q1,Q2,Q3}
+    v = ustrip.(ShockwaveProperties._units_v, velocity(u))
+    a = ustrip(ShockwaveProperties._units_v, speed_of_sound(u, gas))
+    return vcat_ρ_ρv_ρE_preserve_static(
+        v[dim] - a,
+        SVector(ntuple(Returns(v[dim]), N)),
+        v[dim] + a,
+    )
 end
 
 """
@@ -57,9 +37,19 @@ We compute enthalphy density `ρH` as the sum of internal energy density and pre
 
 See Equations 10 and 11 in Roe.
 """
+function roe_parameter_vector(u::ConservedProps, gas::CaloricallyPerfectGas)
+    ρH = ustrip(u"J/m^3", total_enthalpy_density(u, gas))
+    return SVector{n_space_dims(u) + 2}(
+        ustrip(ShockwaveProperties._units_ρ, density(u)),
+        ustrip.(ShockwaveProperties._units_ρv, momentum_density(u))...,
+        ρH,
+    ) / sqrt(ustrip(ShockwaveProperties._units_ρ, density(u)))
+end
+
 function roe_parameter_vector(u, gas::CaloricallyPerfectGas)
-    rhoH = ustrip(total_enthalpy_density(u[1], u[2:end-1], u[end], gas))
-    return vcat(u[1], u[2:end-1], rhoH) ./ sqrt(u[1])
+    ρv = select_middle(u)
+    ρH = ustrip(total_enthalpy_density(u[1], ρv, u[end], gas))
+    return vcat_ρ_ρv_ρE_preserve_static(u[1], ρv, ρH) / sqrt(u[1])
 end
 
 """
@@ -67,18 +57,19 @@ end
 
 Find the eigenvalues of the Roe matrix at the boundary determined by ``uL`` and ``uR``. 
 """
-function roe_matrix_eigenvalues(uL, uR, dims, gas::CaloricallyPerfectGas)
+function roe_matrix_eigenvalues(uL, uR, dim, gas::CaloricallyPerfectGas)
     wL = roe_parameter_vector(uL, gas)
     wR = roe_parameter_vector(uR, gas)
-    # take arithmetic mean of the left and right states
     w̄ = (wL + wR) / 2
-    v̄ = w̄[2:end-1] / w̄[1]
+    v̄ = select_middle(w̄) / w̄[1]
     H̄ = w̄[end] / w̄[1]
     a = sqrt((gas.γ - 1) * (H̄ - (v̄ ⋅ v̄) / 2))
-    out = reduce(vcat, (v̄[dims]' for i ∈ eachindex(w̄)))
-    @. out[1, :] -= a
-    @. out[end, :] += a
-    return out
+    # FIXME how to avoid a huge performance hit here?
+    return vcat_ρ_ρv_ρE_preserve_static(
+        v̄[dim] - a,
+        SVector(ntuple(Returns(v̄[dim]), length(v̄))),
+        v̄[dim] + a,
+    )
 end
 
 """
@@ -109,10 +100,10 @@ Compute the HLL numerical flux across the L-R boundary.
 - `dim` : Direction to calculate F_hll
 """
 function ϕ_hll(uL, uR, dim, gas::CaloricallyPerfectGas)
-    fL = F_euler(uL, gas)[:, dim]
-    fR = F_euler(uR, gas)[:, dim]
+    fL = select_space_dim(F_euler(uL, gas), dim)
+    fR = select_space_dim(F_euler(uR, gas), dim)
     sL, sR = interface_signal_speeds(uL, uR, dim, gas)
-    return ϕ_hll(uL, uR, fL, fR, sL, sR)
+    return ϕ_hll(uL, uR, @view(fL[:, dim]), @view(fR[:, dim]), sL, sR)
 end
 
 """
@@ -125,7 +116,7 @@ Compute the HLL numerical flux across the L-R boundary.
 """
 function ϕ_hll(uL, uR, fL, fR, dim, gas::CaloricallyPerfectGas)
     sL, sR = interface_signal_speeds(uL, uR, dim, gas)
-    return ϕ_hll(uL, uR, @view(fL[:, dim]), @view(fR[:, dim]), sL, sR)
+    return ϕ_hll(uL, uR, select_space_dim(fL, dim), select_space_dim(fR, dim), sL, sR)
 end
 
 """
