@@ -26,7 +26,7 @@ just_circle = [CircularObstacle((0.0, 0.0), 0.75)]
 just_triangle = [TriangularObstacle((-0.5, 0.0), (0.25, 0.5), (0.25, -0.5))]
 ncells = (400,800)
 
-Euler2D.simulate_euler_equations_cells(
+sim_results = Euler2D.simulate_euler_equations_cells(
     0.1,
     bcs,
     just_circle,
@@ -36,11 +36,11 @@ Euler2D.simulate_euler_equations_cells(
     info_frequency = 1,
     max_tsteps = 10,
     output_tag = "circular_obstacle_radius_1",
-    tasks_per_axis = 8,
+    tasks_per_axis = 4,
     output_channel_size = 50,
 ) do (x, y)
     ambient
-end
+end;
 
 Euler2D.simulate_euler_equations_cells(
     0.1,

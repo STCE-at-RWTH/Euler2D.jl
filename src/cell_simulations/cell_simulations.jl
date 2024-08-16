@@ -749,7 +749,7 @@ function simulate_euler_equations_cells(
                     break
                 end
                 k += 1
-                @info "Writing..." k t=val[1] ncells=length(val[2])
+                # @info "Writing..." k t=val[1] ncells=length(val[2])
                 write_tstep_to_stream(tape_stream, val...)
             end
         end
@@ -852,7 +852,7 @@ function load_cell_sim(
         temp_cell_vals = Vector{CellDType}(undef, n_active)
         for k = 1:n_tsteps
             time_steps[k] = read(f, T)
-            @info "Reading..." k t_k = time_steps[k] n_active
+            # @info "Reading..." k t_k = time_steps[k] n_active
             read!(f, temp_cell_vals)
             cell_vals[k] = Dict{Int,CellDType}()
             sizehint!(cell_vals[k], n_active)
