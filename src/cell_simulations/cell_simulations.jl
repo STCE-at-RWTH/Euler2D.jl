@@ -144,7 +144,7 @@ end
 Computes a collection of active cells and their locations in a grid determined by `bounds` and `ncells`.
 `Obstacles` can be placed into the simulation grid.
 """
-function quadcell_list_and_id_grid(u0, bounds, ncells, obstacles=[])
+function quadcell_list_and_id_grid(u0, bounds, ncells, obstacles = [])
     centers = map(zip(bounds, ncells)) do (b, n)
         v = range(b...; length = n + 1)
         return v[1:end-1] .+ step(v) / 2
@@ -661,7 +661,7 @@ The simulation can be written to disk.
 
 Arguments
 ---
-- `u0`: ``u(0, x, y):ℝ^2↦ConservedProps{2, T, ...}``: conditions at time `t=0`.
+- `u0`: ``u(t=0, x, y):ℝ^2↦ConservedProps{2, T, ...}``: conditions at time `t=0`.
 - `T_end`: Must be greater than zero.
 - `boundary_conditions`: a tuple of boundary conditions for each space dimension
 - `obstacles`: list of obstacles in the flow.
@@ -670,17 +670,18 @@ Arguments
 
 Keyword Arguments
 ---
-- `gas::CaloricallyPerfectGas=DRY_AIR`: The fluid to be simulated.
-- `CFL=0.75`: The CFL condition to apply to `Δt`. Between zero and one, default `0.75`.
+- `gas::CaloricallyPerfectGas = DRY_AIR`: The fluid to be simulated.
+- `cfl_limit = 0.75`: The CFL condition to apply to `Δt`. Between zero and one, default `0.75`.
 - `max_tsteps=typemax(Int)`: Maximum number of time steps to take. Defaults to "very large".
-- `write_result=true`: Should output be written to disk?
-- `output_channel_size=10`: How many time steps should be buffered during I/O?
-- `history_in_memory=false`: Should we keep whole history in memory?
-- `return_complete_result=false`: Should a complete record of the simulation be returned by this function?
-- `output_tag="cell_euler_sim"`: File name for the tape and output summary.
-- `thread_pool = :default`: Which thread pool should be used?
-    (currently unused, but this does multithread via Threads.@spawn)
+- `write_result = true`: Should output be written to disk?
+- `output_channel_size = 5`: How many time steps should be buffered during I/O?
+- `write_frequency = 1`: How often should time steps be written out?
+- `history_in_memory = false`: Should we keep whole history in memory?
+- `output_tag = "cell_euler_sim"`: File name for the tape and output summary.
+- `show_info = true` : Should diagnostic information be printed out?
 - `info_frequency = 10`: How often should info be printed?
+- `tasks_per_axis = Threads.nthreads()`: How many partitions should be created on each axis?
+
 """
 function simulate_euler_equations_cells(
     u0,
@@ -694,7 +695,7 @@ function simulate_euler_equations_cells(
     max_tsteps = typemax(Int),
     write_result = true,
     output_channel_size = 5,
-    return_complete_result = false,
+    write_frequency = 1,
     history_in_memory = false,
     output_tag = "cell_euler_sim",
     show_info = true,
@@ -720,6 +721,7 @@ function simulate_euler_equations_cells(
             length(cell_partitions)
 
     n_tsteps = 1
+    n_written_tsteps = 1
     t = zero(T)
     if write_result
         if !isdir("data")
@@ -735,7 +737,7 @@ function simulate_euler_equations_cells(
     u_history = typeof(global_cells)[]
     t_history = typeof(t)[]
     if (history_in_memory)
-        push!(u_history, copy(u))
+        push!(u_history, copy(global_cells))
         push!(t_history, t)
     end
 
@@ -752,14 +754,11 @@ function simulate_euler_equations_cells(
             output_channel_size;
             taskref = writer_taskref,
         ) do ch
-            k = 0
             while true
                 val = take!(ch)
                 if val == :stop
                     break
                 end
-                k += 1
-                # @info "Writing..." k t=val[1] ncells=length(val[2])
                 write_tstep_to_stream(tape_stream, val...)
             end
         end
@@ -776,24 +775,33 @@ function simulate_euler_equations_cells(
             gas,
         )
         if show_info && ((n_tsteps - 1) % info_frequency == 0)
-            @info "Time step..." k = n_tsteps t_k = t Δt t_next=t+Δt
+            @info "Time step..." k = n_tsteps t_k = t Δt t_next = t + Δt
         end
         n_tsteps += 1
         t += Δt
-
-        if write_result && history_in_memory
-            u_cur = departition_cell_list(cell_partitions, global_cell_ids)
-            put!(writer_channel, (t, u_cur))
-            push!(u_history, u_cur)
-            push!(t_history, t)
-        elseif write_result
-            put!(
-                writer_channel,
-                (t, departition_cell_list(cell_partitions, global_cell_ids)),
-            )
-        elseif history_in_memory
-            push!(u_history, departition_cell_list(cell_partitions, global_cell_ids))
-            push!(t_history, t)
+        if (
+            ((n_tsteps - 1) % write_frequency == 0 || n_tsteps == max_tsteps) &&
+            (write_result || history_in_memory)
+        )
+            if write_result && history_in_memory
+                u_cur = departition_cell_list(cell_partitions, global_cell_ids)
+                put!(writer_channel, (t, u_cur))
+                push!(u_history, u_cur)
+                push!(t_history, t)
+            elseif write_result
+                put!(
+                    writer_channel,
+                    (t, departition_cell_list(cell_partitions, global_cell_ids)),
+                )
+            elseif history_in_memory
+                push!(u_history, departition_cell_list(cell_partitions, global_cell_ids))
+                push!(t_history, t)
+            end
+            n_written_tsteps += 1
+            if show_info
+                @info "Saving simulation state at " k = n_tsteps total_saved =
+                    n_written_tsteps
+            end
         end
     end
 
@@ -802,23 +810,21 @@ function simulate_euler_equations_cells(
         wait(writer_taskref[])
 
         seekstart(tape_stream)
-        write(tape_stream, n_tsteps)
+        write(tape_stream, n_written_tsteps)
         seekend(tape_stream)
         close(tape_stream)
     end
 
     if history_in_memory
-        @assert n_tsteps == length(t_history)
+        @assert n_written_tsteps == length(t_history)
         return CellBasedEulerSim{T}(
             (ncells...,),
-            n_tsteps,
+            n_written_tsteps,
             (((first(r), last(r)) for r ∈ cell_ifaces)...),
             t_history,
             global_cell_ids,
             u_history,
         )
-    elseif return_complete_result && write_result
-        return load_cell_sim(tape_file)
     end
 
     return CellBasedEulerSim(
@@ -863,9 +869,8 @@ function load_cell_sim(
         if show_info
             @info "Loaded metadata for cell-based Euler simulation at $path." n_tsteps n_active n_dims ncells
         end
-        active_cell_ids = Array{Int, 2}(undef, ncells...)
+        active_cell_ids = Array{Int,2}(undef, ncells...)
         read!(f, active_cell_ids)
-        @show sizeof(CellDType)
         time_steps = Vector{T}(undef, n_tsteps)
         cell_vals = Vector{Dict{Int,CellDType}}(undef, n_tsteps)
         temp_cell_vals = Vector{CellDType}(undef, n_active)
