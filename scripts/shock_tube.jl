@@ -64,7 +64,7 @@ simulate_euler_equations(
 
 # simulation 3 (quasi 1d)
 
-simulate_euler_equations(
+@time simulate_euler_equations(
     u0_2d,
     0.1,
     bcs_2d,

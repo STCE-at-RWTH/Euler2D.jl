@@ -302,6 +302,10 @@ function simulate_euler_equations(
         n_bytes_written += write(f, u)
     end
 
+    if write_result
+        tape_stream = open(tape_file, "a+")
+    end
+
     while !(t > T_end || t ≈ T_end) && n_tsteps < max_tsteps
         Δt = try
             maximum_Δt(u, dV, boundary_conditions, cfl_limit, gas)
@@ -333,9 +337,9 @@ function simulate_euler_equations(
 
         # opening the file is probably trivial compared to writing
         #   one megafloat
-        write_result && open(tape_file, "a+") do f
-            n_bytes_written += write(f, t)
-            n_bytes_written += write(f, u)
+        write_result && begin
+            n_bytes_written += write(tape_stream, t)
+            n_bytes_written += write(tape_stream, u)
         end
         if history_in_memory
             push!(u_history, copy(u))
@@ -343,10 +347,11 @@ function simulate_euler_equations(
         end
     end
 
-    write_result && open(tape_file, "a+") do f
-        seekstart(f)
-        n_bytes_written += write(f, n_tsteps)
-        seekend(f)
+    write_result && begin
+        seekstart(tape_stream)
+        n_bytes_written += write(tape_stream, n_tsteps)
+        seekend(tape_stream)
+        close(tape_stream)
     end
 
     if history_in_memory
