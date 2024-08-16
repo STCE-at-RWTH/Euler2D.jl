@@ -39,7 +39,7 @@ function Base.convert(
     )
 end
 
-dtype(::RegularQuadCell{T,Q1,Q2,Q3}) where {T,Q1,Q2,Q3} = T
+numeric_dtype(::RegularQuadCell{T,Q1,Q2,Q3}) where {T,Q1,Q2,Q3} = T
 
 function inward_normals(T)
     return (
@@ -59,12 +59,17 @@ function outward_normals(T)
     )
 end
 
-inward_normals(c::RegularQuadCell) = inward_normals(dtype(c))
-outward_normals(c::RegularQuadCell) = outward_normals(dtype(c))
+inward_normals(c::RegularQuadCell) = inward_normals(numeric_dtype(c))
+outward_normals(c::RegularQuadCell) = outward_normals(numeric_dtype(c))
 
 props_dtype(::ConservedProps{N,T,U1,U2,U3}) where {N,T,U1,U2,U3} = T
 props_unitstypes(::ConservedProps{N,T,U1,U2,U3}) where {N,T,U1,U2,U3} = (U1, U2, U3)
 
+"""
+    cprops_dtype(::RegularQuadCell)
+
+Get the `ConservedProps` data type associated with this cell.
+"""
 function cprops_dtype(::RegularQuadCell{T,Q1,Q2,Q3}) where {T,Q1,Q2,Q3}
     return ConservedProps{2,T,Q1,Q2,Q3}
 end
@@ -73,6 +78,11 @@ function cprops_dtype(::Type{RegularQuadCell{T,Q1,Q2,Q3}}) where {T,Q1,Q2,Q3}
     return ConservedProps{2,T,Q1,Q2,Q3}
 end
 
+"""
+    quadcell_dtype(::ConservedProps)
+
+Get a 
+"""
 function quadcell_dtype(::ConservedProps{N,T,U1,U2,U3}) where {N,T,U1,U2,U3}
     return RegularQuadCell{T,U1,U2,U3}
 end
@@ -245,13 +255,13 @@ struct CellGridPartition{T,Q1<:Density,Q2<:MomentumDensity,Q3<:EnergyDensity}
 end
 
 """
-    dtype(::CellGridPartition)
-    dtype(::Type{CellGridPartition})
+    numeric_dtype(::CellGridPartition)
+    numeric_dtype(::Type{CellGridPartition})
 
 Underlying numeric data type of this partition.
 """
-dtype(::CellGridPartition{T,Q1,Q2,Q3}) where {T,Q1,Q2,Q3} = T
-dtype(::Type{CellGridPartition{T,Q1,Q2,Q3}}) where {T,Q1,Q2,Q3} = T
+numeric_dtype(::CellGridPartition{T,Q1,Q2,Q3}) where {T,Q1,Q2,Q3} = T
+numeric_dtype(::Type{CellGridPartition{T,Q1,Q2,Q3}}) where {T,Q1,Q2,Q3} = T
 
 cell_type(::CellGridPartition{T,Q1,Q2,Q3}) where {T,Q1,Q2,Q3} = RegularQuadCell{T,Q1,Q2,Q3}
 function cell_type(::Type{CellGridPartition{T,Q1,Q2,Q3}}) where {T,Q1,Q2,Q3}
@@ -440,7 +450,7 @@ function step_cell_simulation!(
     Δy,
     gas::CaloricallyPerfectGas,
 )
-    T = dtype(eltype(cell_partitions))
+    T = numeric_dtype(eltype(cell_partitions))
     # compute Δu from flux functions
     compute_partition_update_tasks = map(cell_partitions) do cell_partition
         Threads.@spawn begin
@@ -821,6 +831,15 @@ function simulate_euler_equations_cells(
     )
 end
 
+"""
+    load_cell_sim(path; T=Float64, show_info=true)
+
+Load a cell-based simulation from path, computed with data type `T`.
+Other kwargs include:
+- `density_unit = ShockwaveProperties._units_ρ`
+- `momentum_density_unit = ShockwaveProperties._units_ρv`
+- `internal_energy_density_unit = ShockwaveProperties._units_ρE`
+"""
 function load_cell_sim(
     path;
     T = Float64,

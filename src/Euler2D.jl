@@ -36,8 +36,8 @@ export PhantomEdge
 export StrongWall, FixedPhantomOutside, ExtrapolateToPhantom
 export SupersonicInflow
 
-# TODO provide property field methods for EulerSim and CellBasedEulerSim structs
-# TODO this is helpful for the groups that want itself
+# Utility methods
+export numeric_dtype
 
 # EulerSim methods
 # TODO optimize these to use arrays of SArrays
@@ -48,9 +48,10 @@ export load_euler_sim
 
 # CellSim methods
 export CellBasedEulerSim, RegularQuadCell
+export inward_normals, outward_normals, cprops_dtype
 export Obstacle, TriangularObstacle, RectangularObstacle, CircularObstacle
 export point_inside
-export load_cell_sim, cell_from_grid_pos
+export load_cell_sim
 
 # All sim methods
 export pressure_field, density_field, velocity_field, mach_number_field
