@@ -1,5 +1,6 @@
 .vscode
 data
+gfx
 Manifest.toml
 
 build

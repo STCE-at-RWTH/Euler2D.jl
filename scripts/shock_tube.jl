@@ -11,6 +11,9 @@ PL = 10.0u"Pa"
 TL = uconvert(u"K", PL / (ρL * DRY_AIR.R))
 ML = vL / speed_of_sound(ρL, PL, DRY_AIR)
 
+ε = 0.2
+TL_eps = uconvert(u"K", ((1 + ε) * PL)/(ρL * DRY_AIR.R))
+
 ρR = 0.125 * ρL
 vR = [0.0u"m/s", 0.0u"m/s"]
 PR = 0.1 * PL
@@ -18,13 +21,15 @@ TR = uconvert(u"K", PR / (ρR * DRY_AIR.R))
 MR = vR / speed_of_sound(ρR, PR, DRY_AIR)
 
 s_high = ConservedProps(PrimitiveProps(ρL, [ML[1]], TL), DRY_AIR)
+s_high_eps = ConservedProps(PrimitiveProps(ρL, [ML[1]], TL_eps), DRY_AIR)
 s_low = ConservedProps(PrimitiveProps(ρR, [MR[2]], TR), DRY_AIR)
 
 s_high_2d = ConservedProps(PrimitiveProps(ρL, ML, TL), DRY_AIR)
 s_low_2d = ConservedProps(PrimitiveProps(ρR, MR, TR), DRY_AIR)
 
-u0_1d(x) = state_to_vector(x < 0.5 ? s_high : s_low)
-u0_2d(x, y) = state_to_vector(x < 0.5 ? s_high_2d : s_low_2d)
+u0_1d(x) = state_to_vector(x < 1.0 ? s_high : s_low)
+u0_1d_eps(x) = state_to_vector(x < 1.0 ? s_high_eps : s_low)
+u0_2d(x, y) = state_to_vector(x < 1.0 ? s_high_2d : s_low_2d)
 
 extrapolation_bcs = EdgeBoundary(ExtrapolateToPhantom(), ExtrapolateToPhantom())
 bcs_1d = (extrapolation_bcs,)
@@ -49,8 +54,19 @@ simulate_euler_equations(
     output_tag = "sod_shock_right_1d",
 )
 
+# simulation 1a
+simulate_euler_equations(
+    u0_1d_eps,
+    0.1,
+    bcs_1d,
+    (bounds_x,),
+    (ncells_x,);
+    cfl_limit = 0.75,
+    output_tag = "sod_shock_right_1d_perturbed",
+)
+
 # simulation 2
-u1_1d(x) = state_to_vector(x < 1.5 ? s_low : s_high)
+u1_1d(x) = state_to_vector(x < 1.0 ? s_low : s_high)
 
 simulate_euler_equations(
     u1_1d,

@@ -24,7 +24,7 @@ bcs = (
 bounds = ((-2.0, 0.0), (-1.5, 1.5))
 just_circle = [CircularObstacle((0.0, 0.0), 0.75)]
 just_triangle = [TriangularObstacle((-0.75, 0.0), (1.0, 1.0), (1.0, -1.0))]
-just_square = [RectangularObstacle(SVector(0., 0.), SVector(1.5, 1.5))]
+just_square = [RectangularObstacle(SVector(0., 0.), SVector(0.5, 0.5))]
 ncells = (400,600)
 
 ##
@@ -37,8 +37,8 @@ Euler2D.simulate_euler_equations_cells(
     ncells;
     gas = DRY_AIR,
     info_frequency = 10,
-    write_frequency = 20,
-    max_tsteps = 1000,
+    write_frequency = 40,
+    max_tsteps = 2000,
     output_tag = "circular_obstacle_radius_1",
     tasks_per_axis = 4,
 ) do (x, y)
@@ -68,8 +68,8 @@ Euler2D.simulate_euler_equations_cells(
     ncells;
     gas = DRY_AIR,
     info_frequency = 10,
-    write_frequency = 20,
-    max_tsteps = 1000,
+    write_frequency = 40,
+    max_tsteps = 2000,
     output_tag = "funky_square",
 ) do (x, y)
     ambient

@@ -239,8 +239,8 @@ Keyword Arguments
 - `history_in_memory`: Should we keep whole history in memory?
 - `return_complete_result`: Should a complete record of the simulation be returned by this function?
 - `output_tag`: File name for the tape and output summary.
-- `thread_pool`: Which thread pool should be used? 
-    (currently unused, but this does multithread via Threads.@threads)
+- `show_info=true`: Should `@info` messages be printed?
+- `info_frequency=10`: How often should an `@info` message be printed?
 """
 function simulate_euler_equations(
     u0,
@@ -255,7 +255,8 @@ function simulate_euler_equations(
     return_complete_result = false,
     history_in_memory = false,
     output_tag = "euler_sim",
-    thread_pool = :default,
+    show_info = true,
+    info_frequency=10,
 )
     N = length(ncells)
     @assert N == length(bounds) "ncells and bounds must match in length"
@@ -325,7 +326,7 @@ function simulate_euler_equations(
             break
         end
         Δt = min(Δt, T_end - t)
-        if n_tsteps % 10 == 1
+        if show_info && ((n_tsteps-1) % info_frequency == 0)
             @info "Time step..." n_tsteps t_k = t Δt
         end
 
