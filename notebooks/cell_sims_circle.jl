@@ -28,10 +28,7 @@ begin
 end
 
 # ╔═╡ 1b1c0430-bacf-454a-a0bf-b00c7b723b48
-esim = load_cell_sim("../data/circular_obstacle_radius_1.celltape")
-
-# ╔═╡ 89f497a5-2e05-44b5-a947-f3fcc31094ff
-cell_centers(esim)
+esim = load_cell_sim("../data/circular_obstacle_radius_1.celltape");
 
 # ╔═╡ 35061132-50bf-4dd8-8178-ddf25a78b2f6
 function plot_scalar_field(field_fn, esim, frame, title) 
@@ -39,38 +36,73 @@ function plot_scalar_field(field_fn, esim, frame, title)
 	data_field = reshape(field_fn(esim, frame), grid_size(esim))
 	(xs, ys) = cell_centers(esim)
 	tstring = @sprintf("%s; n=%4d t=% 2.4e",title, frame, t)
-	heatmap(xs, ys, data_field', aspect_ratio=:equal, dpi=600, size=(1000,1000), xlabel=L"x", ylabel=L"y", title=tstring, titlefontface="Computer Modern")
+	heatmap(xs, ys, data_field', aspect_ratio=:equal, dpi=600, size=(1000,1000), xlabel=L"x", ylabel=L"y", title=tstring, titlefontface="Computer Modern", tickfontsize=18, labelfontsize=20, titlefontsize=20)
 end
-
-# ╔═╡ 5c7c36b6-c64a-462f-905e-3c0cf52c593e
-pressure_field(esim, 1, DRY_AIR)
 
 # ╔═╡ 55c06a26-bc2e-45f4-bb6f-68e1f000aa57
-@bind i_esim Slider(1:n_tsteps(esim))
-
-# ╔═╡ 14085c9d-f7fa-42e8-a50d-027751243bec
-plot_scalar_field(esim, i_esim, "Pressure") do esim, n
-	pf = pressure_field(esim, n, DRY_AIR)
-	map(pf) do val
-		isnothing(val) ? 0. : ustrip(u"MPa", val)
-	end
-end
-
-# ╔═╡ 5190ba18-858a-4937-bc98-adddd8e110f8
-plot_scalar_field(esim, i_esim, "Density") do esim, n
-	pf = density_field(esim, n)
-	map(pf) do val
-		isnothing(val) ? 0. : ustrip(val)
-	end
-end
+@bind i_esim Slider(1:n_tsteps(esim); show_value=true)
 
 # ╔═╡ 7e55f0d8-86ba-4f21-8121-b9d3a8d89c80
-plot_scalar_field(esim, i_esim, "Mach Number") do esim, n
+fig2 = plot_scalar_field(esim, i_esim, "Mach Number") do esim, n
 	mf = mach_number_field(esim, n, DRY_AIR)
-	mapslices(mf, dims=(1,)) do m
-		any(isnothing.(m)) ? 0. : norm(m)
+	sz = grid_size(esim)
+	arr = Array{Union{Missing, eltype(mf)}, 2}(missing, sz)
+	for i ∈ CartesianIndices(sz)
+		any(isnothing.(@view mf[:, i])) && continue
+		arr[i] = norm(@view mf[:, i])
+	end
+	return arr
+end
+
+# ╔═╡ 7662186d-97ec-46b5-b0f7-37f29bd31305
+let 
+	mf = mach_number_field(esim, i_esim, DRY_AIR)
+	sz = grid_size(esim)
+	arr = Array{Union{Missing, eltype(mf)}, 2}(missing, sz)
+	for i ∈ CartesianIndices(sz)
+		any(isnothing.(@view mf[:, i])) && continue
+		arr[i] = norm(@view mf[:, i])
+	end
+	highlight = arr .<= 1.0
+	p = heatmap(cell_centers(esim)..., highlight', aspect_ratio=:equal, xlims=(-2, 0), title="region of subsonic flow", size=(1000, 1000))
+	savefig("cursed_region.png")
+	p
+end
+
+# ╔═╡ 14085c9d-f7fa-42e8-a50d-027751243bec
+fig1 = plot_scalar_field(esim, i_esim, "Pressure") do esim, n
+	pf = pressure_field(esim, n, DRY_AIR)
+	map(pf) do val
+		isnothing(val) ? missing : uconvert(u"MPa", val)
 	end
 end
+
+# ╔═╡ 16cd4883-7bf1-4618-865b-dfe35f899850
+savefig(fig1, "../gfx/pressure_around_obstacle.pdf")
+
+# ╔═╡ d079c05a-11b9-4ae4-be9d-ed723dc05148
+savefig(fig2, "../gfx/mach_number_around_obstacle.pdf")
+
+# ╔═╡ 5190ba18-858a-4937-bc98-adddd8e110f8
+let
+	p = plot_scalar_field(esim, i_esim, "Density") do esim, n
+		pf = density_field(esim, n)
+		map(pf) do val
+			isnothing(val) ? missing : val
+		end
+	end
+	ys = cell_centers(esim, 2)
+	pts = mapreduce(vcat, ys) do y
+		BilligShockParametrization.shock_front(y, 4.0, 0.75)'
+	end
+	plot!(p, pts[:, 1], pts[:, 2], label="Billig")
+end
+
+# ╔═╡ 61b3b6fc-067e-4018-8371-0d4f7cc04968
+
+
+# ╔═╡ 0515e766-1f02-4eea-9986-3edcfb424003
+
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
@@ -86,7 +118,7 @@ StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 Unitful = "1986cc42-f94f-5a68-af5c-568840ba703d"
 
 [compat]
-Euler2D = "~0.3.1"
+Euler2D = "~0.3.3"
 LaTeXStrings = "~1.3.1"
 Plots = "~1.40.5"
 PlutoUI = "~0.7.59"
@@ -99,9 +131,9 @@ Unitful = "~1.21.0"
 PLUTO_MANIFEST_TOML_CONTENTS = """
 # This file is machine-generated - editing it directly is not advised
 
-julia_version = "1.10.4"
+julia_version = "1.10.5"
 manifest_format = "2.0"
-project_hash = "b8b5dd41ac3391300ffd1faa1e45a05f88aa2339"
+project_hash = "5a91df85e95c0c1e15aef6c19b958557da7f6874"
 
 [[deps.AbstractPlutoDingetjes]]
 deps = ["Pkg"]
@@ -258,9 +290,9 @@ version = "0.0.20230411+0"
 
 [[deps.Euler2D]]
 deps = ["LinearAlgebra", "ShockwaveProperties", "StaticArrays", "Tullio", "Unitful", "UnitfulChainRules"]
-git-tree-sha1 = "1018cf8d98db1e680d65cd5be346aaa726b1732c"
+git-tree-sha1 = "7ce0f4c656f1e64d2a0e40bff13a194645d10287"
 uuid = "c24a2923-03cb-4692-957a-ccd31f2ad327"
-version = "0.3.1"
+version = "0.3.3"
 
 [[deps.ExceptionUnwrapping]]
 deps = ["Test"]
@@ -1231,7 +1263,7 @@ version = "0.15.1+0"
 [[deps.libblastrampoline_jll]]
 deps = ["Artifacts", "Libdl"]
 uuid = "8e850b90-86db-534c-a0d3-1478176c7d93"
-version = "5.8.0+1"
+version = "5.11.0+0"
 
 [[deps.libdecor_jll]]
 deps = ["Artifacts", "Dbus_jll", "JLLWrappers", "Libdl", "Libglvnd_jll", "Pango_jll", "Wayland_jll", "xkbcommon_jll"]
@@ -1307,12 +1339,15 @@ version = "1.4.1+1"
 # ╔═╡ Cell order:
 # ╠═1b7ead20-2f14-11ef-28d1-03ad74bf304a
 # ╠═1b1c0430-bacf-454a-a0bf-b00c7b723b48
-# ╠═89f497a5-2e05-44b5-a947-f3fcc31094ff
 # ╠═35061132-50bf-4dd8-8178-ddf25a78b2f6
-# ╠═5c7c36b6-c64a-462f-905e-3c0cf52c593e
-# ╠═14085c9d-f7fa-42e8-a50d-027751243bec
-# ╠═55c06a26-bc2e-45f4-bb6f-68e1f000aa57
-# ╠═5190ba18-858a-4937-bc98-adddd8e110f8
+# ╟─55c06a26-bc2e-45f4-bb6f-68e1f000aa57
 # ╠═7e55f0d8-86ba-4f21-8121-b9d3a8d89c80
+# ╟─7662186d-97ec-46b5-b0f7-37f29bd31305
+# ╟─14085c9d-f7fa-42e8-a50d-027751243bec
+# ╠═16cd4883-7bf1-4618-865b-dfe35f899850
+# ╠═d079c05a-11b9-4ae4-be9d-ed723dc05148
+# ╟─5190ba18-858a-4937-bc98-adddd8e110f8
+# ╠═61b3b6fc-067e-4018-8371-0d4f7cc04968
+# ╠═0515e766-1f02-4eea-9986-3edcfb424003
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

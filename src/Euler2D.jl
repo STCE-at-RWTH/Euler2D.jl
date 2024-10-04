@@ -20,8 +20,10 @@ include("utils.jl")
 include("transport.jl")
 include("boundary_conditions.jl")
 include("riemann_problem.jl")
+
 include("array_simulations/fvm.jl")
 include("array_simulations/array_simulations.jl")
+
 include("cell_simulations/obstacle.jl")
 include("cell_simulations/cell_simulations.jl")
 
@@ -53,7 +55,41 @@ export Obstacle, TriangularObstacle, RectangularObstacle, CircularObstacle
 export point_inside
 export load_cell_sim
 
+function _interpolate_field(fieldfn, sim, t, args...)
+    if t < 0 || t > sim.tsteps[end]
+        error(
+            ArgumentError(
+                "Cannot interpolate for values of t outside the range of the simulation.",
+            ),
+        )
+    end
+    idx_after = findfirst(>(t), sim.tsteps)
+    t1 = sim.tsteps[idx_after-1]
+    v1 = fieldfn(sim, idx_after - 1, args...)
+    t2 = sim.tsteps[idx_after]
+    v2 = fieldfn(sim, idx_after, args...)
+    α = (t-t1)/(t2-t1)
+    return α*v1 + (1-α)*v2
+end
+
+const _field_methods_nogas =
+    (:density_field, :velocity_field, :total_internal_energy_density_field)
+const _field_methods_gas = (:pressure_field, :mach_number_field)
+
+for T ∈ (EulerSim, CellBasedEulerSim)
+    for f ∈ _field_methods_gas
+        @eval $(f)(sim::$(T), t, gas::CaloricallyPerfectGas) = begin
+            return _interpolate_field($f, sim, t, gas)
+        end
+    end
+    for f ∈ _field_methods_nogas
+        @eval $(f)(sim::$(T), t) = begin
+            return _interpolate_field($f, sim, t)
+        end
+    end
+end
+
 # All sim methods
-export pressure_field, density_field, velocity_field, mach_number_field
+export pressure_field, density_field, velocity_field, mach_number_field, total_internal_energy_density_field
 
 end

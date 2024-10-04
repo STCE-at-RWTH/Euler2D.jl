@@ -4,8 +4,9 @@ u_array_space_dims(::AbstractArray{T,N}) where {T,N} = N - 1
 u_array_space_size(u::AbstractArray{T,N}) where {T,N} = size(u)[2:end]
 
 vcat_ρ_ρv_ρE_preserve_static(u1, u2, u3) = vcat(u1, u2, u3)
-vcat_ρ_ρv_ρE_preserve_static(u1, u2::StaticVector{S,T}, u3) where {S,T} =
+function vcat_ρ_ρv_ρE_preserve_static(u1, u2::StaticVector{S,T}, u3) where {S,T} 
     SVector{S + 2}(u1, u2..., u3)
+end
 
 function select_middle(u::StaticVector{S,T}) where {S,T}
     idxs = SVector{S - 2}(ntuple(i -> i + 1, S - 2))

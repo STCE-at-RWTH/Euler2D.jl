@@ -514,6 +514,9 @@ end
 
 n_space_dims(::CellBasedEulerSim) = 2
 
+numeric_dtype(::CellBasedEulerSim{T,Q1,Q2,Q3}) where {T,Q1,Q2,Q3} = T
+numeric_dtype(::Type{CellBasedEulerSim{T,Q1,Q2,Q3}}) where {T,Q1,Q2,Q3} = T
+
 function cell_boundaries(e::CellBasedEulerSim)
     return ntuple(i -> cell_boundaries(e, i), 2)
 end
@@ -534,11 +537,11 @@ end
 eachstep(csim::CellBasedEulerSim) = [nth_step(csim, n) for n ∈ 1:n_tsteps(csim)]
 
 """
-    density_field(csim::CellBasedEulerSim, n)
+    density_field(csim::CellBasedEulerSim, n::Integer)
 
 Compute the density field for a cell-based Euler simulation `csim` at time step `n`.
 """
-function density_field(csim::CellBasedEulerSim{T,Q1,Q2,Q3}, n) where {T,Q1,Q2,Q3}
+function density_field(csim::CellBasedEulerSim{T,Q1,Q2,Q3}, n::Integer) where {T,Q1,Q2,Q3}
     _, u_cells = nth_step(csim, n)
     ρ = Array{Union{Q1,Nothing},2}(undef, grid_size(csim))
     fill!(ρ, nothing)
@@ -554,7 +557,7 @@ end
 
 Compute the momentum density field for a cell-based Euler simulation `csim` at time step `n`.
 """
-function momentum_density_field(csim::CellBasedEulerSim{T,Q1,Q2,Q3}, n) where {T,Q1,Q2,Q3}
+function momentum_density_field(csim::CellBasedEulerSim{T,Q1,Q2,Q3}, n::Integer) where {T,Q1,Q2,Q3}
     _, u_cells = nth_step(csim, n)
     ρv = Array{Union{Q2,Nothing},3}(undef, (2, grid_size(csim)...))
     fill!(ρv, nothing)
@@ -566,11 +569,11 @@ function momentum_density_field(csim::CellBasedEulerSim{T,Q1,Q2,Q3}, n) where {T
 end
 
 """
-    velocity_field(csim::CellBasedEulerSim, n)
+    velocity_field(csim::CellBasedEulerSim, n::Integer)
 
 Compute the velocity field for a cell-based Euler simulation `csim` at time step `n`.
 """
-function velocity_field(csim::CellBasedEulerSim, n)
+function velocity_field(csim::CellBasedEulerSim, n::Integer)
     _, u_cells = nth_step(csim, n)
     # is this a huge runtime problem? who can know.
     T = eltype(velocity(u_cells[1].u))
@@ -584,13 +587,13 @@ function velocity_field(csim::CellBasedEulerSim, n)
 end
 
 """
-    total_internal_energy_density_field(csim::CellBasedEulerSim, n)
+    total_internal_energy_density_field(csim::CellBasedEulerSim, n::Integer)
 
 Compute the total internal energy density field for a cell-based Euler simulation at time step `n`.
 """
 function total_internal_energy_density_field(
     csim::CellBasedEulerSim{T,Q1,Q2,Q3},
-    n,
+    n::Integer,
 ) where {T,Q1,Q2,Q3}
     _, u_cells = nth_step(csim, n)
     ρE = Array{Union{Q3,nothing},2}(undef, grid_size(csim))
@@ -603,11 +606,11 @@ function total_internal_energy_density_field(
 end
 
 """
-    pressure_field(csim::CellBasedEulerSim, n, gas)
+    pressure_field(csim::CellBasedEulerSim, n::Integer, gas)
 
 Compute the pressure field for a cell-based Euler simulation `csim` at time step `n` in gas `gas`.
 """
-function pressure_field(csim::CellBasedEulerSim, n, gas::CaloricallyPerfectGas)
+function pressure_field(csim::CellBasedEulerSim, n::Integer, gas::CaloricallyPerfectGas)
     _, u_cells = nth_step(csim, n)
     # is this a huge runtime problem? who can know.
     T = typeof(pressure(u_cells[1].u, gas))
@@ -621,13 +624,13 @@ function pressure_field(csim::CellBasedEulerSim, n, gas::CaloricallyPerfectGas)
 end
 
 """
-    mach_number_field(csim::CellBasedEulerSim, n, gas)
+    mach_number_field(csim::CellBasedEulerSim, n::Integer, gas)
 
 Compute the Mach number field for a cell-based Euler simulation `csim` at time step `n` in gas `gas`.
 """
 function mach_number_field(
     csim::CellBasedEulerSim{T,Q1,Q2,Q3},
-    n,
+    n::Integer,
     gas::CaloricallyPerfectGas,
 ) where {T,Q1,Q2,Q3}
     _, u_cells = nth_step(csim, n)
