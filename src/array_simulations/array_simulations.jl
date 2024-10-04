@@ -35,6 +35,9 @@ end
 # TODO utility functions for plotting these things, maybe look at PlotRecipes? No need to go too overboard, though.
 # extend this to work with out-of-memory data?
 
+numeric_dtype(::EulerSim{N, NAXES, T}) where {N, NAXES, T} = T
+numeric_dtype(::Type{EulerSim{N, NAXES, T}}) where {N, NAXES, T} = T
+
 """
     n_space_dims(e::EulerSim)
 
@@ -127,7 +130,7 @@ Compute the pressure field for an array-based Euler simulation `esim` at time st
 """
 function pressure_field(
     esim::EulerSim{N,NAXES,T},
-    n,
+    n::Integer,
     gas::CaloricallyPerfectGas,
 ) where {N,NAXES,T}
     _, u = nth_step(esim, n)
@@ -148,7 +151,7 @@ end
 
 Get a view of the density field for an array-based euler simulation at time step `n`
 """
-function density_field(esim::EulerSim, n)
+function density_field(esim::EulerSim, n::Integer)
     _, u = nth_step(esim, n)
     idxs = ntuple(Returns(Colon()), n_space_dims(esim))
     return view(u, 1, idxs...)
@@ -159,7 +162,7 @@ end
 
 Get a view of the momentum density field for an array-based euler simulation at time step `n`.
 """
-function momentum_density_field(esim::EulerSim, n)
+function momentum_density_field(esim::EulerSim, n::Integer)
     _, u = nth_step(esim, n)
     free_idxs = ntuple(Returns(Colon()), n_space_dims(esim))
     idxs = 2:(n_space_dims(esim)+1)
@@ -171,7 +174,7 @@ end
 
 Get a view of the total internal energy density field for an array-based euler simulation at time step `n`.
 """
-function total_internal_energy_density_field(esim::EulerSim, n)
+function total_internal_energy_density_field(esim::EulerSim, n::Integer)
     _, u = nth_step(esim, n)
     free_idxs = ntuple(Returns(Colon()), n_space_dims(esim))
     return view(u, 4, free_idxs...)
@@ -182,7 +185,7 @@ end
 
 Compute the velocity field for an array-based euler simulation at time step `n`.
 """
-function velocity_field(esim::EulerSim, n)
+function velocity_field(esim::EulerSim, n::Integer)
     ρ = density_field(esim, n)
     ρv = momentum_density_field(esim, n)
     v = similar(ρv)
@@ -197,7 +200,7 @@ end
 
 Compute the mach number field for an array-based euler simulation at time step `n` in gas `gas`.
 """
-function mach_number_field(esim::EulerSim, n, gas::CaloricallyPerfectGas)
+function mach_number_field(esim::EulerSim, n::Integer, gas::CaloricallyPerfectGas)
     _, u = nth_step(esim, n)
     v = velocity_field(esim, n)
     M = similar(v)

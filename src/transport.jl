@@ -86,6 +86,19 @@ function F_euler(u, gas::CaloricallyPerfectGas)
     return vcat(ρv', ρv_flux, (ρv * (u[end] + P) / u[1])')
 end
 
+"""
+    F_euler(u, P)
+
+Compute the Euler flux with a provided value for pressure.
+Intended for use when a gas has a fixed, "theoretical" value for `γ`
+    that allows easy computation of `P`.
+"""
+function F_euler(u, P)
+    ρv = @view(u[2:end-1])
+    ρv_flux = (ρv * ρv') / u[1] + I*P
+    return vcat(ρv', ρv_flux, (ρv *(u[end] + P)/u[1])')
+end
+
 F_euler_normal(F_e, n̂) = F_e * n̂
 
 """
