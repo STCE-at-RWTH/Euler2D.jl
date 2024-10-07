@@ -63,21 +63,44 @@ function is_point_on(pt, circle::Circular)
 end
 
 function central_angle_of(circ, pt)
-    A = (pt - circ.center)
-    θ = atan(A[2] / A[1]) # ranges from -π/2 to π/2
+    A = pt - circ.center
+    θ = atan(A[2], A[1]) # ranges from -π to π, according to Julia docs
     # switch to (0, 2π]
     if θ < 0
         θ += 2π
     end
-    if A[1] < 0
-        if A[2] >= 0
-            # quadrant 2
-            θ += π / 2
-        else
-            θ -= π / 2
-        end
-    end
     return θ
 end
 
-#
+function average_normal_on(curve::Circular, pt1, pt2)
+    α = central_angle_of(curve, pt1)
+    β = central_angle_of(curve, pt2)
+    @show α, β
+    res = sincos((α+β)/2)
+    return SVector(res[2], res[1])
+end
+
+##
+
+function classify_interfaces(cell, obstacle)
+    vtxs = vertices(cell)
+    pts_inside = map(Base.Fix2(is_point_in, obstacle), vtxs)
+    pts_on = map(Base.Fix2(is_point_on, obstacle), vtxs)
+    return map(_cell_iface_vtxs) do (v1, v2)
+        if getfield(pts_inside, v1) && getfield(pts_inside, v2)
+            return NO_IFACE
+        elseif getfield(pts_on, v1) && getfield(pts_on, v2)
+            return CELL_BOUNDARY # is this correct.?
+        elseif !getfield(pts_inside, v1) && !getfield(pts_inside, v2)
+            return CELL_CELL_FULL
+        else
+            return CELL_CELL_CUT
+        end
+    end
+end
+
+##
+
+c1 = Circular(SVector(0., 0.), 1.0)
+central_angle_of(c1, SVector(-1., -0.5)) |> rad2deg
+
