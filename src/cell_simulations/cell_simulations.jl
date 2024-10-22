@@ -26,6 +26,18 @@ struct RegularQuadCell{T,Q1<:Density,Q2<:MomentumDensity,Q3<:EnergyDensity}
     }
 end
 
+struct TangentModeQuadCell{T,Q1<:Density,Q2<:MomentumDensity,Q3<:EnergyDensity}
+    id::Int
+    idx::CartesianIndex{2}
+    center::SVector{2,T}
+    u::ConservedProps{2,T,Q1,Q2,Q3}
+    u̇::
+    neighbors::NamedTuple{
+        (:north, :south, :east, :west),
+        NTuple{4,Tuple{CellNeighboring,Int}},
+    }
+end
+
 function Base.convert(
     ::Type{RegularQuadCell{T,A1,A2,A3}},
     cell::RegularQuadCell{T,B1,B2,B3},
@@ -64,6 +76,8 @@ outward_normals(c::RegularQuadCell) = outward_normals(numeric_dtype(c))
 
 props_dtype(::ConservedProps{N,T,U1,U2,U3}) where {N,T,U1,U2,U3} = T
 props_unitstypes(::ConservedProps{N,T,U1,U2,U3}) where {N,T,U1,U2,U3} = (U1, U2, U3)
+
+cell_volume(cell) = cell.extent[1] * cell.extent[2]
 
 """
     cprops_dtype(::RegularQuadCell)
