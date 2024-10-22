@@ -31,12 +31,14 @@ struct TangentModeQuadCell{T,Q1<:Density,Q2<:MomentumDensity,Q3<:EnergyDensity}
     idx::CartesianIndex{2}
     center::SVector{2,T}
     u::ConservedProps{2,T,Q1,Q2,Q3}
-    u̇::
+    u̇::SVector{4,T}
     neighbors::NamedTuple{
         (:north, :south, :east, :west),
         NTuple{4,Tuple{CellNeighboring,Int}},
     }
 end
+
+# TODO use resident eval to generate these automatically
 
 function Base.convert(
     ::Type{RegularQuadCell{T,A1,A2,A3}},
@@ -51,7 +53,21 @@ function Base.convert(
     )
 end
 
+function Base.convert(
+    ::Type{TangentModeQuadCell{T,A1,A2,A3}},
+    cell::TangentModeQuadCell{T,B1,B2,B3},
+) where {T,A1,A2,A3,B1,B2,B3}
+    return RegularQuadCell(
+        cell.id,
+        cell.idx,
+        cell.center,
+        convert(ConservedProps{2,T,A1,A2,A3}, cell.u),
+        cell.neighbors,
+    )
+end
+
 numeric_dtype(::RegularQuadCell{T,Q1,Q2,Q3}) where {T,Q1,Q2,Q3} = T
+numeric_dtype(::TangentModeQuadCell{T,Q1,Q2,Q3}) where {T,Q1,Q2,Q3} = T
 
 function inward_normals(T)
     return (
