@@ -24,6 +24,15 @@ function boundary_velocity_scaling(T, dim, rev)
     end)
 end
 
+function split_svector(v)
+    N = length(v) ÷ 2
+    M = length(v)
+    v1, v2 = @inbounds begin
+        (SVector{N}(@view v[1:N]), SVector{M-N}(@view v[N+1:M]))
+    end
+    return v1,v2
+end
+
 """
     flip_velocity(u, dim)
 
@@ -32,4 +41,25 @@ Flip the `dim`th velocity component of `u`. and return a copy.
 function flip_velocity(u::ConservedProps{N,T,U1,U2,U3}, dim) where {N,T,U1,U2,U3}
     scaling = SVector(ntuple(i -> i == dim ? -one(T) : one(T), N))
     return ConservedProps(u.ρ, scaling .* u.ρv, u.ρE)
+end
+
+merge_values_tuple(arg1, arg2) = (arg1, arg2)
+merge_values_tuple(arg1::Tuple, arg2) = (arg1..., arg2)
+merge_values_tuple(arg1, arg2::Tuple) = (arg1, arg2...)
+merge_values_tuple(arg1::Tuple, arg2::Tuple) = (arg1..., arg2...)
+
+"""
+    merge_named_tuples(nt1::NamedTuple{NAMES}, nt2::NamedTuple{NAMES}, nts::NamedTuple{NAMES}...)
+
+Merge the values of the provided named tuples. Will flatten any tuple fields.
+"""
+function merge_named_tuples(nt1::NamedTuple{NAMES}, nt2::NamedTuple{NAMES}) where {NAMES}
+    new_values = ntuple(length(NAMES)) do i
+        merge_values_tuple(nt1[NAMES[i]], nt2[NAMES[i]])
+    end
+    return NamedTuple{NAMES}(new_values)
+end
+
+function merge_named_tuples(nt1::NamedTuple{NAMES}, nts::NamedTuple{NAMES}...) where {NAMES}
+    return merge_named_tuples(merge_named_tuples(nt1, nts[1]), nts[2:end]...)
 end
