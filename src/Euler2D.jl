@@ -6,7 +6,12 @@ module Euler2D
     read(path, String)
 end Euler2D
 
+# what do we want out of Base?
 using Base.Threads: nthreads, @spawn
+
+using Accessors
+using AllocCheck
+using ForwardDiff
 using LinearAlgebra
 using Tullio
 using ShockwaveProperties
@@ -47,7 +52,7 @@ export grid_size, n_data_dims, n_space_dims, n_tsteps
 export load_euler_sim
 
 # CellSim methods
-export CellBasedEulerSim, RegularQuadCell
+export CellBasedEulerSim, PrimalQuadCell
 export inward_normals, outward_normals, cprops_dtype
 export Obstacle, TriangularObstacle, RectangularObstacle, CircularObstacle
 export point_inside

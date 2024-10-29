@@ -1,6 +1,6 @@
 # I always think in "north south east west"... who knows why.
 #   anyway
-@enum CellBoundaries::Int begin
+@enum CellBoundaries::UInt8 begin
     NORTH_BOUNDARY = 1
     SOUTH_BOUNDARY = 2
     EAST_BOUNDARY = 3
@@ -8,15 +8,19 @@
     INTERNAL_STRONGWALL = 5
 end
 
-@enum CellNeighboring::Int begin
+@enum CellNeighboring::UInt8 begin
     OTHER_QUADCELL
     BOUNDARY_CONDITION
+    IS_PHANTOM
 end
 
-struct RegularQuadCell{T,Q1<:Density,Q2<:MomentumDensity,Q3<:EnergyDensity}
+abstract type QuadCell end
+
+struct PrimalQuadCell{T,Q1<:Density,Q2<:MomentumDensity,Q3<:EnergyDensity} <: QuadCell
     id::Int
     idx::CartesianIndex{2}
     center::SVector{2,T}
+    extent::SVector{2,T}
     u::ConservedProps{2,T,Q1,Q2,Q3}
     # either (:boundary, :cell)
     # and then the ID of the appropriate boundary
@@ -26,10 +30,11 @@ struct RegularQuadCell{T,Q1<:Density,Q2<:MomentumDensity,Q3<:EnergyDensity}
     }
 end
 
-struct TangentModeQuadCell{T,Q1<:Density,Q2<:MomentumDensity,Q3<:EnergyDensity}
+struct TangentQuadCell{T,Q1<:Density,Q2<:MomentumDensity,Q3<:EnergyDensity} <: QuadCell
     id::Int
     idx::CartesianIndex{2}
     center::SVector{2,T}
+    extent::SVector{2,T}
     u::ConservedProps{2,T,Q1,Q2,Q3}
     u̇::SVector{4,T}
     neighbors::NamedTuple{
@@ -38,88 +43,82 @@ struct TangentModeQuadCell{T,Q1<:Density,Q2<:MomentumDensity,Q3<:EnergyDensity}
     }
 end
 
-# TODO use resident eval to generate these automatically
+for CELL ∈ (PrimalQuadCell, TangentQuadCell)
+    @eval numeric_dtype(::$CELL{T,U,V,W}) where {T,U,V,W} = T
+    @eval numeric_dtype(::Type{$CELL{T,U,V,W}}) where {T,U,V,W} = T
+    @eval cprops_dtype(::$CELL{T,U,V,W}) where {T,U,V,W} = ConservedProps{2,T,U,V,W}
+    @eval cprops_dtype(::Type{$CELL{T,U,V,W}}) where {T,U,V,W} = ConservedProps{2,T,U,V,W}
+end
+
+@doc """
+        numeric_dtype(cell)
+        numeric_dtype(::Type{CELL_TYPE})
+
+    Get the numeric data type associated with this cell.
+    """ numeric_dtype
+
+@doc """
+        cprops_dtype(cell)
+        cprops_dtype(::Type{CELL_TYPE})
+
+    Get the `ConservedProps` data type associated with this cell.
+    """ cprops_dtype
 
 function Base.convert(
-    ::Type{RegularQuadCell{T,A1,A2,A3}},
-    cell::RegularQuadCell{T,B1,B2,B3},
+    ::Type{PrimalQuadCell{T,A1,A2,A3}},
+    cell::PrimalQuadCell{T,B1,B2,B3},
 ) where {T,A1,A2,A3,B1,B2,B3}
-    return RegularQuadCell(
+    return PrimalQuadCell(
         cell.id,
         cell.idx,
         cell.center,
+        cell.extent,
         convert(ConservedProps{2,T,A1,A2,A3}, cell.u),
         cell.neighbors,
     )
 end
 
 function Base.convert(
-    ::Type{TangentModeQuadCell{T,A1,A2,A3}},
-    cell::TangentModeQuadCell{T,B1,B2,B3},
+    ::Type{TangentQuadCell{T,A1,A2,A3}},
+    cell::TangentQuadCell{T,B1,B2,B3},
 ) where {T,A1,A2,A3,B1,B2,B3}
-    return RegularQuadCell(
+    return TangentQuadCell(
         cell.id,
         cell.idx,
         cell.center,
+        cell.extent,
         convert(ConservedProps{2,T,A1,A2,A3}, cell.u),
+        cell.u̇,
         cell.neighbors,
     )
 end
 
-numeric_dtype(::RegularQuadCell{T,Q1,Q2,Q3}) where {T,Q1,Q2,Q3} = T
-numeric_dtype(::TangentModeQuadCell{T,Q1,Q2,Q3}) where {T,Q1,Q2,Q3} = T
-
-function inward_normals(T)
+function inward_normals(T::DataType)
     return (
         north = SVector((zero(T), -one(T))...),
         south = SVector((zero(T), one(T))...),
         east = SVector((-one(T), zero(T))...),
-        west = Svector((one(T), zero(T))...),
+        west = SVector((one(T), zero(T))...),
     )
 end
 
-function outward_normals(T)
+function outward_normals(T::DataType)
     return (
         north = SVector((zero(T), one(T))...),
         south = SVector((zero(T), -one(T))...),
         east = SVector((one(T), zero(T))...),
-        west = Svector((-one(T), zero(T))...),
+        west = SVector((-one(T), zero(T))...),
     )
 end
 
-inward_normals(c::RegularQuadCell) = inward_normals(numeric_dtype(c))
-outward_normals(c::RegularQuadCell) = outward_normals(numeric_dtype(c))
-
-props_dtype(::ConservedProps{N,T,U1,U2,U3}) where {N,T,U1,U2,U3} = T
-props_unitstypes(::ConservedProps{N,T,U1,U2,U3}) where {N,T,U1,U2,U3} = (U1, U2, U3)
+inward_normals(cell) = inward_normals(numeric_dtype(cell))
+outward_normals(cell) = outward_normals(numeric_dtype(cell))
 
 cell_volume(cell) = cell.extent[1] * cell.extent[2]
 
-"""
-    cprops_dtype(::RegularQuadCell)
-
-Get the `ConservedProps` data type associated with this cell.
-"""
-function cprops_dtype(::RegularQuadCell{T,Q1,Q2,Q3}) where {T,Q1,Q2,Q3}
-    return ConservedProps{2,T,Q1,Q2,Q3}
-end
-
-function cprops_dtype(::Type{RegularQuadCell{T,Q1,Q2,Q3}}) where {T,Q1,Q2,Q3}
-    return ConservedProps{2,T,Q1,Q2,Q3}
-end
-
-"""
-    quadcell_dtype(::ConservedProps)
-
-Get a 
-"""
-function quadcell_dtype(::ConservedProps{N,T,U1,U2,U3}) where {N,T,U1,U2,U3}
-    return RegularQuadCell{T,U1,U2,U3}
-end
-
 # TODO we should actually be more serious about compting these overlaps
 #  and then computing volume-averaged quantities
-point_inside(s::Obstacle, q::RegularQuadCell) = point_inside(s, q.center)
+point_inside(s::Obstacle, q) = point_inside(s, q.center)
 
 function active_cell_mask(cell_centers_x, cell_centers_y, obstacles)
     return map(Iterators.product(cell_centers_x, cell_centers_y)) do (x, y)
@@ -179,13 +178,17 @@ function quadcell_list_and_id_grid(u0, bounds, ncells, obstacles = [])
         v = range(b...; length = n + 1)
         return v[1:end-1] .+ step(v) / 2
     end
+    extent = SVector{2}(step.(centers)...)
 
     # u0 is probably cheap
     u0_grid = map(u0, Iterators.product(centers...))
     active_mask = active_cell_mask(centers..., obstacles)
     active_ids = active_cell_ids_from_mask(active_mask)
     @assert sum(active_mask) == last(active_ids)
-    cell_list = Dict{Int,quadcell_dtype(first(u0_grid))}()
+    cell_list = Dict{
+        Int,
+        PrimalQuadCell{numeric_dtype(eltype(u0_grid)),quantity_types(eltype(u0_grid))...},
+    }()
     sizehint!(cell_list, sum(active_mask))
     for i ∈ eachindex(IndexCartesian(), active_ids, active_mask)
         active_mask[i] || continue
@@ -194,49 +197,57 @@ function quadcell_list_and_id_grid(u0, bounds, ncells, obstacles = [])
         x_i = centers[1][m]
         y_j = centers[2][n]
         neighbors = cell_neighbor_status(i, active_ids)
-        cell_list[j] = RegularQuadCell(j, i, SVector(x_i, y_j), u0_grid[i], neighbors)
+        cell_list[j] =
+            PrimalQuadCell(j, i, SVector(x_i, y_j), extent, u0_grid[i], neighbors)
     end
     return cell_list, active_ids
 end
 
-function phantom_neighbor(cell_id, active_cells, dir, bc, gas)
+function phantom_neighbor(cell, dir, bc, gas)
     # HACK use nneighbors as intended.
+    @assert dir ∈ (:north, :south, :east, :west) "dir is not a cardinal direction..."
     @assert nneighbors(bc) == 1 "dirty hack alert, this function needs to be extended for bcs with more neighbors"
     dirs_bc_is_reversed = (north = true, south = false, east = false, west = true)
     dirs_dim = (north = 2, south = 2, east = 1, west = 1)
-    reverse_phantom = dirs_bc_is_reversed[dir] && reverse_right_edge(bc)
-    u = if dirs_bc_is_reversed[dir]
-        flip_velocity(active_cells[cell_id].u, dirs_dim[dir])
-    else
-        active_cells[cell_id].u
-    end
-    phantom = phantom_cell(bc, u, dirs_dim[dir], gas)
-    if reverse_phantom
-        return flip_velocity(phantom, dirs_dim[dir])
+    phantom = @set cell.id = 0
+
+    @inbounds begin
+        reverse_phantom = dirs_bc_is_reversed[dir] && reverse_right_edge(bc)
+        @reset phantom.center = cell.center + outward_normals(cell)[dir] .* cell.extent
+        @reset phantom.neighbors =
+            NamedTuple{(:north, :south, :east, :west)}(ntuple(Returns((IS_PHANTOM, 0)), 4))
+
+        u = if dirs_bc_is_reversed[dir]
+            flip_velocity(cell.u, dirs_dim[dir])
+        else
+            cell.u
+        end
+        phantom_u = phantom_cell(bc, u, dirs_dim[dir], gas)
+        if reverse_phantom
+            @reset phantom.u = flip_velocity(phantom_u, dirs_dim[dir])
+        else
+            @reset phantom.u = phantom_u
+        end
     end
     return phantom
 end
 
 """
-    single_cell_neighbor_data(cell_id, active_cells, boundary_conditions, gas)
+    neighbor_cells(cell, active_cells, boundary_conditions, gas)
 
-Extract the states of the neighboring cells to `cell_id` from `active_cells`. 
-Will compute them as necessary from `boundary_conditions` and `gas`. Returns a `NamedTuple` of `SVectors`.
+Extract the states of the neighboring cells to `cell` from `active_cells`. 
+Will compute phantoms as necessary from `boundary_conditions` and `gas`.
 """
-function single_cell_neighbor_data(
-    cell_id,
-    active_cells,
-    boundary_conditions,
-    gas::CaloricallyPerfectGas,
-)
-    neighbors = active_cells[cell_id].neighbors
+function neighbor_cells(cell, active_cells, boundary_conditions, gas)
+    neighbors = cell.neighbors
+    # TODO use named tuple fusion rather than... this
     map((ntuple(i -> ((keys(neighbors)[i], neighbors[i])), 4))) do (dir, (kind, id))
         res = if kind == BOUNDARY_CONDITION
-            phantom_neighbor(cell_id, active_cells, dir, boundary_conditions[id], gas)
+            @inbounds phantom_neighbor(cell, dir, boundary_conditions[id], gas)
         else
-            active_cells[id].u
+            active_cells[id]
         end
-        return state_to_vector(res)
+        return res
     end |> NamedTuple{(:north, :south, :east, :west)}
 end
 
@@ -270,7 +281,10 @@ function expand_to_neighbors(left_idx, right_idx, axis_size)
     return (new_l, new_r), (left_idx, right_idx)
 end
 
-struct CellGridPartition{T,Q1<:Density,Q2<:MomentumDensity,Q3<:EnergyDensity}
+update_size(::Type{T}) where {T<:PrimalQuadCell} = 1
+update_size(::Type{T}) where {T<:TangentQuadCell} = 2
+
+struct CellGridPartition{T,U,V}
     id::Int
     # which slice of the global grid was copied into this partition?
     global_extent::NTuple{2,NTuple{2,Int}}
@@ -281,7 +295,28 @@ struct CellGridPartition{T,Q1<:Density,Q2<:MomentumDensity,Q3<:EnergyDensity}
     # what cell IDs were copied into this partition?
     cells_copied_ids::Array{Int,2}
     #TODO Switch to Dictionaries.jl? Peformance seems fine as of now.
-    cells_map::Dict{Int,RegularQuadCell{T,Q1,Q2,Q3}}
+    cells_map::Dict{Int,T}
+    cells_update::Dict{Int,NTuple{U,SVector{4,V}}}
+
+    function CellGridPartition(
+        id,
+        global_extent,
+        global_computation_indices,
+        computation_indices,
+        cells_copied_ids,
+        cells_map::Dict{Int,T},
+        cells_update,
+    ) where {T<:QuadCell}
+        return new{T,update_size(T),numeric_dtype(T)}(
+            id,
+            global_extent,
+            global_computation_indices,
+            computation_indices,
+            cells_copied_ids,
+            cells_map,
+            cells_update,
+        )
+    end
 end
 
 """
@@ -290,30 +325,28 @@ end
 
 Underlying numeric data type of this partition.
 """
-numeric_dtype(::CellGridPartition{T,Q1,Q2,Q3}) where {T,Q1,Q2,Q3} = T
-numeric_dtype(::Type{CellGridPartition{T,Q1,Q2,Q3}}) where {T,Q1,Q2,Q3} = T
+numeric_dtype(::CellGridPartition{T,U,V}) where {T,U,V} = numeric_dtype(T)
+numeric_dtype(::Type{CellGridPartition{T,U,V}}) where {T,U,V} = numeric_dtype(T)
 
-cell_type(::CellGridPartition{T,Q1,Q2,Q3}) where {T,Q1,Q2,Q3} = RegularQuadCell{T,Q1,Q2,Q3}
-function cell_type(::Type{CellGridPartition{T,Q1,Q2,Q3}}) where {T,Q1,Q2,Q3}
-    RegularQuadCell{T,Q1,Q2,Q3}
-end
+cell_type(::CellGridPartition{T,U,V}) where {T,U,V} = T
+cell_type(::Type{CellGridPartition{T,U,V}}) where {T,U,V} = T
 
 """
     cells_map_type(::CellGridPartition)
     cells_map_type(::Type{CellGridPartition})
 """
-function cells_map_type(cgp::CellGridPartition{T,Q1,Q2,Q3}) where {T,Q1,Q2,Q3}
-    return Dict{Int,cell_type(cgp)}
-end
-
-function cells_map_type(cgp_t::Type{CellGridPartition{T,Q1,Q2,Q3}}) where {T,Q1,Q2,Q3}
-    return Dict{Int,cell_type(cgp_t)}
-end
+cells_map_type(::CellGridPartition{T}) where {T} = Dict{Int,T}
+cells_map_type(::Type{CellGridPartition{T}}) where {T} = Dict{Int,T}
 
 # TODO if we want to move beyond a structured grid, we have to redo this method. I have no idea how to do this.
 # TODO how slow is this function? we may be wasting a lot of time partitioning that we don't recover by multithreading. Certainly memory use goes up.
 
-function partition_cell_list(global_active_cells, global_cell_ids, tasks_per_axis)
+function partition_cell_list(
+    global_active_cells,
+    global_cell_ids,
+    tasks_per_axis;
+    show_info = false,
+)
     # minimum partition size includes i - 1 and i + 1 neighbors
     grid_size = size(global_cell_ids)
     (all_part_x, all_part_y) = split_axis.(grid_size, tasks_per_axis)
@@ -323,16 +356,32 @@ function partition_cell_list(global_active_cells, global_cell_ids, tasks_per_axi
             # adust slice width...
             task_x, task_working_x = expand_to_neighbors(part_x..., grid_size[1])
             task_y, task_working_y = expand_to_neighbors(part_y..., grid_size[2])
+            if show_info
+                @info "Creating cell partition on grid ids..." id = id global_ids =
+                    (range(task_x...), range(task_y...)) compute_ids =
+                    (range(task_working_x...), range(task_working_y...))
+            end
             # cells copied for this task
+            # we want to copy this...?
             task_cell_ids = global_cell_ids[range(task_x...), range(task_y...)]
             # total number of cells this task has a copy of
-            task_cell_count = length(filter(>(0), task_cell_ids))
-            cell_ids_map = Dict{Int,valtype(global_active_cells)}()
+            task_cell_count = count(>(0), task_cell_ids)
+            cell_type = valtype(global_active_cells)
+            cell_ids_map = Dict{Int,cell_type}()
+            n_update_components = update_size(cell_type)
+            update_dtype = SVector{4,numeric_dtype(cell_type)}
+            cell_updates_map = Dict{Int,NTuple{n_update_components,update_dtype}}()
             sizehint!(cell_ids_map, task_cell_count)
+            sizehint!(cell_updates_map, task_cell_count)
             for i ∈ eachindex(task_cell_ids)
                 cell_id = task_cell_ids[i]
                 cell_id == 0 && continue
                 get!(cell_ids_map, cell_id, global_active_cells[cell_id])
+                get!(
+                    cell_updates_map,
+                    cell_id,
+                    ntuple(Returns(zeros(update_dtype)), n_update_components),
+                )
             end
             return CellGridPartition(
                 id,
@@ -341,6 +390,7 @@ function partition_cell_list(global_active_cells, global_cell_ids, tasks_per_axi
                 (task_working_x, task_working_y),
                 task_cell_ids,
                 cell_ids_map,
+                cell_updates_map,
             )
         end
     return res
@@ -363,72 +413,114 @@ function departition_cell_list(cell_partitions, global_cell_ids)
     return u_global
 end
 
-# accepts SVectors!
-function compute_cell_update(cell_data, neighbor_data, Δx, Δy, gas)
-    ifaces = (
-        north = (2, cell_data, neighbor_data.north),
-        south = (2, neighbor_data.south, cell_data),
-        east = (1, cell_data, neighbor_data.east),
-        west = (1, neighbor_data.west, cell_data),
-    )
-    maximum_signal_speed = mapreduce(max, ifaces) do (dim, uL, uR)
-        max(abs.(interface_signal_speeds(uL, uR, dim, gas))...)
-    end
-    ϕ = map(ifaces) do (dim, uL, uR)
-        ϕ_hll(uL, uR, dim, gas)
-    end
-    # we want to write this as u_next = u + Δt * diff
-    Δu = inv(Δx) * (ϕ.west - ϕ.east) + inv(Δy) * (ϕ.south - ϕ.north)
-    return (cell_speed = maximum_signal_speed, cell_Δu = Δu)
+function _iface_speed(iface::Tuple{Int,T,T}, gas) where {T<:QuadCell}
+    uL = state_to_vector(iface[2].u)
+    uR = state_to_vector(iface[3].u)
+    return max(abs.(interface_signal_speeds(uL, uR, iface[1], gas))...)
 end
 
-# allocates 7 times according to BenchmarkTools; likely Dict doing things.
-function compute_partition_update(
-    cell_partition::CellGridPartition{T,Q1,Q2,Q3},
-    boundary_conditions,
-    Δx,
-    Δy,
+function maximum_cell_signal_speeds(
+    interfaces::NamedTuple{(:north, :south, :east, :west)},
     gas::CaloricallyPerfectGas,
-) where {T,Q1,Q2,Q3}
+)
+    # doing this with map allocated?!
+    return SVector(
+        max(_iface_speed(interfaces.north, gas), _iface_speed(interfaces.south, gas)),
+        max(_iface_speed(interfaces.east, gas), _iface_speed(interfaces.west, gas)),
+    )
+end
+
+function compute_cell_update_and_max_Δt(
+    cell::PrimalQuadCell,
+    active_cells,
+    boundary_conditions,
+    gas,
+)
+    neighbors = neighbor_cells(cell, active_cells, boundary_conditions, gas)
+    ifaces = (
+        north = (2, cell, neighbors.north),
+        south = (2, neighbors.south, cell),
+        east = (1, cell, neighbors.east),
+        west = (1, neighbors.west, cell),
+    )
+    a = maximum_cell_signal_speeds(ifaces, gas)
+    Δt_max = min((cell.extent ./ a)...)
+
+    ϕ = map(ifaces) do (dim, cell_L, cell_R)
+        uL = state_to_vector(cell_L.u)
+        uR = state_to_vector(cell_R.u)
+        return ϕ_hll(uL, uR, dim, gas)
+    end
+
+    Δx = map(ifaces) do (dim, cell_L, cell_R)
+        (cell_L.extent[dim] + cell_R.extent[dim]) / 2
+    end
+
+    Δu = (
+        inv(Δx.west) * ϕ.west - inv(Δx.east) * ϕ.east + inv(Δx.south) * ϕ.south -
+        inv(Δx.north) * ϕ.north
+    )
+
+    return (Δt_max, Δu)
+end
+
+function compute_cell_update_and_max_Δt(
+    cell::TangentQuadCell,
+    active_cells,
+    boundary_conditions,
+    gas,
+)
+    neighbors = neighbor_cells(cell, active_cells, boundary_conditions, gas)
+    ifaces = (
+        north = (2, cell, neighbors.north),
+        south = (2, neighbors.south, cell),
+        east = (1, cell, neighbors.east),
+        west = (1, neighbors.west, cell),
+    )
+    a = maximum_cell_signal_speeds(ifaces, gas)
+    Δt_max = min((cell.extent ./ a)...)
+    ϕ = map(ifaces) do (dim, cell_L, cell_R)
+        uL = state_to_vector(cell_L.u)
+        uR = state_to_vector(cell_R.u)
+        return (ϕ_hll(uL, uR, dim, gas), ϕ_hll_jvp(uL, cell_L.u̇, uR, cell_R.u̇, dim, gas))
+    end
+
+    Δx = map(ifaces) do (dim, cell_L, cell_R)
+        (cell_L.extent[dim] + cell_R.extent[dim]) / 2
+    end
+
+    Δu = ntuple(2) do i
+        inv(Δx.west) * ϕ.west[i] - inv(Δx.east) * ϕ.east[i] + inv(Δx.south) * ϕ.south[i] - inv(Δx.north) * ϕ.north[i]
+    end
+
+    return (Δt_max, Δu)
+end
+
+# no longer allocates since we pre-allocate the update dict in the struct itself!
+function compute_partition_update_and_max_Δt!(
+    cell_partition::CellGridPartition{T},
+    boundary_conditions,
+    gas::CaloricallyPerfectGas,
+) where {T}
     computation_region = view(
         cell_partition.cells_copied_ids,
         range(cell_partition.computation_indices[1]...),
         range(cell_partition.computation_indices[2]...),
     )
-    maximum_wave_speed = zero(T)
-    Δu = Dict{Int64,SVector{4,T}}()
-    sizehint!(Δu, count(≠(0), computation_region))
+    Δt_max = typemax(numeric_dtype(T))
     for cell_id ∈ computation_region
         cell_id == 0 && continue
-        nbr_data = single_cell_neighbor_data(
-            cell_id,
+        cell_Δt_max, cell_Δu = compute_cell_update_and_max_Δt(
+            cell_partition.cells_map[cell_id],
             cell_partition.cells_map,
             boundary_conditions,
             gas,
         )
-        cell_data = state_to_vector(cell_partition.cells_map[cell_id].u)
-        ifaces = (
-            north = (2, cell_data, nbr_data.north),
-            south = (2, nbr_data.south, cell_data),
-            east = (1, cell_data, nbr_data.east),
-            west = (1, nbr_data.west, cell_data),
-        )
-        # maximum wave speed in this partition
-        maximum_wave_speed = max(
-            maximum_wave_speed,
-            mapreduce(max, ifaces) do (dim, uL, uR)
-                max(abs.(interface_signal_speeds(uL, uR, dim, gas))...)
-            end,
-        )
-        # flux through cell faces
-        ϕ = map(ifaces) do (dim, uL, uR)
-            ϕ_hll(uL, uR, dim, gas)
-        end
-        # we want to write this as u_next = u + Δt * diff
-        Δu_cell = inv(Δx) * (ϕ.west - ϕ.east) + inv(Δy) * (ϕ.south - ϕ.north)
-        get!(Δu, cell_id, Δu_cell)
+        Δt_max = min(Δt_max, cell_Δt_max)
+        get!(cell_partition.cells_update, cell_id, cell_Δu)
     end
-    return (a_max = maximum_wave_speed, Δu = Δu)
+
+    return Δt_max
 end
 
 """
@@ -441,9 +533,9 @@ to other partitions.
 Returns the number of cells updated.
 """
 function propagate_updates_to!(
-    dest::CellGridPartition{T,Q1,Q2,Q3},
-    src::CellGridPartition{T,R1,R2,R3},
-) where {T,Q1,Q2,Q3,R1,R2,R3}
+    dest::CellGridPartition{T},
+    src::CellGridPartition{T},
+) where {T}
     src_region = view(
         src.cells_copied_ids,
         range(src.computation_indices[1]...),
@@ -456,19 +548,35 @@ function propagate_updates_to!(
             dest.cells_map[src_region[idx]] = src.cells_map[src_region[idx]]
         end
     end
-    # @info "Propagated updates from... " src = src.id dest = dest.id shared_count = count
     return count
 end
 
-function apply_partition_update!(partition, Δt, Δu)
-    for (k, v) ∈ pairs(Δu)
-        partition.cells_map[k] = compute_next_u(partition.cells_map[k], Δt, v)
+function _update_cprops(u::ConservedProps{2,T}, Δu::SVector{4,T}, Δt) where {T}
+    # preserve units?
+    return convert(typeof(u), ConservedProps(state_to_vector(u) + Δt * Δu))
+end
+
+function apply_partition_update!(
+    partition::CellGridPartition{T,U,V},
+    Δt,
+) where {T<:PrimalQuadCell,U,V}
+    for (k, v) ∈ partition.cells_update
+        cell = partition.cells_map[k]
+        u_next = _update_cprops(cell.u, v[1], Δt)
+        partition.cells_map[k] = @set cell.u = u_next
+        partition.cells_update[k] = ntuple(Returns(zeros(SVector{4,V})), U)
     end
 end
 
-function compute_next_u(cell, Δt, Δu)
-    u_next = state_to_vector(cell.u) + Δt * Δu
-    RegularQuadCell(cell.id, cell.idx, cell.center, ConservedProps(u_next), cell.neighbors)
+function apply_partition_update!(
+    partition::CellGridPartition{T},
+    Δt,
+) where {T<:TangentQuadCell}
+    for (k, v) ∈ partition.cells_update
+        u_next = _update_cprops(partition.cells_map[k].u, v[1], Δt)
+        @reset partition.cells_map[k].u = u_next
+        @reset partition.cells_map[k].u̇ = partition.cells_map[k].u̇ + Δt * v[2]
+    end
 end
 
 function step_cell_simulation!(
@@ -476,8 +584,6 @@ function step_cell_simulation!(
     Δt_maximum,
     boundary_conditions,
     cfl_limit,
-    Δx,
-    Δy,
     gas::CaloricallyPerfectGas,
 )
     T = numeric_dtype(eltype(cell_partitions))
@@ -485,24 +591,31 @@ function step_cell_simulation!(
     compute_partition_update_tasks = map(cell_partitions) do cell_partition
         Threads.@spawn begin
             # not sure what to interpolate here
-            compute_partition_update(cell_partition, $boundary_conditions, Δx, Δy, $gas)
+            compute_partition_update_and_max_Δt!(cell_partition, $boundary_conditions, $gas)
         end
     end
-    result_dtype = @NamedTuple{a_max::T, Δu::Dict{Int64,SVector{4,T}}}
-    partition_updates::Array{result_dtype,length(size(compute_partition_update_tasks))} =
+    partition_max_Δts::Array{T,length(size(compute_partition_update_tasks))} =
         fetch.(compute_partition_update_tasks)
     # find Δt
-    a_max = mapreduce(el -> el.a_max, max, partition_updates)
-    Δt = min(Δt_maximum, cfl_limit * min(Δx, Δy) / a_max)
+    Δt = mapreduce(min, partition_max_Δts; init = Δt_maximum) do val
+        cfl_limit * val
+    end
     # apply update, does this really need to be threaded?
-    Threads.@threads for p_idx ∈ eachindex(cell_partitions, partition_updates)
-        apply_partition_update!(cell_partitions[p_idx], Δt, partition_updates[p_idx].Δu)
+    
+    for p_idx ∈ eachindex(cell_partitions)
         # propagate updates to other partitions
         for dest_idx ∈ eachindex(cell_partitions)
             dest_idx == p_idx && continue
-            propagate_updates_to!(cell_partitions[dest_idx], cell_partitions[p_idx])
+            propagate_updates_to!(cell_partitions[dest_idx], cell_partitions[dest_idx])
         end
     end
+
+    update_tasks = map(cell_partitions) do p
+        Threads.@spawn begin
+            apply_partition_update!(p, Δt)
+        end
+    end
+    wait.(update_tasks)
 
     return Δt
 end
@@ -539,7 +652,7 @@ struct CellBasedEulerSim{T,Q1,Q2,Q3}
     bounds::NTuple{2,Tuple{T,T}}
     tsteps::Vector{T}
     cell_ids::Array{Int,2}
-    cells::Array{Dict{Int64,RegularQuadCell{T,Q1,Q2,Q3}},1}
+    cells::Array{Dict{Int64,PrimalQuadCell{T,Q1,Q2,Q3}},1}
 end
 
 n_space_dims(::CellBasedEulerSim) = 2
@@ -740,10 +853,6 @@ function simulate_euler_equations_cells(
     T_end > 0 && DomainError("T_end = $T_end invalid, T_end must be positive")
     0 < cfl_limit < 1 || @warn "CFL invalid, must be between 0 and 1 for stabilty" cfl_limit
 
-    cell_ifaces = [range(b...; length = n + 1) for (b, n) ∈ zip(bounds, ncells)]
-    cell_centers = [ax[1:end-1] .+ step(ax) / 2 for ax ∈ cell_ifaces]
-    dV = step.(cell_centers)
-
     global_cells, global_cell_ids = quadcell_list_and_id_grid(u0, bounds, ncells, obstacles)
     cell_partitions = partition_cell_list(global_cells, global_cell_ids, tasks_per_axis)
     show_info &&
@@ -801,7 +910,6 @@ function simulate_euler_equations_cells(
             T_end - t,
             boundary_conditions,
             cfl_limit,
-            dV...,
             gas,
         )
         if show_info && ((n_tsteps - 1) % info_frequency == 0)
@@ -888,7 +996,7 @@ function load_cell_sim(
         typeof.(
             one(T) .* (density_unit, momentum_density_unit, internal_energy_density_unit)
         )
-    CellDType = RegularQuadCell{T,U...}
+    CellDType = PrimalQuadCell{T,U...}
     return open(path, "r") do f
         n_tsteps = read(f, Int)
         n_active = read(f, Int)

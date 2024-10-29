@@ -5,10 +5,9 @@ using ShockwaveProperties
 using StaticArrays
 
 using Euler2D: active_cell_mask, active_cell_ids_from_mask, cell_neighbor_status
-using Euler2D: quadcell_list_and_id_grid, phantom_neighbor, single_cell_neighbor_data, split_axis, partition_cell_list, expand_to_neighbors
-using Euler2D: compute_cell_update, compute_partition_update, compute_next_u, apply_partition_update!
+using Euler2D: quadcell_list_and_id_grid, phantom_neighbor, neighbor_cells, split_axis, partition_cell_list, expand_to_neighbors
+using Euler2D: compute_cell_update_and_max_Δt, compute_partition_update_and_max_Δt!, apply_partition_update!
 using Euler2D: step_cell_simulation!
-
 
 function launder_units(pp)
     c1 = ConservedProps(pp, DRY_AIR)
@@ -29,22 +28,36 @@ bcs = (
 )
 bounds = ((-4.0, 4.0), (-4.0, 4.0))
 obstacle = [CircularObstacle((0.0, 0.0), 0.75)]
-ncells = (500, 500)
+ncells = (800, 800)
 active_cells, active_ids = quadcell_list_and_id_grid(bounds, ncells, obstacle) do (x, y)
     x <= 0 ? ambient : amb2
 end;
 
-test_partition = partition_cell_list(active_cells, active_ids, 1);
+test_partition = partition_cell_list(active_cells, active_ids, 4);
 ##
 
-ndata = single_cell_neighbor_data(2, active_cells, bcs, DRY_AIR)
-@benchmark single_cell_neighbor_data(1, $active_cells, $bcs, $DRY_AIR)
+cell1 = active_cells[1]
+@benchmark phantom_neighbor($cell1, :north, $(bcs[1]), DRY_AIR)
+@benchmark neighbor_cells($cell1, $active_cells, $bcs, $DRY_AIR)
 
-pndata = phantom_neighbor(1, active_cells, :south, ExtrapolateToPhantom(), DRY_AIR)
-@benchmark phantom_neighbor(1, $active_cells, :north, ExtrapolateToPhantom(), DRY_AIR)
+##
 
-# @benchmark compute_cell_update($cdata, $ndata, 0.01, 0.01, DRY_AIR)
+@code_warntype compute_cell_update_and_max_Δt(cell1, active_cells, bcs, DRY_AIR)
+nbrs = neighbor_cells(cell1, active_cells, bcs, DRY_AIR)
+f(cell, neighbors) = begin
+    ifaces = (
+        north = (2, cell, neighbors.north),
+        south = (2, neighbors.south, cell),
+        east = (1, cell, neighbors.east),
+        west = (1, neighbors.west, cell),
+    )
+    return ifaces
+end
+ifaces1 = f(cell1, nbrs)
+@benchmark Euler2D._iface_speed($(ifaces1[1]), $DRY_AIR)
+@benchmark Euler2D.maximum_cell_signal_speeds($ifaces1, $DRY_AIR)
+@benchmark compute_cell_update_and_max_Δt($cell1, $active_cells, $bcs, $DRY_AIR)
+@benchmark compute_partition_update_and_max_Δt!($(test_partition[1]), $bcs, $DRY_AIR)
 
-ndata2 = map(state_to_vector, ndata)
-compute_cell_update(state_to_vector(active_cells[2].u), ndata2, 0.01, 0.01, DRY_AIR)
-@benchmark compute_cell_update($(state_to_vector(active_cells[2].u)), $ndata2, 0.01, 0.01, DRY_AIR)
+@code_warntype step_cell_simulation!(test_partition, 0.1, bcs, 0.8, DRY_AIR)
+@benchmark step_cell_simulation!($test_partition, 0.1, $bcs, 0.8, $DRY_AIR)

@@ -1,4 +1,8 @@
 n_space_dims(::ConservedProps{N,T,U1,U2,U3}) where {N,T,U1,U2,U3} = N
+quantity_types(::ConservedProps{N,T,U1,U2,U3}) where {N,T,U1,U2,U3} = (U1, U2, U3)
+quantity_types(::Type{ConservedProps{N,T,U1,U2,U3}}) where {N,T,U1,U2,U3} = (U1, U2, U3)
+numeric_dtype(::ConservedProps{N,T,U1,U2,U3}) where {N,T,U1,U2,U3} = T
+numeric_dtype(::Type{ConservedProps{N,T,U1,U2,U3}}) where {N,T,U1,U2,U3} = T
 
 u_array_space_dims(::AbstractArray{T,N}) where {T,N} = N - 1
 u_array_space_size(u::AbstractArray{T,N}) where {T,N} = size(u)[2:end]
@@ -28,9 +32,9 @@ function split_svector(v)
     N = length(v) ÷ 2
     M = length(v)
     v1, v2 = @inbounds begin
-        (SVector{N}(@view v[1:N]), SVector{M-N}(@view v[N+1:M]))
+        (SVector{N}(@view v[1:N]), SVector{M - N}(@view v[N+1:M]))
     end
-    return v1,v2
+    return v1, v2
 end
 
 """

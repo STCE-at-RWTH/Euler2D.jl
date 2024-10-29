@@ -17,8 +17,8 @@ bc_fix = FixedPhantomOutside(ambient)
 bcs = (
     ExtrapolateToPhantom(), # north 
     ExtrapolateToPhantom(), # south
-    ExtrapolateToPhantom(), # east
-    bc_fix, # west
+    bc_right, # east
+    ExtrapolateToPhantom(), # west
     StrongWall(), # walls
 )
 bounds = ((-2.0, 0.0), (-1.5, 1.5))
@@ -36,9 +36,9 @@ Euler2D.simulate_euler_equations_cells(
     bounds,
     ncells;
     gas = DRY_AIR,
-    info_frequency = 10,
+    info_frequency = 1,
     write_frequency = 40,
-    max_tsteps = 2000,
+    max_tsteps = 10,
     output_tag = "circular_obstacle_radius_1",
     tasks_per_axis = 4,
 ) do (x, y)
