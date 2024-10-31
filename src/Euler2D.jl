@@ -10,7 +10,6 @@ end Euler2D
 using Base.Threads: nthreads, @spawn
 
 using Accessors
-using AllocCheck
 using ForwardDiff
 using LinearAlgebra
 using Tullio
@@ -28,7 +27,8 @@ include("riemann_problem.jl")
 include("array_simulations/fvm.jl")
 include("array_simulations/array_simulations.jl")
 include("cell_simulations/obstacle.jl")
-include("cell_simulations/cell_simulations.jl")
+include("cell_simulations/grid.jl")
+include("cell_simulations/simulations.jl")
 
 # methods
 export F_euler
