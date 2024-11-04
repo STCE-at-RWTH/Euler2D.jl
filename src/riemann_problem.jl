@@ -116,7 +116,7 @@ function ϕ_hll_jvp(uL, u̇L, uR, u̇R, dim, gas::CaloricallyPerfectGas)
     # TODO how to seed values into ForwardDiff? We shouldn't have to create and multiply a matrix here.
     #   Although, multiplying a 4×8 matrix by an 8×1 vector shouldn't be too bad
     J = ForwardDiff.jacobian(u_arg) do u
-        v1, v2 = split_svector(u_arg)
+        v1, v2 = split_svector(u)
         return ϕ_hll(v1, v2, dim, gas)
     end
     return J * vcat(u̇L, u̇R)

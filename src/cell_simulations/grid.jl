@@ -282,10 +282,12 @@ function expand_to_neighbors(left_idx, right_idx, axis_size)
     return (new_l, new_r), (left_idx, right_idx)
 end
 
-update_size(::Type{T}) where {T<:PrimalQuadCell} = 1
-update_size(::Type{T}) where {T<:TangentQuadCell} = 2
+update_dtype(::Type{T}) where {T<:PrimalQuadCell} = SVector{4, numeric_dtype(T)}
+function update_dtype(::Type{TangentQuadCell{T, N}}) 
+    return (SVector{4, T}, SMatrix{4, N, T})
+end
 
-struct CellGridPartition{T,U,V}
+struct CellGridPartition{T,U}
     id::Int
     # which slice of the global grid was copied into this partition?
     global_extent::NTuple{2,NTuple{2,Int}}
@@ -297,7 +299,7 @@ struct CellGridPartition{T,U,V}
     cells_copied_ids::Array{Int,2}
     #TODO Switch to Dictionaries.jl? Peformance seems fine as of now.
     cells_map::Dict{Int,T}
-    cells_update::Dict{Int,NTuple{U,SVector{4,V}}}
+    cells_update::Dict{Int,NTuple{U}}
 
     function CellGridPartition(
         id,
@@ -308,7 +310,7 @@ struct CellGridPartition{T,U,V}
         cells_map::Dict{Int,T},
         cells_update,
     ) where {T<:QuadCell}
-        return new{T,update_size(T),numeric_dtype(T)}(
+        return new{T,update_dtype(T)}(
             id,
             global_extent,
             global_computation_indices,
@@ -326,11 +328,11 @@ end
 
 Underlying numeric data type of this partition.
 """
-numeric_dtype(::CellGridPartition{T,U,V}) where {T,U,V} = numeric_dtype(T)
-numeric_dtype(::Type{CellGridPartition{T,U,V}}) where {T,U,V} = numeric_dtype(T)
+numeric_dtype(::CellGridPartition{T,U}) where {T,U} = numeric_dtype(T)
+numeric_dtype(::Type{CellGridPartition{T,U}}) where {T,U} = numeric_dtype(T)
 
-cell_type(::CellGridPartition{T,U,V}) where {T,U,V} = T
-cell_type(::Type{CellGridPartition{T,U,V}}) where {T,U,V} = T
+cell_type(::CellGridPartition{T,U}) where {T,U} = T
+cell_type(::Type{CellGridPartition{T,U}}) where {T,U} = T
 
 """
     cells_map_type(::CellGridPartition)

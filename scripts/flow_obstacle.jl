@@ -36,11 +36,28 @@ Euler2D.simulate_euler_equations_cells(
     bounds,
     ncells;
     gas = DRY_AIR,
-    info_frequency = 1,
-    write_frequency = 2,
-    max_tsteps = 10,
+    info_frequency = 10,
+    write_frequency = 25,
+    max_tsteps = 5000,
     output_tag = "circular_obstacle_radius_1",
     tasks_per_axis = 2,
+) do (x, y)
+    ambient
+end;
+
+
+Euler2D.simulate_euler_equations_cells(
+    0.25,
+    bcs,
+    just_circle,
+    bounds,
+    2 .* ncells;
+    gas = DRY_AIR,
+    info_frequency = 10,
+    write_frequency = 50,
+    max_tsteps = 10000,
+    output_tag = "circular_obstacle_double_resolution",
+    tasks_per_axis = 4,
 ) do (x, y)
     ambient
 end;
