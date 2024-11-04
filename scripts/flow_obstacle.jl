@@ -3,6 +3,9 @@ using LinearAlgebra
 using ShockwaveProperties
 using StaticArrays
 
+# the Unitful package likes to come up with wacky units that are dimensionally equivalent to standard metric ones
+# this just "launders" these creative ones back to metric base units
+# TODO make sure promoting unitful state types between each other works out.
 function launder_units(pp)
     c1 = ConservedProps(pp, DRY_AIR)
     v1 = state_to_vector(c1)
@@ -10,7 +13,6 @@ function launder_units(pp)
 end
 
 ambient = launder_units(PrimitiveProps(0.662, (4.0, 0.0), 220.0))
-amb2 = launder_units(PrimitiveProps(0.662, (0.0, 0.0), 220.0))
 
 bc_right = SupersonicInflow(ambient, DRY_AIR)
 bc_fix = FixedPhantomOutside(ambient)
@@ -23,8 +25,10 @@ bcs = (
 )
 bounds = ((-2.0, 0.0), (-1.5, 1.5))
 just_circle = [CircularObstacle((0.0, 0.0), 0.75)]
-just_triangle = [TriangularObstacle((-0.75, 0.0), (1.0, 1.0), (1.0, -1.0))]
-just_square = [RectangularObstacle(SVector(0., 0.), SVector(0.5, 0.5))]
+
+# adjust this parameter if you want to change the resolution
+#   75 x 150 also gives reasonable results
+#   400 x 600 generates a real good picture
 ncells = (200,300)
 
 ##
@@ -36,41 +40,11 @@ Euler2D.simulate_euler_equations_cells(
     bounds,
     ncells;
     gas = DRY_AIR,
-    info_frequency = 1,
-    write_frequency = 2,
-    max_tsteps = 10,
+    info_frequency = 10,
+    write_frequency = 5,
+    max_tsteps = 1000,
     output_tag = "circular_obstacle_radius_1",
     tasks_per_axis = 2,
-) do (x, y)
-    ambient
-end;
-
-Euler2D.simulate_euler_equations_cells(
-    0.1,
-    bcs,
-    just_triangle,
-    bounds,
-    ncells;
-    gas = DRY_AIR,
-    info_frequency = 10,
-    write_frequency = 20,
-    max_tsteps = 200,
-    output_tag = "funky_triangle",
-) do (x, y)
-    ambient
-end;
-
-Euler2D.simulate_euler_equations_cells(
-    0.1,
-    bcs,
-    just_square,
-    bounds,
-    ncells;
-    gas = DRY_AIR,
-    info_frequency = 10,
-    write_frequency = 40,
-    max_tsteps = 2000,
-    output_tag = "funky_square",
 ) do (x, y)
     ambient
 end;
