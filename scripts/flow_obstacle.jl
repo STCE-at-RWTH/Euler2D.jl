@@ -25,69 +25,23 @@ bounds = ((-2.0, 0.0), (-1.5, 1.5))
 just_circle = [CircularObstacle((0.0, 0.0), 0.75)]
 just_triangle = [TriangularObstacle((-0.75, 0.0), (1.0, 1.0), (1.0, -1.0))]
 just_square = [RectangularObstacle(SVector(0., 0.), SVector(0.5, 0.5))]
-ncells = (200,300)
+ncells = (300,450)
 
 ##
 
 Euler2D.simulate_euler_equations_cells(
-    0.25,
+    1.0,
     bcs,
     just_circle,
     bounds,
     ncells;
     gas = DRY_AIR,
-    info_frequency = 10,
-    write_frequency = 25,
-    max_tsteps = 5000,
-    output_tag = "circular_obstacle_radius_1",
-    tasks_per_axis = 2,
-) do (x, y)
-    ambient
-end;
-
-
-Euler2D.simulate_euler_equations_cells(
-    0.25,
-    bcs,
-    just_circle,
-    bounds,
-    2 .* ncells;
-    gas = DRY_AIR,
-    info_frequency = 10,
-    write_frequency = 50,
-    max_tsteps = 10000,
-    output_tag = "circular_obstacle_double_resolution",
+    info_frequency = 25,
+    write_frequency = 100,
+    max_tsteps = 25000,
+    output_tag = "circular_obstacle_longtime",
+    output_channel_size = 2,
     tasks_per_axis = 4,
-) do (x, y)
-    ambient
-end;
-
-Euler2D.simulate_euler_equations_cells(
-    0.1,
-    bcs,
-    just_triangle,
-    bounds,
-    ncells;
-    gas = DRY_AIR,
-    info_frequency = 10,
-    write_frequency = 20,
-    max_tsteps = 200,
-    output_tag = "funky_triangle",
-) do (x, y)
-    ambient
-end;
-
-Euler2D.simulate_euler_equations_cells(
-    0.1,
-    bcs,
-    just_square,
-    bounds,
-    ncells;
-    gas = DRY_AIR,
-    info_frequency = 10,
-    write_frequency = 40,
-    max_tsteps = 2000,
-    output_tag = "funky_square",
 ) do (x, y)
     ambient
 end;

@@ -67,3 +67,14 @@ end
 function merge_named_tuples(nt1::NamedTuple{NAMES}, nts::NamedTuple{NAMES}...) where {NAMES}
     return merge_named_tuples(merge_named_tuples(nt1, nts[1]), nts[2:end]...)
 end
+
+function _prepend_names(nt::NamedTuple{NAMES}) where {NAMES}
+    new_values = ntuple(length(NAMES)) do i
+        (NAMES[i], nt[NAMES[i]])
+    end
+    return NamedTuple{NAMES}(new_values)
+end
+
+# named constants
+const _dirs_bc_is_reversed = (north = true, south = false, east = false, west = true)
+const _dirs_dim = (north = 2, south = 2, east = 1, west = 1)

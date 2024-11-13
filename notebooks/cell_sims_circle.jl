@@ -30,7 +30,7 @@ begin
 end
 
 # ╔═╡ 1b1c0430-bacf-454a-a0bf-b00c7b723b48
-esim = load_cell_sim("../data/circular_obstacle_radius_1.celltape")
+esim = load_cell_sim("../data/circular_obstacle_longtime.celltape")
 
 # ╔═╡ 01380877-d1cb-4ac7-ad08-8c8c57d95dcc
 count(≠(0), esim.cell_ids)
@@ -83,6 +83,16 @@ plot_scalar_field(esim, i_esim, "Mach Number") do esim, n
 	mapslices(mf, dims=(1,)) do m
 		any(isnothing.(m)) ? 0. : norm(m)
 	end
+end
+
+# ╔═╡ 61fed571-73fa-44b3-9c9d-360fee0a26d6
+begin
+	mf = mach_number_field(esim, i_esim, DRY_AIR)
+	is_supersonic = reshape(mapslices(mf, dims=1) do m
+		return !(any(isnothing, m) || norm(m) > 1.0)
+	end, size(mf)[2:end])
+	
+	heatmap(cell_centers(esim)..., is_supersonic', aspect_ratio=:equal, xlims=(-2, 0), ylims=(-1.5, 1.5))
 end
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
@@ -1442,8 +1452,9 @@ version = "1.4.1+1"
 # ╠═89f497a5-2e05-44b5-a947-f3fcc31094ff
 # ╠═35061132-50bf-4dd8-8178-ddf25a78b2f6
 # ╠═14085c9d-f7fa-42e8-a50d-027751243bec
-# ╠═55c06a26-bc2e-45f4-bb6f-68e1f000aa57
 # ╠═5190ba18-858a-4937-bc98-adddd8e110f8
 # ╠═7e55f0d8-86ba-4f21-8121-b9d3a8d89c80
+# ╟─61fed571-73fa-44b3-9c9d-360fee0a26d6
+# ╠═55c06a26-bc2e-45f4-bb6f-68e1f000aa57
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

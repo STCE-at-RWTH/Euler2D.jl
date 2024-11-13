@@ -232,7 +232,7 @@ function simulate_euler_equations_cells(
     T_end > 0 && DomainError("T_end = $T_end invalid, T_end must be positive")
     0 < cfl_limit < 1 || @warn "CFL invalid, must be between 0 and 1 for stabilty" cfl_limit
     cell_ifaces = [range(b...; length = n + 1) for (b, n) ∈ zip(bounds, ncells)]
-    global_cells, global_cell_ids = quadcell_list_and_id_grid(u0, bounds, ncells, obstacles)
+    global_cells, global_cell_ids = primal_quadcell_list_and_id_grid(u0, bounds, ncells, obstacles)
     cell_partitions = partition_cell_list(global_cells, global_cell_ids, tasks_per_axis)
     show_info &&
         @info "Simulation starting information " ncells = length(global_cells) npartitions =
