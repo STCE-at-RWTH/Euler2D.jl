@@ -46,10 +46,10 @@ function roe_parameter_vector(u::ConservedProps, gas::CaloricallyPerfectGas)
     ) / sqrt(ustrip(ShockwaveProperties._units_ρ, density(u)))
 end
 
-function roe_parameter_vector(u, gas::CaloricallyPerfectGas)
-    ρv = select_middle(u)
-    ρH = ustrip(total_enthalpy_density(u[1], ρv, u[end], gas))
-    return vcat_ρ_ρv_ρE_preserve_static(u[1], ρv, ρH) / sqrt(u[1])
+function roe_parameter_vector(u::SVector{N,T}, gas::CaloricallyPerfectGas) where {N,T}
+    ρH = dimensionless_total_enthalpy_density(u, gas)
+    w = setindex(u, ρH, N) / sqrt(u[1])
+    return w
 end
 
 """
