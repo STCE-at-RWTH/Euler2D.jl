@@ -568,7 +568,7 @@ function active_cell_mask(cell_centers_x, cell_centers_y, obstacles)
     end
 end
 
-function active_cell_ids_from_mask(active_mask)
+function active_cell_ids_from_mask(active_mask)::Array{Int, 2}
     cell_ids = zeros(Int, size(active_mask))
     live_count = 0
     for i ∈ eachindex(IndexLinear(), active_mask, cell_ids)
@@ -612,17 +612,21 @@ end
 Computes a collection of active cells and their locations in a grid determined by `bounds` and `ncells`.
 `Obstacles` can be placed into the simulation grid.
 """
-function primal_quadcell_list_and_id_grid(u0, bounds, ncells, scaling, obstacles)
+function primal_quadcell_list_and_id_grid(u0, params, bounds, ncells, scaling, obstacles)
     centers = map(zip(bounds, ncells)) do (b, n)
         v = range(b...; length = n + 1)
         return v[1:end-1] .+ step(v) / 2
     end
     extent = SVector{2}(step.(centers)...)
+    pts = Iterators.product(centers...)
 
     # u0 is probably cheap, right?
-    u0_grid = map(Iterators.product(centers...)) do x
-        nondimensionalize(u0(x), scaling)
-    end
+    _u0_func(x) = nondimensionalize(u0(x, params), scaling)
+    u0_type = typeof(_u0_func(first(pts)))
+    T = eltype(u0_type)
+    @show T
+
+    u0_grid = map(_u0_func, pts)
     active_mask = active_cell_mask(centers..., obstacles)
     active_ids = active_cell_ids_from_mask(active_mask)
     @assert sum(active_mask) == last(active_ids)
@@ -653,8 +657,7 @@ function tangent_quadcell_list_and_id_grid(
     bounds,
     ncells,
     scaling,
-    obstacles;
-    seeds = I,
+    obstacles
 )
     centers = map(zip(bounds, ncells)) do (b, n)
         v = range(b...; length = n + 1)
@@ -669,12 +672,13 @@ function tangent_quadcell_list_and_id_grid(
         J = ForwardDiff.jacobian(params) do p
             nondimensionalize(u0(x, p), scaling)
         end
-        return J * seeds
+        return J * I
     end
 
     u0_type = typeof(_u0_func(first(pts)))
     T = eltype(u0_type)
     u̇0_type = typeof(_u̇0_func(first(pts)))
+
     NSEEDS = ncols_smatrix(u̇0_type)
     @show T, NSEEDS
 

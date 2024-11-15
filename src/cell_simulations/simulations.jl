@@ -256,7 +256,8 @@ The simulation can be written to disk.
 
 Arguments
 ---
-- `u0`: ``u(t=0, x, y):ℝ^2↦ConservedProps{2, T, ...}``: conditions at time `t=0`.
+- `u0`: ``u(t=0, x, p):ℝ^2×ℝ^{n_p}↦ConservedProps{2, T, ...}``: conditions at time `t=0`.
+- `params`: Parameter vector for `u0`.
 - `T_end`: Must be greater than zero.
 - `boundary_conditions`: a tuple of boundary conditions for each space dimension
 - `obstacles`: list of obstacles in the flow.
@@ -265,6 +266,7 @@ Arguments
 
 Keyword Arguments
 ---
+- `mode::Symbol = :primal`: `:primal` or `:tangent` 
 - `gas::CaloricallyPerfectGas = DRY_AIR`: The fluid to be simulated.
 - `scale::EulerEqnsScaling = _SI_DEFAULT_SCALE`: A set of non-dimensionalization parameters.
 - `cfl_limit = 0.75`: The CFL condition to apply to `Δt`. Between zero and one, default `0.75`.
@@ -280,11 +282,13 @@ Keyword Arguments
 """
 function simulate_euler_equations_cells(
     u0,
+    params,
     T_end,
     boundary_conditions,
     obstacles,
     bounds,
     ncells;
+    mode = :primal,
     gas::CaloricallyPerfectGas = DRY_AIR,
     scale::EulerEqnsScaling = _SI_DEFAULT_SCALE,
     cfl_limit = 0.75,
@@ -306,8 +310,11 @@ function simulate_euler_equations_cells(
     T_end > 0 && DomainError("T_end = $T_end invalid, T_end must be positive")
     0 < cfl_limit < 1 || @warn "CFL invalid, must be between 0 and 1 for stabilty" cfl_limit
     cell_ifaces = [range(b...; length = n + 1) for (b, n) ∈ zip(bounds, ncells)]
-    global_cells, global_cell_ids =
-        primal_quadcell_list_and_id_grid(u0, bounds, ncells, scale, obstacles)
+    global_cells, global_cell_ids = if mode == :primal
+        primal_quadcell_list_and_id_grid(u0, params, bounds, ncells, scale, obstacles)
+    else
+        tangent_quadcell_list_and_id_grid(u0, params, bounds, ncells, scale, obstacles)
+    end
     cell_partitions = partition_cell_list(global_cells, global_cell_ids, tasks_per_axis)
     wall_clock_start_time = Dates.now()
     previous_tstep_wall_clock = wall_clock_start_time
@@ -374,7 +381,8 @@ function simulate_euler_equations_cells(
         if show_info && ((n_tsteps - 1) % info_frequency == 0)
             d = current_tstep_wall_clock - previous_tstep_wall_clock
             avg_duration = (current_tstep_wall_clock - wall_clock_start_time) ÷ n_tsteps
-            @info "Time step $n_tsteps (duration $d, avg. $avg_duration)" t_k = t Δt t_next = t + Δt
+            @info "Time step $n_tsteps (duration $d, avg. $avg_duration)" t_k = t Δt t_next =
+                t + Δt
         end
         previous_tstep_wall_clock = current_tstep_wall_clock
         n_tsteps += 1
@@ -446,19 +454,7 @@ Other kwargs include:
 - `momentum_density_unit = ShockwaveProperties._units_ρv`
 - `internal_energy_density_unit = ShockwaveProperties._units_ρE`
 """
-function load_cell_sim(
-    path;
-    T = Float64,
-    density_unit = ShockwaveProperties._units_ρ,
-    momentum_density_unit = ShockwaveProperties._units_ρv,
-    internal_energy_density_unit = ShockwaveProperties._units_ρE,
-    show_info = true,
-)
-    U =
-        typeof.(
-            one(T) .* (density_unit, momentum_density_unit, internal_energy_density_unit)
-        )
-    CellDType = PrimalQuadCell{T,U...}
+function load_cell_sim(path; T = Float64, show_info = true)
     return open(path, "r") do f
         n_tsteps = read(f, Int)
         n_active = read(f, Int)

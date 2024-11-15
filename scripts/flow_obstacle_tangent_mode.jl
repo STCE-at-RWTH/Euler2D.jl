@@ -1,61 +1,38 @@
+using BenchmarkTools
 using Euler2D
+using Euler2D: tangent_quadcell_list_and_id_grid, primal_quadcell_list_and_id_grid
+using ForwardDiff
 using LinearAlgebra
 using ShockwaveProperties
 using StaticArrays
+using Unitful
 
-function launder_units(pp)
-    c1 = ConservedProps(pp, DRY_AIR)
-    v1 = state_to_vector(c1)
-    return ConservedProps(v1)
-end
+##
 
-ambient = launder_units(PrimitiveProps(0.662, (4.0, 0.0), 220.0))
-amb2 = launder_units(PrimitiveProps(0.662, (0.0, 0.0), 220.0))
-
-bc_right = SupersonicInflow(ambient, DRY_AIR)
-bc_fix = FixedPhantomOutside(ambient)
 bcs = (
     ExtrapolateToPhantom(), # north 
     ExtrapolateToPhantom(), # south
-    bc_right, # east
+    ExtrapolateToPhantom(), # east
     ExtrapolateToPhantom(), # west
     StrongWall(), # walls
 )
 bounds = ((-2.0, 0.0), (-1.5, 1.5))
 just_circle = [CircularObstacle((0.0, 0.0), 0.75)]
-ncells = (50,75)
+ncells = (50, 75)
 
-function u0(x, y, params)
-    pp = PrimitiveProps(params[1], (params[2], params[3]), params[4])
-    return launder_units(pp)
+starting_parameters = SVector(0.662, 4.0, 0.0, 220.0)
+
+function u0(x, p)
+    pp = PrimitiveProps(p[1], SVector(p[2], p[3]), p[4])
+    return ConservedProps(pp, DRY_AIR)
 end
 
-function seeds(x, y, params)
+ambient = u0(nothing, starting_parameters)
 
-end
+x0 = 1.0u"m"
+a0 = speed_of_sound(ambient, DRY_AIR)
+ρ0 = density(ambient)
+scale = EulerEqnsScaling(x0, ρ0, a0)
 
-## TODO try nondimensionalizing? we don't really seem to be gaining any benefit and AD is much easier
-## when non-dimensionalized
-## Then we can just work with SVectors rather than ConservedProps... even though we'd really like to keep
-## the security that dimensionful quantities offer, this really isn't working out.
-## shouldn't be too hard to fix in the flux funciton...
-## https://en.wikipedia.org/wiki/Cauchy_momentum_equation#Nondimensionalisation 
+global_cells, global_ids = tangent_quadcell_list_and_id_grid(u0, starting_parameters, bounds, ncells, scale, just_circle)
 
-##
-
-# Euler2D.simulate_euler_equations_cells(
-#     0.25,
-#     bcs,
-#     just_circle,
-#     bounds,
-#     ncells;
-#     gas = DRY_AIR,
-#     info_frequency = 25,
-#     write_frequency = 100,
-#     max_tsteps = 25000,
-#     output_tag = "circular_obstacle_with_tangents",
-#     output_channel_size = 2,
-#     tasks_per_axis = 4,
-# ) do (x, y)
-#     ambient
-# end;
