@@ -49,7 +49,7 @@ struct PrimalQuadCell{T} <: QuadCell
     idx::CartesianIndex{2}
     center::SVector{2,T}
     extent::SVector{2,T}
-    u::SVector{4, T}
+    u::SVector{4,T}
     # either (:boundary, :cell)
     # and then the ID of the appropriate boundary
     neighbors::NamedTuple{
@@ -73,13 +73,12 @@ Fields
  - `u̇`: What are the cell-averaged pushforwards in this cell?
  - `neighbors`: What are this cell's neighbors?
 """
-struct TangentQuadCell{T,NSEEDS} <:
-       QuadCell
+struct TangentQuadCell{T,NSEEDS} <: QuadCell
     id::Int
     idx::CartesianIndex{2}
     center::SVector{2,T}
     extent::SVector{2,T}
-    u::SVector{4, T}
+    u::SVector{4,T}
     u̇::SMatrix{4,NSEEDS,T}
     neighbors::NamedTuple{
         (:north, :south, :east, :west),
@@ -100,7 +99,7 @@ end
     """ numeric_dtype
 
 update_dtype(::Type{T}) where {T<:PrimalQuadCell} = Tuple{SVector{4,numeric_dtype(T)}}
-function update_dtype(::Type{TangentQuadCell{T,N}}) where {T, N}
+function update_dtype(::Type{TangentQuadCell{T,N}}) where {T,N}
     return Tuple{SVector{4,T},SMatrix{4,N,T}}
 end
 
@@ -351,9 +350,7 @@ function collect_cell_partitions(cell_partitions, global_cell_ids)
 end
 
 function _iface_speed(iface::Tuple{Int,T,T}, gas) where {T<:QuadCell}
-    uL = state_to_vector(iface[2].u)
-    uR = state_to_vector(iface[3].u)
-    return max(abs.(interface_signal_speeds(uL, uR, iface[1], gas))...)
+    return max(abs.(interface_signal_speeds(iface[2].u, iface[3].u, iface[1], gas))...)
 end
 
 function maximum_cell_signal_speeds(
@@ -384,9 +381,7 @@ function compute_cell_update_and_max_Δt(
     Δt_max = min((cell.extent ./ a)...)
 
     ϕ = map(ifaces) do (dim, cell_L, cell_R)
-        uL = state_to_vector(cell_L.u)
-        uR = state_to_vector(cell_R.u)
-        return ϕ_hll(uL, uR, dim, gas)
+        return ϕ_hll(cell_L.u, cell_R.u, dim, gas)
     end
 
     Δx = map(ifaces) do (dim, cell_L, cell_R)
@@ -418,9 +413,10 @@ function compute_cell_update_and_max_Δt(
     Δt_max = min((cell.extent ./ a)...)
 
     ϕ = map(ifaces) do (dim, cell_L, cell_R)
-        uL = state_to_vector(cell_L.u)
-        uR = state_to_vector(cell_R.u)
-        return (ϕ_hll(uL, uR, dim, gas), ϕ_hll_jvp(uL, cell_L.u̇, uR, cell_R.u̇, dim, gas))
+        return (
+            ϕ_hll(cell_L.u, cell_R.u, dim, gas),
+            ϕ_hll_jvp(cell_L.u, cell_L.u̇, cell_R.u, cell_R.u̇, dim, gas),
+        )
     end
 
     Δx = map(ifaces) do (dim, cell_L, cell_R)
@@ -502,20 +498,19 @@ function apply_partition_update!(
 ) where {T<:PrimalQuadCell,U}
     for (k, v) ∈ partition.cells_update
         cell = partition.cells_map[k]
-        u_next = _update_cprops(cell.u, v[1], Δt)
-        partition.cells_map[k] = @set cell.u = u_next
+        @reset cell.u = cell.u + Δt * v[1]
+        partition.cells_map[k] = cell
         partition.cells_update[k] = zero.(fieldtypes(U))
     end
 end
 
 function apply_partition_update!(
-    partition::CellGridPartition{T, U},
+    partition::CellGridPartition{T,U},
     Δt,
-) where {T<:TangentQuadCell, U}
+) where {T<:TangentQuadCell,U}
     for (k, v) ∈ partition.cells_update
         cell = partition.cells_map[k]
-        u_next = _update_cprops(cell, v[1], Δt)
-        @reset cell.u = u_next
+        @reset cell.u = cell.u + Δt * v[1]
         @reset cell.u̇ = cell.u̇ + Δt * v[2]
         partition.cells_map[k] = cell
         partition.cells_update[k] = zero.(fieldtypes(U))
@@ -623,22 +618,27 @@ end
 Computes a collection of active cells and their locations in a grid determined by `bounds` and `ncells`.
 `Obstacles` can be placed into the simulation grid.
 """
-function primal_quadcell_list_and_id_grid(u0, bounds, ncells, obstacles = [])
+function primal_quadcell_list_and_id_grid(
+    u0,
+    bounds,
+    ncells,
+    scaling,
+    obstacles,
+)
     centers = map(zip(bounds, ncells)) do (b, n)
         v = range(b...; length = n + 1)
         return v[1:end-1] .+ step(v) / 2
     end
     extent = SVector{2}(step.(centers)...)
 
-    # u0 is probably cheap
-    u0_grid = map(u0, Iterators.product(centers...))
+    # u0 is probably cheap, right?
+    u0_grid = map(Iterators.product(centers...)) do x
+        nondimensionalize(u0(x), scaling)
+    end
     active_mask = active_cell_mask(centers..., obstacles)
     active_ids = active_cell_ids_from_mask(active_mask)
     @assert sum(active_mask) == last(active_ids)
-    cell_list = Dict{
-        Int,
-        PrimalQuadCell{numeric_dtype(eltype(u0_grid)),quantity_types(eltype(u0_grid))...},
-    }()
+    cell_list = Dict{Int,PrimalQuadCell{eltype(eltype(u0_grid))}}()
     sizehint!(cell_list, sum(active_mask))
     for i ∈ eachindex(IndexCartesian(), active_ids, active_mask)
         active_mask[i] || continue
@@ -659,17 +659,42 @@ end
 Computes a collection of active cells and their locations in a grid determined by `bounds` and `ncells`.
 `Obstacles` can be placed into the simulation grid.
 """
-function tangent_quadcell_list_and_id_grid(u0, paramaters_of_interest, bounds, ncells, obstacles = []; )
+function tangent_quadcell_list_and_id_grid(
+    u0,
+    params,
+    bounds,
+    ncells;
+    scaling = _SI_DEFAULT_SCALE,
+    obstacles = [],
+)
     centers = map(zip(bounds, ncells)) do (b, n)
         v = range(b...; length = n + 1)
         return v[1:end-1] .+ step(v) / 2
     end
     extent = SVector{2}(step.(centers)...)
-    u0_grid =map(u0, Iterators.product(centers...))
-    seeds_grid = map(Iterators.products(centers...)) do (x, y)
+
+    # u0 is probably cheap, right?
+    u0_grid = map(Iterators.product(centers...)) do x
+        u0 = nondimensionalize(u0(x, params), scaling)
+        J = ForwardDiff.jacobian(params) do p
+           u0(x, p) 
+        end
+
     end
     active_mask = active_cell_mask(centers..., obstacles)
     active_ids = active_cell_ids_from_mask(active_mask)
     @assert sum(active_mask) == last(active_ids)
-    
+    cell_list = Dict{Int,PrimalQuadCell{eltype(eltype(u0_grid))}}()
+    sizehint!(cell_list, sum(active_mask))
+    for i ∈ eachindex(IndexCartesian(), active_ids, active_mask)
+        active_mask[i] || continue
+        j = active_ids[i]
+        (m, n) = Tuple(i)
+        x_i = centers[1][m]
+        y_j = centers[2][n]
+        neighbors = cell_neighbor_status(i, active_ids)
+        cell_list[j] =
+            PrimalQuadCell(j, i, SVector(x_i, y_j), extent, u0_grid[i], neighbors)
+    end
+    return cell_list, active_ids
 end

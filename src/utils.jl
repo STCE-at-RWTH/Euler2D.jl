@@ -40,12 +40,21 @@ end
 """
     flip_velocity(u, dim)
 
-Flip the `dim`th velocity component of `u`. and return a copy.
+Flip the `dim`th velocity component of `u`. and return a copy. 
 """
 function flip_velocity(u::ConservedProps{N,T,U1,U2,U3}, dim) where {N,T,U1,U2,U3}
     scaling = SVector(ntuple(i -> i == dim ? -one(T) : one(T), N))
     return ConservedProps(u.ρ, scaling .* u.ρv, u.ρE)
 end
+
+function flip_velocity(u::SVector{N, T}, dim) where {N,T}
+    # momentum density vector is stored in u[2] and u[3]
+    # or u[2:end-1] for higher-dimensional problems (not that we care)
+    scaling = SVector(ntuple(i -> i == 1+dim ? -one(T) : one(T), N))
+    return u .* scaling
+end
+
+
 
 merge_values_tuple(arg1, arg2) = (arg1, arg2)
 merge_values_tuple(arg1::Tuple, arg2) = (arg1..., arg2)

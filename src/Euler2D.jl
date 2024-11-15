@@ -10,6 +10,7 @@ end Euler2D
 using Base.Threads: nthreads, @spawn
 
 using Accessors
+using Dates
 using ForwardDiff
 using LinearAlgebra
 using Tullio
@@ -18,7 +19,7 @@ using ShockwaveProperties: MomentumDensity, EnergyDensity
 using StaticArrays
 using Unitful
 using Unitful: 𝐋, 𝐓, 𝐌, 𝚯, 𝐍
-using Unitful: @derived_dimension, Density, Pressure
+using Unitful: @derived_dimension, Density, Pressure, Velocity
 
 include("utils.jl")
 include("nondimensionalization.jl")
@@ -31,10 +32,17 @@ include("cell_simulations/obstacle.jl")
 include("cell_simulations/grid.jl")
 include("cell_simulations/simulations.jl")
 
+const _SI_DEFAULT_SCALE = EulerEqnsScaling(1.0u"m", 1.0u"kg/m^3", 1.0u"m/s")
+
 # methods
 export F_euler
 export interface_signal_speeds, maximum_Δt
 export step_euler_hll!, simulate_euler_equations, simulate_euler_equations_cells
+
+# dimension stuff
+export EulerEqnsScaling
+export nondimensionalize, redimensionalize
+export length_scale, time_scale, density_scale, velocity_scale, pressure_scale, energy_density_scale
 
 # boundary condition types
 export BoundaryCondition, PeriodicAxis, EdgeBoundary
