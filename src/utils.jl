@@ -8,7 +8,7 @@ u_array_space_dims(::AbstractArray{T,N}) where {T,N} = N - 1
 u_array_space_size(u::AbstractArray{T,N}) where {T,N} = size(u)[2:end]
 
 vcat_ρ_ρv_ρE_preserve_static(u1, u2, u3) = vcat(u1, u2, u3)
-vcat_ρ_ρv_ρE_preserve_static(u1, u2::StaticVector{S,T}, u3) where {S,T} =
+vcat_ρ_ρv_ρE_preserve_static(u1, u2::SVector{S,T}, u3) where {S,T} =
     SVector{S + 2}(u1, u2..., u3)
 
 function select_middle(u::StaticVector{S,T}) where {S,T}
@@ -37,6 +37,9 @@ function split_svector(v)
     return v1, v2
 end
 
+ncols_smatrix(::SMatrix{M,N,T,L}) where {M,N,T,L} = N
+ncols_smatrix(::Type{SMatrix{M,N,T,L}}) where {M,N,T,L} = N
+
 """
     flip_velocity(u, dim)
 
@@ -47,14 +50,12 @@ function flip_velocity(u::ConservedProps{N,T,U1,U2,U3}, dim) where {N,T,U1,U2,U3
     return ConservedProps(u.ρ, scaling .* u.ρv, u.ρE)
 end
 
-function flip_velocity(u::SVector{N, T}, dim) where {N,T}
+function flip_velocity(u::SVector{N,T}, dim) where {N,T}
     # momentum density vector is stored in u[2] and u[3]
     # or u[2:end-1] for higher-dimensional problems (not that we care)
-    scaling = SVector(ntuple(i -> i == 1+dim ? -one(T) : one(T), N))
+    scaling = SVector(ntuple(i -> i == 1 + dim ? -one(T) : one(T), N))
     return u .* scaling
 end
-
-
 
 merge_values_tuple(arg1, arg2) = (arg1, arg2)
 merge_values_tuple(arg1::Tuple, arg2) = (arg1..., arg2)

@@ -13,9 +13,10 @@ energy_density_scale(c::EulerEqnsScaling) = pressure_scale(c) # wow the magic of
 body_force_scale(c::EulerEqnsScaling) = energy_density_scale(c) / length_scale(c)
 
 function nondimensionalize(u::ConservedProps{N,T}, s) where {N,T}
+    ρv = uconvert.(NoUnits, (u.ρv / (density_scale(s) * velocity_scale(s))))
     return SVector{N + 2,T}(
         uconvert(NoUnits, u.ρ / density_scale(s)),
-        uconvert.(NoUnits, (u.ρv ./ (density_scale(s) * velocity_scale(s))))...,
+        ρv...,
         uconvert(NoUnits, u.ρE / energy_density_scale(s)),
     )
 end

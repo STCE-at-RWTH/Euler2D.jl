@@ -484,14 +484,8 @@ function propagate_updates_to!(
     return count
 end
 
-function _update_cprops(u::ConservedProps{2,T}, Δu::SVector{4,T}, Δt) where {T}
-    # preserve units?
-    return convert(typeof(u), ConservedProps(state_to_vector(u) + Δt * Δu))
-end
-
 # zeroing out the update is not technically necessary, but it's also very cheap
 # ( I hope )
-
 function apply_partition_update!(
     partition::CellGridPartition{T,U},
     Δt,
@@ -618,13 +612,7 @@ end
 Computes a collection of active cells and their locations in a grid determined by `bounds` and `ncells`.
 `Obstacles` can be placed into the simulation grid.
 """
-function primal_quadcell_list_and_id_grid(
-    u0,
-    bounds,
-    ncells,
-    scaling,
-    obstacles,
-)
+function primal_quadcell_list_and_id_grid(u0, bounds, ncells, scaling, obstacles)
     centers = map(zip(bounds, ncells)) do (b, n)
         v = range(b...; length = n + 1)
         return v[1:end-1] .+ step(v) / 2
@@ -663,38 +651,57 @@ function tangent_quadcell_list_and_id_grid(
     u0,
     params,
     bounds,
-    ncells;
-    scaling = _SI_DEFAULT_SCALE,
-    obstacles = [],
+    ncells,
+    scaling,
+    obstacles;
+    seeds = I,
 )
     centers = map(zip(bounds, ncells)) do (b, n)
         v = range(b...; length = n + 1)
         return v[1:end-1] .+ step(v) / 2
     end
+    pts = Iterators.product(centers...)
     extent = SVector{2}(step.(centers)...)
 
     # u0 is probably cheap, right?
-    u0_grid = map(Iterators.product(centers...)) do x
-        u0 = nondimensionalize(u0(x, params), scaling)
+    _u0_func(x) = nondimensionalize(u0(x, params), scaling)
+    _u̇0_func(x) = begin
         J = ForwardDiff.jacobian(params) do p
-           u0(x, p) 
+            nondimensionalize(u0(x, p), scaling)
         end
-
+        return J * seeds
     end
+
+    u0_type = typeof(_u0_func(first(pts)))
+    T = eltype(u0_type)
+    u̇0_type = typeof(_u̇0_func(first(pts)))
+    NSEEDS = ncols_smatrix(u̇0_type)
+    @show T, NSEEDS
+
+    u0_grid = map(_u0_func, pts)
+    u̇0_grid = map(_u̇0_func, pts)
     active_mask = active_cell_mask(centers..., obstacles)
     active_ids = active_cell_ids_from_mask(active_mask)
     @assert sum(active_mask) == last(active_ids)
-    cell_list = Dict{Int,PrimalQuadCell{eltype(eltype(u0_grid))}}()
+
+    cell_list = Dict{Int,TangentQuadCell{T,NSEEDS}}()
     sizehint!(cell_list, sum(active_mask))
     for i ∈ eachindex(IndexCartesian(), active_ids, active_mask)
         active_mask[i] || continue
-        j = active_ids[i]
+        cell_id = active_ids[i]
         (m, n) = Tuple(i)
         x_i = centers[1][m]
         y_j = centers[2][n]
         neighbors = cell_neighbor_status(i, active_ids)
-        cell_list[j] =
-            PrimalQuadCell(j, i, SVector(x_i, y_j), extent, u0_grid[i], neighbors)
+        cell_list[cell_id] = TangentQuadCell(
+            cell_id,
+            i,
+            SVector(x_i, y_j),
+            extent,
+            u0_grid[i],
+            u̇0_grid[i],
+            neighbors,
+        )
     end
     return cell_list, active_ids
 end
