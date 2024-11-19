@@ -33,7 +33,7 @@ bounds = ((-2.0, 0.0), (-1.5, 1.5))
 
 
 just_circle = [CircularObstacle((0.0, 0.0), 0.75)]
-ncells = (200, 300)
+ncells = (100, 150)
 
 ##
 
@@ -48,9 +48,9 @@ Euler2D.simulate_euler_equations_cells(
     mode = Euler2D.PRIMAL,
     gas = DRY_AIR,
     scale = scale,
-    info_frequency = 2,
-    write_frequency = 5,
-    max_tsteps = 100,
+    info_frequency = 20,
+    write_frequency = 10,
+    max_tsteps = 1000,
     output_tag = "circular_obstacle_primal",
     output_channel_size = 2,
     tasks_per_axis = 2,
@@ -69,9 +69,9 @@ Euler2D.simulate_euler_equations_cells(
     mode = Euler2D.TANGENT,
     gas = DRY_AIR,
     scale = scale,
-    info_frequency = 2,
-    write_frequency = 5,
-    max_tsteps = 100,
+    info_frequency = 20,
+    write_frequency = 10,
+    max_tsteps = 1000,
     output_tag = "circular_obstacle_tangent",
     output_channel_size = 2,
     tasks_per_axis = 2,

@@ -205,7 +205,7 @@ function pressure_field(
     gas::CaloricallyPerfectGas,
 ) where {T}
     _, u_cells = nth_step(csim, n)
-    P = Array{Union{T,Nothing},2}(undef, grid_size(cssim))
+    P = Array{Union{T,Nothing},2}(undef, grid_size(csim))
     fill!(P, nothing)
     for i ∈ eachindex(IndexCartesian(), csim.cell_ids)
         csim.cell_ids[i] == 0 && continue

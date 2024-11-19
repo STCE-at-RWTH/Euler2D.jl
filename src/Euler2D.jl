@@ -80,8 +80,14 @@ function _interpolate_field(fieldfn, sim, t, args...)
     t1 = sim.tsteps[idx_after-1]
     t2 = sim.tsteps[idx_after]
     α = (t - t1) / (t2 - t1)
-    res = α * fieldfn(sim, idx_after - 1, args...)
-    res += (1 - α) * fieldfn(sim, idx_after, args...)
+    res = fieldfn(sim, idx_after - 1, args...)
+    temp = fieldfn(sim, idx_after, args...)
+    for i ∈ eachindex(res, temp)
+        if isnothing(res[i])
+            continue
+        end
+        res[i] = α * res[i] + (1 - α) * temp[i]
+    end
     return res
 end
 
