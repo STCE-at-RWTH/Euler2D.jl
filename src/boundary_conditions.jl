@@ -87,10 +87,10 @@ end
 
 function phantom_cell(
     ::StrongWall,
-    u::ConservedProps{N,T,U1,U2,U3},
+    u,
     dim,
     gas::CaloricallyPerfectGas,
-) where {N,T,U1,U2,U3}
+)
     return flip_velocity(u, dim)
 end
 

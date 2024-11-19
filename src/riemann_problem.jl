@@ -46,10 +46,10 @@ function roe_parameter_vector(u::ConservedProps, gas::CaloricallyPerfectGas)
     ) / sqrt(ustrip(ShockwaveProperties._units_ρ, density(u)))
 end
 
-function roe_parameter_vector(u, gas::CaloricallyPerfectGas)
-    ρv = select_middle(u)
-    ρH = ustrip(total_enthalpy_density(u[1], ρv, u[end], gas))
-    return vcat_ρ_ρv_ρE_preserve_static(u[1], ρv, ρH) / sqrt(u[1])
+function roe_parameter_vector(u::SVector{N,T}, gas::CaloricallyPerfectGas) where {N,T}
+    ρH = dimensionless_total_enthalpy_density(u, gas)
+    w = setindex(u, ρH, N) / sqrt(u[1])
+    return w
 end
 
 """
@@ -116,7 +116,7 @@ function ϕ_hll_jvp(uL, u̇L, uR, u̇R, dim, gas::CaloricallyPerfectGas)
     # TODO how to seed values into ForwardDiff? We shouldn't have to create and multiply a matrix here.
     #   Although, multiplying a 4×8 matrix by an 8×1 vector shouldn't be too bad
     J = ForwardDiff.jacobian(u_arg) do u
-        v1, v2 = split_svector(u_arg)
+        v1, v2 = split_svector(u)
         return ϕ_hll(v1, v2, dim, gas)
     end
     return J * vcat(u̇L, u̇R)
