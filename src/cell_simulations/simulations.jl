@@ -81,7 +81,11 @@ end
 
 Compute the density field for a cell-based Euler simulation `csim` and redimensionalize it at time step `n`.
 """
-function density_field(csim::CellBasedEulerSim{T}, n, scale::EulerEqnsScaling) where {T}
+function density_field(
+    csim::CellBasedEulerSim{T},
+    n::Integer,
+    scale::EulerEqnsScaling,
+) where {T}
     return map(density_field(csim, n)) do ρ
         isnothing(ρ) && return nothing
         return ρ * density_scale(scale)
@@ -126,9 +130,9 @@ end
 
 Compute the dimensionless velocity field for a cell-based Euler simulation `csim` at time step `n`.
 """
-function velocity_field(csim::CellBasedEulerSim, n::Integer)
+function velocity_field(csim::CellBasedEulerSim{T}, n::Integer) where {T}
     _, u_cells = nth_step(csim, n)
-    v = Array{T,3}(undef, (2, grid_size(csim)...))
+    v = Array{Union{T,Nothing},3}(undef, (2, grid_size(csim)...))
     fill!(v, nothing)
     for i ∈ eachindex(IndexCartesian(), csim.cell_ids)
         csim.cell_ids[i] == 0 && continue

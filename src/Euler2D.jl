@@ -89,23 +89,25 @@ const _field_methods_nogas =
     (:density_field, :velocity_field, :total_internal_energy_density_field)
 const _field_methods_gas = (:pressure_field, :mach_number_field)
 
-for T ∈ (EulerSim, CellBasedEulerSim)
-    for f ∈ _field_methods_gas
-        @eval $(f)(sim::$(T), t, gas::CaloricallyPerfectGas) = begin
-            return _interpolate_field($f, sim, t, gas)
-        end
-        @eval $(f)(sim::$(T), t, gas::CaloricallyPerfectGas, scale::EulerEqnsScaling) =
-            begin
-                return _interpolate_field($f, sim, t, gas, scale)
-            end
+for f ∈ _field_methods_gas
+    @eval $(f)(sim::CellBasedEulerSim, t, gas::CaloricallyPerfectGas) = begin
+        return _interpolate_field($f, sim, t, gas)
     end
-    for f ∈ _field_methods_nogas
-        @eval $(f)(sim::$(T), t) = begin
-            return _interpolate_field($f, sim, t)
-        end
-        @eval $(f)(sim::$(T), t, scale::EulerEqnsScaling) = begin
-            return _interpolate_field($f, sim, t, scale)
-        end
+    @eval $(f)(
+        sim::CellBasedEulerSim,
+        t,
+        gas::CaloricallyPerfectGas,
+        scale::EulerEqnsScaling,
+    ) = begin
+        return _interpolate_field($f, sim, t, gas, scale)
+    end
+end
+for f ∈ _field_methods_nogas
+    @eval $(f)(sim::CellBasedEulerSim, t) = begin
+        return _interpolate_field($f, sim, t)
+    end
+    @eval $(f)(sim::CellBasedEulerSim, t, scale::EulerEqnsScaling) = begin
+        return _interpolate_field($f, sim, t, scale)
     end
 end
 

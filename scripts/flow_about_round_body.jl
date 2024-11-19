@@ -76,3 +76,8 @@ Euler2D.simulate_euler_equations_cells(
     output_channel_size = 2,
     tasks_per_axis = 2,
 );
+
+##
+
+primal=load_cell_sim("data/circular_obstacle_primal.celltape");
+tangent=load_cell_sim("data/circular_obstacle_tangent.celltape");
