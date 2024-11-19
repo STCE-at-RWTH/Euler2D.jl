@@ -253,7 +253,7 @@ end
 
 # for completeness
 mach_number_field(
-    csim::CellBasedEulerSim{T},
+    csim::CellBasedEulerSim,
     n::Integer,
     gas::CaloricallyPerfectGas,
     scale::EulerEqnsScaling,
