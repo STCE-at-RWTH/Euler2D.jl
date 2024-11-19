@@ -59,9 +59,10 @@ struct PrimalQuadCell{T} <: QuadCell
 end
 
 """
-    TangentQuadCell{T, NSEEDS} <: QuadCell
+    TangentQuadCell{T, NSEEDS,PARAMCOUNT} <: QuadCell
 
 QuadCell data type for a primal computation. Pushes forward `NSEEDS` seed values through the JVP of the flux function.
+`PARAMCOUNT` determines the "length" of the underlying `SMatrix` for `u̇`.
 
 Fields
 ---
@@ -73,23 +74,26 @@ Fields
  - `u̇`: What are the cell-averaged pushforwards in this cell?
  - `neighbors`: What are this cell's neighbors?
 """
-struct TangentQuadCell{T,NSEEDS} <: QuadCell
+struct TangentQuadCell{T,NSEEDS,PARAMCOUNT} <: QuadCell
     id::Int
     idx::CartesianIndex{2}
     center::SVector{2,T}
     extent::SVector{2,T}
     u::SVector{4,T}
-    u̇::SMatrix{4,NSEEDS,T}
+    u̇::SMatrix{4,NSEEDS,T,PARAMCOUNT}
     neighbors::NamedTuple{
         (:north, :south, :east, :west),
         NTuple{4,Tuple{CellNeighboring,Int}},
     }
 end
 
-for CELL ∈ (PrimalQuadCell, TangentQuadCell)
-    @eval numeric_dtype(::$CELL{T}) where {T} = T
-    @eval numeric_dtype(::Type{$CELL{T}}) where {T} = T
-end
+numeric_dtype(::PrimalQuadCell{T}) where {T} = T
+numeric_dtype(::Type{PrimalQuadCell{T}}) where {T} = T
+
+numeric_dtype(::TangentQuadCell{T,N,P}) where {T,N,P} = T
+numeric_dtype(::Type{TangentQuadCell{T,N,P}}) where {T,N,P} = T
+n_seeds(::TangentQuadCell{T,N,P}) where {T,N,P} = N
+n_seeds(::Type{TangentQuadCell{T,N,P}}) where {T,N,P} = N
 
 @doc """
         numeric_dtype(cell)
@@ -99,8 +103,8 @@ end
     """ numeric_dtype
 
 update_dtype(::Type{T}) where {T<:PrimalQuadCell} = Tuple{SVector{4,numeric_dtype(T)}}
-function update_dtype(::Type{TangentQuadCell{T,N}}) where {T,N}
-    return Tuple{SVector{4,T},SMatrix{4,N,T}}
+function update_dtype(::Type{TangentQuadCell{T,N,P}}) where {T,N,P}
+    return Tuple{SVector{4,T},SMatrix{4,N,T,P}}
 end
 
 function inward_normals(T::DataType)
@@ -153,6 +157,44 @@ function phantom_neighbor(cell::PrimalQuadCell, dir, bc, gas)
     return phantom
 end
 
+function phantom_neighbor(
+    cell::TangentQuadCell{T,NSEEDS,PARAMCOUNT},
+    dir,
+    bc,
+    gas,
+) where {T,NSEEDS,PARAMCOUNT}
+    # HACK use nneighbors as intended.
+    @assert dir ∈ (:north, :south, :east, :west) "dir is not a cardinal direction..."
+    @assert nneighbors(bc) == 1 "dirty hack alert, this function needs to be extended for bcs with more neighbors"
+    phantom = @set cell.id = 0
+
+    @inbounds begin
+        reverse_phantom = _dirs_bc_is_reversed[dir] && reverse_right_edge(bc)
+        @reset phantom.center = cell.center + outward_normals(cell)[dir] .* cell.extent
+        @reset phantom.neighbors =
+            NamedTuple{(:north, :south, :east, :west)}(ntuple(Returns((IS_PHANTOM, 0)), 4))
+
+        # TODO there must be a way to do this with Accessors.jl and "lenses" that makes sense
+        # HACK is this utter nonsense????? I do not know. 
+        dim = _dirs_dim[dir]
+        u = _dirs_bc_is_reversed[dir] ? flip_velocity(cell.u, dim) : cell.u
+        u̇ = _dirs_bc_is_reversed[dir] ? flip_velocity(cell.u̇, dim) : cell.u̇
+        phantom_u = phantom_cell(bc, u, _dirs_dim[dir], gas)
+        J_phantom = ForwardDiff.jacobian(u) do u
+            phantom_cell(bc, u, _dirs_dim[dir], gas)
+        end
+        phantom_u̇ = J_phantom * u̇
+        if reverse_phantom
+            @reset phantom.u = flip_velocity(phantom_u, _dirs_dim[dir])
+            @reset phantom.u̇ = flip_velocity(phantom_u̇, _dirs_dim[dir])
+        else
+            @reset phantom.u = phantom_u
+            @reset phantom.u̇ = phantom_u̇
+        end
+    end
+    return phantom
+end
+
 """
     neighbor_cells(cell, active_cells, boundary_conditions, gas)
 
@@ -161,7 +203,7 @@ Will compute phantoms as necessary from `boundary_conditions` and `gas`.
 """
 function neighbor_cells(cell, active_cells, boundary_conditions, gas)
     neighbors = cell.neighbors
-    map(_prepend_names(neighbors)) do (dir, (kind, id))
+    map((ntuple(i -> ((keys(neighbors)[i], neighbors[i])), 4))) do (dir, (kind, id))
         res = if kind == BOUNDARY_CONDITION
             @inbounds phantom_neighbor(cell, dir, boundary_conditions[id], gas)
         else
@@ -273,45 +315,48 @@ function partition_cell_list(
 )
     # minimum partition size includes i - 1 and i + 1 neighbors
     grid_size = size(global_cell_ids)
-    (all_part_x, all_part_y) = split_axis.(grid_size, tasks_per_axis)
+    all_part = split_axis.(grid_size, tasks_per_axis)
 
-    res =
-        map(enumerate(Iterators.product(all_part_x, all_part_y))) do (id, (part_x, part_y))
-            # adust slice width...
-            task_x, task_working_x = expand_to_neighbors(part_x..., grid_size[1])
-            task_y, task_working_y = expand_to_neighbors(part_y..., grid_size[2])
-            if show_info
-                @info "Creating cell partition on grid ids..." id = id global_ids =
-                    (range(task_x...), range(task_y...)) compute_ids =
-                    (range(task_working_x...), range(task_working_y...))
-            end
-            # cells copied for this task
-            # we want to copy this...?
-            task_cell_ids = global_cell_ids[range(task_x...), range(task_y...)]
-            # total number of cells this task has a copy of
-            task_cell_count = count(>(0), task_cell_ids)
-            cell_type = valtype(global_active_cells)
-            update_type = update_dtype(cell_type)
-            cell_ids_map = Dict{Int,cell_type}()
-            cell_updates_map = Dict{Int,update_type}()
-            sizehint!(cell_ids_map, task_cell_count)
-            sizehint!(cell_updates_map, task_cell_count)
-            for i ∈ eachindex(task_cell_ids)
-                cell_id = task_cell_ids[i]
-                cell_id == 0 && continue
-                cell_ids_map[cell_id] = global_active_cells[cell_id]
-                cell_updates_map[cell_id] = zero.(fieldtypes(update_type))
-            end
-            return CellGridPartition(
-                id,
-                (task_x, task_y),
-                (part_x, part_y),
-                (task_working_x, task_working_y),
-                task_cell_ids,
-                cell_ids_map,
-                cell_updates_map,
-            )
+    cell_type = valtype(global_active_cells)
+    update_type = update_dtype(cell_type)
+    if show_info
+        @info "Partitioning global cell grid into $(*(length.(all_part)...)) partitions." cell_type update_type
+    end
+
+    res = map(enumerate(Iterators.product(all_part...))) do (id, (part_x, part_y))
+        # adust slice width...
+        task_x, task_working_x = expand_to_neighbors(part_x..., grid_size[1])
+        task_y, task_working_y = expand_to_neighbors(part_y..., grid_size[2])
+        if show_info
+            @info "Creating cell partition on grid ids..." id = id global_ids =
+                (range(task_x...), range(task_y...)) compute_ids =
+                (range(task_working_x...), range(task_working_y...))
         end
+        # cells copied for this task
+        # we want to copy this...?
+        task_cell_ids = global_cell_ids[range(task_x...), range(task_y...)]
+        # total number of cells this task has a copy of
+        task_cell_count = count(>(0), task_cell_ids)
+        cell_ids_map = Dict{Int,cell_type}()
+        cell_updates_map = Dict{Int,update_type}()
+        sizehint!(cell_ids_map, task_cell_count)
+        sizehint!(cell_updates_map, task_cell_count)
+        for i ∈ eachindex(task_cell_ids)
+            cell_id = task_cell_ids[i]
+            cell_id == 0 && continue
+            cell_ids_map[cell_id] = global_active_cells[cell_id]
+            cell_updates_map[cell_id] = zero.(fieldtypes(update_type))
+        end
+        return CellGridPartition(
+            id,
+            (task_x, task_y),
+            (part_x, part_y),
+            (task_working_x, task_working_y),
+            task_cell_ids,
+            cell_ids_map,
+            cell_updates_map,
+        )
+    end
     @assert _verify_partitioning(res) "Partition is invalid! Oh no"
     return res
 end
@@ -397,11 +442,11 @@ function compute_cell_update_and_max_Δt(
 end
 
 function compute_cell_update_and_max_Δt(
-    cell::TangentQuadCell,
+    cell::TangentQuadCell{T,N,P},
     active_cells,
     boundary_conditions,
     gas,
-)
+) where {T,N,P}
     neighbors = neighbor_cells(cell, active_cells, boundary_conditions, gas)
     ifaces = (
         north = (2, cell, neighbors.north),
@@ -413,20 +458,26 @@ function compute_cell_update_and_max_Δt(
     Δt_max = min((cell.extent ./ a)...)
 
     ϕ = map(ifaces) do (dim, cell_L, cell_R)
-        return (
-            ϕ_hll(cell_L.u, cell_R.u, dim, gas),
-            ϕ_hll_jvp(cell_L.u, cell_L.u̇, cell_R.u, cell_R.u̇, dim, gas),
-        )
+        return ϕ_hll(cell_L.u, cell_R.u, dim, gas)
+    end
+    ϕ_jvp = map(ifaces) do (dim, cell_L, cell_R)
+        return ϕ_hll_jvp(cell_L.u, cell_L.u̇, cell_R.u, cell_R.u̇, dim, gas)
     end
 
     Δx = map(ifaces) do (dim, cell_L, cell_R)
         (cell_L.extent[dim] + cell_R.extent[dim]) / 2
     end
 
-    Δu = ntuple(2) do i
-        inv(Δx.west) * ϕ.west[i] - inv(Δx.east) * ϕ.east[i] + inv(Δx.south) * ϕ.south[i] - inv(Δx.north) * ϕ.north[i]
-    end
-
+    RESULT_DTYPE = update_dtype(typeof(cell))
+    Δu::RESULT_DTYPE = (
+        (
+            (inv(Δx.west) * ϕ.west) - (inv(Δx.east) * ϕ.east) + (inv(Δx.south) * ϕ.south) - (inv(Δx.north) .* ϕ.north)
+        ),
+        (
+            (inv(Δx.west) * ϕ_jvp.west) - (inv(Δx.east) * ϕ_jvp.east) +
+            (inv(Δx.south) * ϕ_jvp.south) - (inv(Δx.north) .* ϕ_jvp.north)
+        ),
+    )
     return (Δt_max, Δu)
 end
 
@@ -568,7 +619,7 @@ function active_cell_mask(cell_centers_x, cell_centers_y, obstacles)
     end
 end
 
-function active_cell_ids_from_mask(active_mask)::Array{Int, 2}
+function active_cell_ids_from_mask(active_mask)::Array{Int,2}
     cell_ids = zeros(Int, size(active_mask))
     live_count = 0
     for i ∈ eachindex(IndexLinear(), active_mask, cell_ids)
@@ -651,14 +702,7 @@ end
 Computes a collection of active cells and their locations in a grid determined by `bounds` and `ncells`.
 `Obstacles` can be placed into the simulation grid.
 """
-function tangent_quadcell_list_and_id_grid(
-    u0,
-    params,
-    bounds,
-    ncells,
-    scaling,
-    obstacles
-)
+function tangent_quadcell_list_and_id_grid(u0, params, bounds, ncells, scaling, obstacles)
     centers = map(zip(bounds, ncells)) do (b, n)
         v = range(b...; length = n + 1)
         return v[1:end-1] .+ step(v) / 2
@@ -688,7 +732,7 @@ function tangent_quadcell_list_and_id_grid(
     active_ids = active_cell_ids_from_mask(active_mask)
     @assert sum(active_mask) == last(active_ids)
 
-    cell_list = Dict{Int,TangentQuadCell{T,NSEEDS}}()
+    cell_list = Dict{Int,TangentQuadCell{T,NSEEDS,4 * NSEEDS}}()
     sizehint!(cell_list, sum(active_mask))
     for i ∈ eachindex(IndexCartesian(), active_ids, active_mask)
         active_mask[i] || continue

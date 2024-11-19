@@ -1,8 +1,8 @@
-struct EulerEqnsConfig{T}
-    cfl_safety_factor::T
-    scaling::EulerEqnsScaling{T}
-    gas::CaloricallyPerfectGas
+@enum EulerSimulationMode::UInt8 begin
+    PRIMAL
+    TANGENT
 end
+    
 
 """
     CellBasedEulerSim{T}
@@ -266,7 +266,7 @@ Arguments
 
 Keyword Arguments
 ---
-- `mode::Symbol = :primal`: `:primal` or `:tangent` 
+- `mode::EulerSimulationMode = PRIMAL`: `PRIMAL` or `TANGENT` 
 - `gas::CaloricallyPerfectGas = DRY_AIR`: The fluid to be simulated.
 - `scale::EulerEqnsScaling = _SI_DEFAULT_SCALE`: A set of non-dimensionalization parameters.
 - `cfl_limit = 0.75`: The CFL condition to apply to `Δt`. Between zero and one, default `0.75`.
@@ -288,7 +288,7 @@ function simulate_euler_equations_cells(
     obstacles,
     bounds,
     ncells;
-    mode = :primal,
+    mode::EulerSimulationMode = PRIMAL,
     gas::CaloricallyPerfectGas = DRY_AIR,
     scale::EulerEqnsScaling = _SI_DEFAULT_SCALE,
     cfl_limit = 0.75,
@@ -310,11 +310,13 @@ function simulate_euler_equations_cells(
     T_end > 0 && DomainError("T_end = $T_end invalid, T_end must be positive")
     0 < cfl_limit < 1 || @warn "CFL invalid, must be between 0 and 1 for stabilty" cfl_limit
     cell_ifaces = [range(b...; length = n + 1) for (b, n) ∈ zip(bounds, ncells)]
-    global_cells, global_cell_ids = if mode == :primal
+
+    global_cells, global_cell_ids = if mode == PRIMAL
         primal_quadcell_list_and_id_grid(u0, params, bounds, ncells, scale, obstacles)
     else
         tangent_quadcell_list_and_id_grid(u0, params, bounds, ncells, scale, obstacles)
     end
+
     cell_partitions = partition_cell_list(global_cells, global_cell_ids, tasks_per_axis)
     wall_clock_start_time = Dates.now()
     previous_tstep_wall_clock = wall_clock_start_time
@@ -347,7 +349,11 @@ function simulate_euler_equations_cells(
 
     if write_result
         tape_stream = open(tape_file, "w+")
-        write(tape_stream, zero(Int), length(global_cells), length(ncells), ncells...)
+        write(tape_stream, zero(Int), mode)
+        if mode == TANGENT
+            write(tape_stream, n_seeds(valtype(global_cells)))
+        end
+        write(tape_stream, length(global_cells), length(ncells), ncells...)
         for b ∈ bounds
             write(tape_stream, b...)
         end
@@ -457,17 +463,28 @@ Other kwargs include:
 function load_cell_sim(path; T = Float64, show_info = true)
     return open(path, "r") do f
         n_tsteps = read(f, Int)
+        mode = read(f, EulerSimulationMode)
+        n_seeds = if mode == TANGENT
+            read(f, Int)
+        else
+            0
+        end
         n_active = read(f, Int)
         n_dims = read(f, Int)
         @assert n_dims == 2
         ncells = (read(f, Int), read(f, Int))
         bounds = ntuple(i -> (read(f, T), read(f, T)), 2)
         if show_info
-            @info "Loaded metadata for cell-based Euler simulation at $path." n_tsteps n_active n_dims ncells
+            @info "Loaded metadata for cell-based Euler simulation at $path." mode n_seeds n_tsteps n_active n_dims ncells
         end
         active_cell_ids = Array{Int,2}(undef, ncells...)
         read!(f, active_cell_ids)
         time_steps = Vector{T}(undef, n_tsteps)
+        CellDType = if mode == PRIMAL
+            PrimalQuadCell{T}
+        else
+            TangentQuadCell{T, n_seeds}
+        end
         cell_vals = Vector{Dict{Int,CellDType}}(undef, n_tsteps)
         temp_cell_vals = Vector{CellDType}(undef, n_active)
         for k = 1:n_tsteps

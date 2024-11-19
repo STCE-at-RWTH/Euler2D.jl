@@ -57,6 +57,11 @@ function flip_velocity(u::SVector{N,T}, dim) where {N,T}
     return u .* scaling
 end
 
+function flip_velocity(u::SMatrix{M, N, T, L}, dim) where {M, N, T, L}
+    scaling = SDiagonal(ntuple(i->i==1+dim ? -one(T) : one(T), M))
+    return scaling * u
+end
+
 merge_values_tuple(arg1, arg2) = (arg1, arg2)
 merge_values_tuple(arg1::Tuple, arg2) = (arg1..., arg2)
 merge_values_tuple(arg1, arg2::Tuple) = (arg1, arg2...)
@@ -78,6 +83,8 @@ function merge_named_tuples(nt1::NamedTuple{NAMES}, nts::NamedTuple{NAMES}...) w
     return merge_named_tuples(merge_named_tuples(nt1, nts[1]), nts[2:end]...)
 end
 
+#BUG this allocates
+# WHY DOES THIS ALLOCATE
 function _prepend_names(nt::NamedTuple{NAMES}) where {NAMES}
     new_values = ntuple(length(NAMES)) do i
         (NAMES[i], nt[NAMES[i]])
