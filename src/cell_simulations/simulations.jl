@@ -2,7 +2,6 @@
     PRIMAL
     TANGENT
 end
-    
 
 """
     CellBasedEulerSim{T}
@@ -11,10 +10,11 @@ Represents a completed simulation of the Euler equations on a mesh of 2-dimensio
 
 ## Type Parameters
 - `T`: Data type for all computations.
+- `C`: Cell data type
 
 ## Fields
-- `ncells::(Int, Int)`: Number of cells in each of of the simulation density.
-- `nsteps::Int`: Number of time steps taken in the simulation
+- `ncells::(Int, Int)`: Number of cells in each of of the simulation axes.
+- `nsteps::Int`: Number of time steps taken in the simulation.
 - `bounds::{(T, T), (T, T)}`: Bounds of the simulation in each of the dimensions.
 - `tsteps::Vector{T}`: Time steps.
 - `cell_ids::Matrix{Int}`: Matrix of active cell IDs. Inactive cells
@@ -29,13 +29,13 @@ Represents a completed simulation of the Euler equations on a mesh of 2-dimensio
 - `density_field, momentum_density_field, total_internal_energy_density_field`: Compute quantities at a given time step.
 - `pressure_field, velocity_field, mach_number_field`: Compute quantities at a given time step.
 """
-struct CellBasedEulerSim{T}
+struct CellBasedEulerSim{T,C<:QuadCell}
     ncells::Tuple{Int,Int}
     nsteps::Int
     bounds::NTuple{2,Tuple{T,T}}
     tsteps::Vector{T}
     cell_ids::Array{Int,2}
-    cells::Array{Dict{Int64,PrimalQuadCell{T}},1}
+    cells::Array{Dict{Int64,C},1}
 end
 
 n_space_dims(::CellBasedEulerSim) = 2
@@ -64,7 +64,7 @@ eachstep(csim::CellBasedEulerSim) = [nth_step(csim, n) for n ∈ 1:n_tsteps(csim
 
 Compute the density field for a cell-based Euler simulation `csim` at time step `n`.
 """
-function density_field(csim::CellBasedEulerSim{T}, n) where {T}
+function density_field(csim::CellBasedEulerSim{T}, n::Integer) where {T}
     _, u_cells = nth_step(csim, n)
     ρ = Array{Union{T,Nothing},2}(undef, grid_size(csim))
     fill!(ρ, nothing)
@@ -81,7 +81,7 @@ end
 
 Compute the density field for a cell-based Euler simulation `csim` and redimensionalize it at time step `n`.
 """
-function density_field(csim::CellBasedEulerSim{T}, scale::EulerEqnsScaling, n) where {T}
+function density_field(csim::CellBasedEulerSim{T}, n, scale::EulerEqnsScaling) where {T}
     return map(density_field(csim, n)) do ρ
         isnothing(ρ) && return nothing
         return ρ * density_scale(scale)
@@ -93,7 +93,7 @@ end
 
 Compute the dimensionless momentum density field for a cell-based Euler simulation `csim` at time step `n`.
 """
-function momentum_density_field(csim::CellBasedEulerSim{T}, n) where {T}
+function momentum_density_field(csim::CellBasedEulerSim{T}, n::Integer) where {T}
     _, u_cells = nth_step(csim, n)
     ρv = Array{T,3}(undef, (2, grid_size(csim)...))
     fill!(ρv, nothing)
@@ -112,8 +112,8 @@ Compute the momentum density field for a cell-based Euler simulation `csim` and 
 """
 function momentum_density_field(
     csim::CellBasedEulerSim{T},
+    n::Integer,
     scale::EulerEqnsScaling,
-    n,
 ) where {T}
     return map(momentum_density_field(csim, n)) do ρv
         isnothing(ρv) && return nothing
@@ -126,7 +126,7 @@ end
 
 Compute the dimensionless velocity field for a cell-based Euler simulation `csim` at time step `n`.
 """
-function velocity_field(csim::CellBasedEulerSim, n)
+function velocity_field(csim::CellBasedEulerSim, n::Integer)
     _, u_cells = nth_step(csim, n)
     v = Array{T,3}(undef, (2, grid_size(csim)...))
     fill!(v, nothing)
@@ -143,7 +143,11 @@ end
 
 Compute the velocity field for a cell-based Euler simulation `csim` and redimensionalize it at time step `n`.
 """
-function velocity_field(csim::CellBasedEulerSim{T}, scale::EulerEqnsScaling, n) where {T}
+function velocity_field(
+    csim::CellBasedEulerSim{T},
+    n::Integer,
+    scale::EulerEqnsScaling,
+) where {T}
     return map(velocity_field(csim, n)) do v
         isnothing(v) && return nothing
         return v * velocity_scale(scale)
@@ -155,7 +159,10 @@ end
 
 Compute the dimensionless total internal energy density field for a cell-based Euler simulation at time step `n`.
 """
-function total_internal_energy_density_field(csim::CellBasedEulerSim{T}, n) where {T}
+function total_internal_energy_density_field(
+    csim::CellBasedEulerSim{T},
+    n::Integer,
+) where {T}
     _, u_cells = nth_step(csim, n)
     ρE = Array{Union{T,Nothing},2}(undef, grid_size(csim))
     fill!(ρE, nothing)
@@ -174,8 +181,8 @@ Compute the total internal energy density field for a cell-based Euler simulatio
 """
 function total_internal_energy_density_field(
     csim::CellBasedEulerSim{T},
+    n::Integer,
     scale::EulerEqnsScaling,
-    n,
 ) where {T}
     return map(total_internal_energy_density_field(csim, n)) do ρE
         isnothing(ρE) && return nothing
@@ -188,9 +195,13 @@ end
 
 Compute the dimensionless pressure field for a cell-based Euler simulation `csim` at time step `n` in gas `gas`.
 """
-function pressure_field(csim::CellBasedEulerSim{T}, n, gas::CaloricallyPerfectGas) where {T}
+function pressure_field(
+    csim::CellBasedEulerSim{T},
+    n::Integer,
+    gas::CaloricallyPerfectGas,
+) where {T}
     _, u_cells = nth_step(csim, n)
-    P = Array{Union{T,Nothing},2}(undef, grid_size(csim))
+    P = Array{Union{T,Nothing},2}(undef, grid_size(cssim))
     fill!(P, nothing)
     for i ∈ eachindex(IndexCartesian(), csim.cell_ids)
         csim.cell_ids[i] == 0 && continue
@@ -205,7 +216,12 @@ end
 
 Compute the total internal energy density field for a cell-based Euler simulation `csim` and redimensionalize it at time step `n`.
 """
-function pressure_field(csim::CellBasedEulerSim{T}, scale::EulerEqnsScaling, n) where {T}
+function pressure_field(
+    csim::CellBasedEulerSim{T},
+    n::Integer,
+    gas::CaloricallyPerfectGas,
+    scale::EulerEqnsScaling,
+) where {T}
     return map(pressure_field(csim, n, gas)) do P
         isnothing(P) && return nothing
         return P * pressure_scale(scale)
@@ -219,7 +235,7 @@ Compute the Mach number field for a cell-based Euler simulation `csim` at time s
 """
 function mach_number_field(
     csim::CellBasedEulerSim{T},
-    n,
+    n::Integer,
     gas::CaloricallyPerfectGas,
 ) where {T}
     _, u_cells = nth_step(csim, n)
@@ -234,6 +250,14 @@ function mach_number_field(
     end
     return M
 end
+
+# for completeness
+mach_number_field(
+    csim::CellBasedEulerSim{T},
+    n::Integer,
+    gas::CaloricallyPerfectGas,
+    scale::EulerEqnsScaling,
+) = mach_number_field(csim, n, gas)
 
 function write_tstep_to_stream(stream, t, global_cells)
     @info "Writing time step to file." t = t ncells = length(global_cells)
@@ -483,7 +507,7 @@ function load_cell_sim(path; T = Float64, show_info = true)
         CellDType = if mode == PRIMAL
             PrimalQuadCell{T}
         else
-            TangentQuadCell{T, n_seeds}
+            TangentQuadCell{T,n_seeds,4 * n_seeds}
         end
         cell_vals = Vector{Dict{Int,CellDType}}(undef, n_tsteps)
         temp_cell_vals = Vector{CellDType}(undef, n_active)
