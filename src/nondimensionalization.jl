@@ -28,7 +28,7 @@ function redimensionalize(u_star::SVector{N,T}, s) where {N,T}
     return ConservedProps(ρ, ρv, ρE)
 end
 
-function _pressure(u_star::SVector{N,T}, gas::CaloricallyPerfectGas) where {N,T}
+function dimensionless_pressure(u_star::SVector{N,T}, gas::CaloricallyPerfectGas) where {N,T}
     ρv_star = select_middle(u_star)
     return (gas.γ - 1)*(u_star[N] - ρv_star ⋅ ρv_star / (2 * u_star[1]))
 end
@@ -42,7 +42,7 @@ function dimensionless_speed_of_sound(
     u_star::SVector{N,T},
     gas::CaloricallyPerfectGas,
 ) where {N,T}
-    P_star = _pressure(u_star, gas)
+    P_star = dimensionless_pressure(u_star, gas)
     return sqrt(gas.γ * (P_star / u_star[1]))
 end
 
@@ -55,5 +55,5 @@ function dimensionless_total_enthalpy_density(
     u_star::SVector{N,T},
     gas::CaloricallyPerfectGas,
 ) where {N,T}
-    return u_star[N] + _pressure(u_star, gas)
+    return u_star[N] + dimensionless_pressure(u_star, gas)
 end

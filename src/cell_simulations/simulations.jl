@@ -210,7 +210,7 @@ function pressure_field(
     for i ∈ eachindex(IndexCartesian(), csim.cell_ids)
         csim.cell_ids[i] == 0 && continue
         u = u_cells[csim.cell_ids[i]].u
-        P[i] = _pressure(u, gas)
+        P[i] = dimensionless_pressure(u, gas)
     end
     return P
 end
@@ -483,12 +483,8 @@ end
     load_cell_sim(path; T=Float64, show_info=true)
 
 Load a cell-based simulation from path, computed with data type `T`.
-Other kwargs include:
-- `density_unit = ShockwaveProperties._units_ρ`
-- `momentum_density_unit = ShockwaveProperties._units_ρv`
-- `internal_energy_density_unit = ShockwaveProperties._units_ρE`
 """
-function load_cell_sim(path; T = Float64, show_info = true)
+function load_cell_sim(path; steps=:all, T = Float64, show_info = true)
     return open(path, "r") do f
         n_tsteps = read(f, Int)
         mode = read(f, EulerSimulationMode)
@@ -515,6 +511,8 @@ function load_cell_sim(path; T = Float64, show_info = true)
         end
         cell_vals = Vector{Dict{Int,CellDType}}(undef, n_tsteps)
         temp_cell_vals = Vector{CellDType}(undef, n_active)
+        tstep_range
+        
         for k = 1:n_tsteps
             time_steps[k] = read(f, T)
             #@info "Reading..." k t_k = time_steps[k] n_active

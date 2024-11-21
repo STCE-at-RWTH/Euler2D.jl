@@ -1,0 +1,126 @@
+using Euler2D
+using LinearAlgebra
+using Unitful
+using ShockwaveProperties
+using StaticArrays
+
+"""
+    u0(x, p)
+
+Accepts ``x∈ℝ^2`` and a vector of three parameters: free stream density, mach number, and temperature (understood in metric base units)
+"""
+function u0(x, p)
+    pp = PrimitiveProps(p[1], SVector(p[2], 0.0), p[3])
+    return ConservedProps(pp, DRY_AIR)
+end
+
+starting_parameters = SVector(0.662, 4.0, 220.0)
+ambient = u0(nothing, starting_parameters)
+
+x0 = 1.0u"m"
+a0 = speed_of_sound(ambient, DRY_AIR)
+ρ0 = density(ambient)
+scale = EulerEqnsScaling(x0, ρ0, a0)
+
+bcs = (
+    ExtrapolateToPhantom(), # north 
+    ExtrapolateToPhantom(), # south
+    ExtrapolateToPhantom(), # east
+    ExtrapolateToPhantom(), # west
+    StrongWall(), # walls
+)
+bounds = ((-2.0, 0.0), (-1.5, 1.5))
+
+
+just_circle = [CircularObstacle((0.0, 0.0), 0.75)]
+ncells = (150, 225)
+
+##
+
+# Euler2D.simulate_euler_equations_cells(
+#     u0,
+#     starting_parameters,
+#     1.0,
+#     bcs,
+#     just_circle,
+#     bounds,
+#     ncells;
+#     mode = Euler2D.PRIMAL,
+#     gas = DRY_AIR,
+#     scale = scale,
+#     info_frequency = 20,
+#     write_frequency = 10,
+#     max_tsteps = 1000,
+#     output_tag = "circular_obstacle_primal",
+#     output_channel_size = 2,
+#     tasks_per_axis = 2,
+# );
+
+##
+
+# unperturbed computation w/ AD
+
+Euler2D.simulate_euler_equations_cells(
+    u0,
+    starting_parameters,
+    20.0,
+    bcs,
+    just_circle,
+    bounds,
+    ncells;
+    mode = Euler2D.TANGENT,
+    gas = DRY_AIR,
+    scale = scale,
+    info_frequency = 100,
+    write_frequency = 40,
+    max_tsteps = 20000,
+    output_tag = "circular_obstacle_tangent",
+    output_channel_size = 4,
+    tasks_per_axis = 2,
+);
+
+##
+
+# perturbed computations w/o AD
+
+ε = 0.005
+perturbed1 = SVector((1+ε)*starting_parameters[1], starting_parameters[2], starting_parameters[3])
+perturbed2 = SVector(starting_parameters[1], (1+ε)*starting_parameters[2], starting_parameters[3])
+
+Euler2D.simulate_euler_equations_cells(
+    u0,
+    perturbed1,
+    20.0,
+    bcs,
+    just_circle,
+    bounds,
+    ncells;
+    mode = Euler2D.PRIMAL,
+    gas = DRY_AIR,
+    scale = scale,
+    info_frequency = 100,
+    write_frequency = 40,
+    max_tsteps = 20000,
+    output_tag = "circular_obstacle_density_perturbed",
+    output_channel_size = 4,
+    tasks_per_axis = 4,
+);
+
+Euler2D.simulate_euler_equations_cells(
+    u0,
+    perturbed2,
+    20.0,
+    bcs,
+    just_circle,
+    bounds,
+    ncells;
+    mode = Euler2D.PRIMAL,
+    gas = DRY_AIR,
+    scale = scale,
+    info_frequency = 100,
+    write_frequency = 40,
+    max_tsteps = 20000,
+    output_tag = "circular_obstacle_minf_perturbed",
+    output_channel_size = 4,
+    tasks_per_axis = 4,
+);
