@@ -31,19 +31,27 @@ include("array_simulations/array_simulations.jl")
 include("cell_simulations/obstacle.jl")
 include("cell_simulations/grid.jl")
 include("cell_simulations/simulations.jl")
+include("canny_rh_filter.jl")
 
 const _SI_DEFAULT_SCALE = EulerEqnsScaling(1.0u"m", 1.0u"kg/m^3", 1.0u"m/s")
+
+# reexport
+export ShockwaveProperties
+export DRY_AIR
 
 # methods
 export F_euler
 export interface_signal_speeds, maximum_Δt
-export step_euler_hll!, simulate_euler_equations, simulate_euler_equations_cells
+export simulate_euler_equations_cells
 
 # dimension stuff
 export EulerEqnsScaling
 export nondimensionalize, redimensionalize
-export length_scale,
-    time_scale, density_scale, velocity_scale, pressure_scale, energy_density_scale
+export length_scale, time_scale, density_scale
+export velocity_scale, pressure_scale, energy_density_scale
+export dimensionless_mach_number, dimensionless_pressure
+export dimensionless_pressure, dimensionless_speed_of_sound
+export dimensionless_total_enthalpy_density
 
 # boundary condition types
 export BoundaryCondition, PeriodicAxis, EdgeBoundary
@@ -54,19 +62,14 @@ export SupersonicInflow
 # Utility methods
 export numeric_dtype
 
-# EulerSim methods
-# TODO optimize these to use arrays of SArrays
-export EulerSim
-export cell_boundaries, cell_centers, nth_step, eachstep
-export grid_size, n_data_dims, n_space_dims, n_tsteps
-export load_euler_sim
-
 # CellSim methods
 export CellBasedEulerSim, PrimalQuadCell
 export inward_normals, outward_normals, cprops_dtype
+export cell_boundaries, cell_centers, nth_step, eachstep
+export grid_size, n_data_dims, n_space_dims, n_tsteps
 export Obstacle, TriangularObstacle, RectangularObstacle, CircularObstacle
 export point_inside
-export load_cell_sim
+export load_cell_sim, find_shock_in_timestep
 
 function _interpolate_field(fieldfn, sim, t, args...)
     if t < 0 || t > sim.tsteps[end]

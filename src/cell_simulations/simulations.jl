@@ -511,7 +511,6 @@ function load_cell_sim(path; steps=:all, T = Float64, show_info = true)
         end
         cell_vals = Vector{Dict{Int,CellDType}}(undef, n_tsteps)
         temp_cell_vals = Vector{CellDType}(undef, n_active)
-        tstep_range
         
         for k = 1:n_tsteps
             time_steps[k] = read(f, T)

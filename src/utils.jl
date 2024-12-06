@@ -95,3 +95,14 @@ end
 # named constants
 const _dirs_bc_is_reversed = (north = true, south = false, east = false, west = true)
 const _dirs_dim = (north = 2, south = 2, east = 1, west = 1)
+
+function edge_points(center, extent, θ_n)
+    t = extent / 2
+    v = SVector(normal_vec[2], -normal_vec[1])
+
+    # HOW DO I DO THIS
+    # HOW
+    
+
+
+end

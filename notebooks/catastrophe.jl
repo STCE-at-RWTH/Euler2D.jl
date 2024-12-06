@@ -18,11 +18,12 @@ end
 
 # ╔═╡ 6f1542ea-a747-11ef-2466-fd7f67d1ef2c
 begin
-	using DSP
 	using Euler2D
+	using Euler2D: TangentQuadCell
 	using ForwardDiff
 	using LaTeXStrings
 	using LinearAlgebra
+	using Interpolations
 	using Plots
 	using PlutoUI
 	using Printf
@@ -33,6 +34,12 @@ end
 
 # ╔═╡ f5fd0c28-99a8-4c44-a5e4-d7b24e43482c
 PlutoUI.TableOfContents()
+
+# ╔═╡ e7001548-a4b4-4709-b10c-0633a11bd624
+md"""
+# Numerical GTVs
+
+"""
 
 # ╔═╡ c87b546e-8796-44bf-868c-b2d3ad340aa1
 md"""
@@ -57,23 +64,30 @@ end
 const ambient = u0((-Inf, 0.), SVector(0.662, 4.0, 220.0))
 
 # ╔═╡ 3fe1be0d-148a-43f2-b0a5-bb177d1c041d
-scale = EulerEqnsScaling(
+sim_scale = EulerEqnsScaling(
 	1.0u"m", 
 	ShockwaveProperties.density(ambient),
 	speed_of_sound(ambient,DRY_AIR),
 )
 
 # ╔═╡ b23f691e-371e-42c8-86a4-ef534587c699
-ambient_pressure = Euler2D._pressure(nondimensionalize(ambient, scale), DRY_AIR)
+ambient_pressure = Euler2D._pressure(nondimensionalize(ambient, sim_scale), DRY_AIR)
 
-# ╔═╡ 131d7d07-26a1-4280-aab2-87fa043ade30
-F_inf = Euler2D.F_euler(nondimensionalize(ambient, scale), DRY_AIR)
+# ╔═╡ c1a81ef6-5e0f-4ad5-8e73-e9e7f09cefa6
+function dimensionless_speed_of_sound(
+    u_star::SVector{N,T},
+    gas::CaloricallyPerfectGas,
+) where {N,T}
+    P_star = Euler2D._pressure(u_star, gas)
+    return sqrt(gas.γ * (P_star / u_star[1]))
+end
 
-# ╔═╡ c8d34f97-9abf-4f55-91e1-1d6f81339a4e
-F_inf*SVector(1., 0.)
-
-# ╔═╡ efca6cac-c0ce-477f-8361-227d36f54d05
-F_inf*SVector(0., -1.)
+# ╔═╡ e55363f4-5d1d-4837-a30f-80b0b9ae7a8e
+function dimensionless_mach_number(u_star::SVector{N, T}, gas::CaloricallyPerfectGas) where {N, T}
+    a = dimensionless_speed_of_sound(u_star, gas)
+    ρa = u_star[1] * a
+    return Euler2D.select_middle(u_star) ./ ρa
+end
 
 # ╔═╡ d832aeb4-42d6-4b72-88ee-4cdd702a4f48
 md"""
@@ -83,8 +97,16 @@ Load up a data file. This contains a forward-mode computation on a fine grid all
 # ╔═╡ 90bf50cf-7254-4de8-b860-938430e121a9
 tangent=load_cell_sim("../data/circular_obstacle_tangent_longtime.celltape");
 
-# ╔═╡ 88f1388b-4945-4fcb-ac82-80751695cb1c
-last(tangent.tsteps)
+# ╔═╡ 33e635b3-7c63-4b91-a1f2-49da93307f29
+md"""
+We also know that this simulation was done with a blunt, cylindrical obstacle of radius ``0.75`` located at the origin.
+"""
+
+# ╔═╡ 4dc7eebf-48cc-4474-aef0-0cabf1d8eda5
+body = CircularObstacle(SVector(0.,0.), 0.75);
+
+# ╔═╡ d1e47908-c435-4a2e-814b-778d87fd95d3
+
 
 # ╔═╡ 8bd1c644-1690-46cf-ac80-60654fc6d8c0
 md"""
@@ -120,34 +142,13 @@ pfield = map(pressure_field(tangent, n, DRY_AIR)) do val
 	isnothing(val) ? 0.0 : val
 end;
 
-# ╔═╡ be117d54-f7b4-401e-900a-7165393f783d
-dPdx = conv(SVector(1., 0., -1.), SVector(1., 2., 1.), pfield)[3:300, 3:450]
-
-# ╔═╡ e1817ad2-e7e2-4fb5-ae1d-3389a361fd28
-heatmap(dPdx', aspect_ratio=:equal, xlims=(1,300), ylims=(1,450))
-
-# ╔═╡ 9866e7de-e334-441d-b06b-8e105ca2bb2e
-dPdy = conv(SVector(1., 2., 1.), SVector(1., 0., -1.), pfield)[3:300, 3:450]
-
-# ╔═╡ c99d51b3-7a2b-49ee-96bf-9968b8c20345
-heatmap(dPdy', aspect_ratio=:equal, xlims=(1,300), ylims=(1,450))
-
-# ╔═╡ 06e77b51-9ac9-4b22-b4a4-f8b51fe5aefc
-mag = sqrt.(dPdx.^2 + dPdy.^2)
-
-# ╔═╡ ed7fc6dd-b6bb-4d2e-81f0-d08efc024ce7
-heatmap(mag', aspect_ratio=:equal, xlims=(0,301), ylims=(0,451))
-
-# ╔═╡ 0e5e0dca-b725-409f-8602-b47b9b3a109e
-θP = atan.(dPdy./dPdx)
-
 # ╔═╡ cc53f78e-62f5-4bf8-bcb3-5aa72c5fde99
 pressure_tangent = dPdp(tangent, n);
 
 # ╔═╡ d5db89be-7526-4e6d-9dec-441f09606a04
 begin
 	pplot = heatmap(pfield', xlims=(0,300), ylims=(0,450), aspect_ratio=:equal, title=L"P")
-	cbar_limits = (:auto, (-1, 10), :auto)
+	cbar_limits = (:auto, (-2, 10), :auto)
 	titles = [L"\frac{\partial P}{\partial \rho_\inf}", L"\frac{\partial P}{\partial M_\inf}", L"\frac{\partial P}{\partial T_\inf}"]
 	dpplot = [
 		heatmap((@view(pressure_tangent[i, :, :]))', xlims=(0,300), ylims=(0,450), aspect_ratio=:equal, clims=cbar_limits[i], title=titles[i]) for i=1:3
@@ -158,17 +159,422 @@ begin
 	plot(plots..., size=(800,800), dpi=1000)
 end
 
-# ╔═╡ 6599ac72-8621-48dc-b4c3-8aca5d23126b
-behind_shock = map(eachcol(@view pfield[:, 250:351])) do c
-	findfirst(val -> (val-ambient_pressure) > 0, c)
+# ╔═╡ 4e9fb962-cfaa-4650-b50e-2a6245d4bfb4
+@bind n2 Slider(1:n_tsteps(tangent), show_value=true)
+
+# ╔═╡ bcdd4862-ac68-4392-94e2-30b1456d411a
+let
+	dPdM = dPdp(tangent, n2)
+	title = L"\frac{\partial P}{\partial M_\inf}"
+	p = heatmap((@view(dPdM[2, :, :]))', xlims=(0,300), ylims=(0,450), aspect_ratio=:equal, clims=(-10, 10), title=title, size=(450, 600))
+	p
 end
+
+# ╔═╡ e2bdc923-53e6-4a7d-9621-4d3b356a6e41
+md"""
+## Shock Sensitivities
+"""
+
+# ╔═╡ 44ff921b-09d0-42a4-8852-e911212924f9
+md"""
+### Shock Sensor
+Implementation of the technique proposed in _Canny-Edge-Detection/Rankine-Hugoniot-conditions unified shock sensor for inviscid and viscous flows_.
+"""
+
+# ╔═╡ 4f8b4b5d-58de-4197-a676-4090912225a1
+md"""
+---
+"""
+
+# ╔═╡ 706146ae-3dbf-4b78-9fcc-e0832aeebb28
+_diff_op(T) = SVector{3,T}(one(T), zero(T), -one(T))
+
+# ╔═╡ 9b6ab300-6434-4a96-96be-87e30e35111f
+_avg_op(T) = SVector{3,T}(one(T), 2 * one(T), one(T))
+
+# ╔═╡ 21cbdeec-3438-4809-b058-d23ebafc9ee2
+function convolve_sobel(matrix::AbstractMatrix{T}) where {T}
+    Gy = _avg_op(T) * _diff_op(T)'
+    Gx = _diff_op(T) * _avg_op(T)'
+    new_size = size(matrix) .- 2
+    outX = similar(matrix, new_size)
+    outY = similar(matrix, new_size)
+    for i ∈ eachindex(IndexCartesian(), outX, outY)
+        view_range = i:(i+CartesianIndex(2, 2))
+        outX[i] = Gx ⋅ @view(matrix[view_range])
+        outY[i] = Gy ⋅ @view(matrix[view_range])
+    end
+    return outX, outY
+end
+
+# ╔═╡ 90ff1023-103a-4342-b521-e229157001fc
+function discretize_gradient_direction(θ)
+    if -π / 8 ≤ θ < π / 8
+        return 0
+    elseif π / 8 ≤ θ < 3 * π / 8
+        return π / 4
+    elseif 3 * π / 8 ≤ θ < 5 * π / 8
+        return π / 2
+    elseif 5 * π / 8 ≤ θ < 7 * π / 8
+        return 3 * π / 4
+    elseif 7 * π / 8 ≤ θ
+        return π
+    elseif -3 * π / 8 ≤ θ < -π / 8
+        return -π / 4
+    elseif -5 * π / 8 ≤ θ < -3 * π / 8
+        return -π / 2
+    elseif -7 * π / 8 ≤ θ < -5 * π / 8
+        return -3π / 4
+    elseif θ < -7 * π / 8
+        return -π
+    end
+end
+
+# ╔═╡ 5c0be95f-3c4a-4062-afeb-3c1681cae549
+function gradient_grid_direction(θ)
+    if -π / 8 ≤ θ < π / 8
+        return CartesianIndex(1, 0)
+    elseif π / 8 ≤ θ < 3 * π / 8
+        return CartesianIndex(1, 1)
+    elseif 3 * π / 8 ≤ θ < 5 * π / 8
+        return CartesianIndex(0, 1)
+    elseif 5 * π / 8 ≤ θ < 7 * π / 8
+        return CartesianIndex(-1, 1)
+    elseif 7 * π / 8 ≤ θ
+        return CartesianIndex(-1, 0)
+    elseif -3 * π / 8 ≤ θ < -π / 8
+        return CartesianIndex(1, -1)
+    elseif -5 * π / 8 ≤ θ < -3 * π / 8
+        return CartesianIndex(0, -1)
+    elseif -7 * π / 8 ≤ θ < -5 * π / 8
+        return CartesianIndex(-1, -1)
+    elseif θ < -7 * π / 8
+        return CartesianIndex(-1, 0)
+    end
+end
+
+# ╔═╡ 88889293-9afc-4540-a2b9-f30afb62b1de
+function mark_edge_candidate(dP2_view, Gx, Gy)
+    grid_theta = gradient_grid_direction(atan(Gy, Gx))
+    idx = CartesianIndex(2, 2)
+    return dP2_view[idx+grid_theta] < dP2_view[idx] &&
+           dP2_view[idx-grid_theta] < dP2_view[idx]
+end
+
+# ╔═╡ 6da05b47-9763-4d0c-99cc-c945630c770d
+#assumes stationary shock "edge"
+function rh_error_lab_frame(cell_front, cell_behind, θ, gas)
+    m1 = dimensionless_mach_number(cell_front.u, gas)
+    m2 = dimensionless_mach_number(cell_behind.u, gas)
+    dir = sincos(θ)
+    n̂ = SVector(dir[2], dir[1])
+    m_ratio = ShockwaveProperties.shock_normal_mach_ratio(m1, n̂, gas)
+    m1_norm = abs(m1 ⋅ n̂)
+    m2_norm_rh = m1_norm * m_ratio
+    m2_norm_sim = abs(m2 ⋅ n̂)
+    return (
+			abs(m2_norm_rh - m2_norm_sim) / m2_norm_sim, 
+			abs(m1_norm / m2_norm_sim - 1)
+		   )
+end
+
+# ╔═╡ 351d4e18-4c95-428e-a008-5128f547c66d
+function find_shock_in_timestep(
+    sim::CellBasedEulerSim{T,C},
+    t,
+    gas;
+    rh_rel_error_max = 0.5,
+    continuous_variation_thold = 0.01,
+) where {T,C}
+    # TODO really gotta figure out how to deal with nothings or missings in this matrix
+    pfield = map(p -> isnothing(p) ? zero(T) : p, pressure_field(sim, t, gas))
+    Gx, Gy = convolve_sobel(pfield)
+    dP2 = Gx.^2+Gy.^2
+    edge_candidates = Array{Bool,2}(undef, size(dP2) .- 2)
+    window_size = CartesianIndex(2, 2)
+    for i ∈ eachindex(IndexCartesian(), edge_candidates)
+        edge_candidates[i] = mark_edge_candidate(
+            @view(dP2[i:i+window_size]),
+            Gx[i+CartesianIndex(1, 1)],
+            Gy[i+CartesianIndex(1, 1)],
+        )
+    end
+    @info "Number of candidates..." n_candidates = sum(edge_candidates)
+    Gx_overlay = @view(Gx[2:end-1, 2:end-1])
+    Gy_overlay = @view(Gy[2:end-1, 2:end-1])
+    id_overlay = @view(sim.cell_ids[3:end-2, 3:end-2])
+	num_except = 0
+	num_reject_too_smooth = 0
+	num_reject_rh_fail = 0
+    for j ∈ eachindex(IndexCartesian(), edge_candidates, Gx_overlay, Gy_overlay, id_overlay)
+        i = j + CartesianIndex(2, 2)
+        if id_overlay[j] > 0 && edge_candidates[j]
+            θ = atan(Gy_overlay[j], Gx_overlay[j])
+            θ_disc = discretize_gradient_direction(θ)
+            θ_grid = gradient_grid_direction(θ_disc)
+            # gradient points in direction of steepest increase...
+            # cell in "front" of shock should be opposite the gradient?
+            id_front = sim.cell_ids[i-θ_grid]
+            id_back = sim.cell_ids[i+θ_grid]
+            if id_front == 0 || id_back == 0
+                edge_candidates[j] = false
+                continue
+            end
+
+            cell_front = sim.cells[t][id_front]
+            cell_back = sim.cells[t][id_back]
+            try
+                rh_err, sim_err = rh_error_lab_frame(cell_front, cell_back, θ_disc, gas)
+                if rh_err > rh_rel_error_max
+                    # discard edge candidate
+					num_reject_rh_fail += 1
+                    edge_candidates[j] = false
+				elseif sim_err < continuous_variation_thold
+					num_reject_too_smooth += 1
+					edge_candidates[j] = false
+                end
+            catch de
+				if de isa DomainError
+                #@warn "Cell shock comparison caused error" typ=typeof(de) j θ_grid
+                edge_candidates[j] = false
+				num_except += 1
+				else
+					rethrow()
+				end
+            end
+        else
+            edge_candidates[j] = false
+        end
+    end
+    @info "Number of candidates after RH condition thresholding..." n_candidates =
+        sum(edge_candidates) num_except num_reject_rh_fail num_reject_too_smooth
+    return edge_candidates
+end
+
+# ╔═╡ bc0c6a41-adc8-4d18-9574-645704f54b72
+md"""
+---
+"""
+
+# ╔═╡ 4a5086bc-5c36-4e71-9d3a-8f77f48a90f9
+md"""
+The implemented shock sensor has some issues (we need to set ``TOL=0.7``), but produces a reasonable result on this test data. We can clearly see the shock front that forms in front of the body, and the other "shocks" are likely numerical effects from the terribly-done rasterization of the body.
+
+``TOL`` is much more relaxed here than in the original paper, but the sensor was originally tested on data generated using a MUSCL implementation.
+"""
+
+# ╔═╡ 747f0b67-546e-4222-abc8-2007daa3f658
+@bind rh_err Slider(0.0:0.01:2.5, show_value=true, default=0.7)
+
+# ╔═╡ 2cb33e16-d735-4e60-82a5-aa22da0288fb
+@bind smoothness_err Slider(0.000:0.005:0.2, show_value=true, default=0.1)
+
+# ╔═╡ 4b036b02-1089-4fa8-bd3a-95659c9293cd
+# ╠═╡ show_logs = false
+sf = find_shock_in_timestep(tangent, 267, DRY_AIR; rh_rel_error_max=rh_err, continuous_variation_thold=smoothness_err);
+
+# ╔═╡ 24da34ca-04cd-40ae-ac12-c342824fa26e
+let
+	data = map(sf, @view tangent.cell_ids[3:end-2, 3:end-2]) do v1, v2
+		if v2 == 0
+			missing
+		else
+			v1
+		end
+	end
+	p = heatmap(cell_centers(tangent, 1)[3:end-2], cell_centers(tangent, 2)[3:end-2], data', cbar=false, aspect_ratio=:equal, xlims=(-2, 0), ylims=(-1.5, 1.5), title="Marked Shock Locations", xlabel=L"x", ylabel=L"y", size=(400, 600, ),dpi=1000)
+	ys = -0.9:0.05:0.9
+	#plot!(p, sp_interp.(ys), ys, label=false, lw=2, style=:dot)
+	p
+end
+
+# ╔═╡ 92044a9f-2078-48d1-8181-34be87b03c4c
+md"""
+### Deriving ``\xi``
+
+We are primarily interested in what happens when we vary any of the parameters in the ambient flow change. 
+
+(Shape derivatives are coming. I know what needs to get done.)
+
+If we take the cell-average data available from the simulation, we can choose a (perhaps even slightly) coarser grid than was used for the simulation, and extract a linear interpolation of the bow shock.
+"""
+
+# ╔═╡ eb5a2dc6-9c7e-4099-a564-15f1cec11caa
+md"""
+---
+"""
+
+# ╔═╡ 9c601619-aaf1-4f3f-b2e2-10422d8ac640
+function shock_cells(sim, n, shock_field)
+	sort(reduce(vcat, filter(!isnothing, map(enumerate(eachcol(shock_field))) do (j, col)
+		i = findfirst(col)
+		isnothing(i) && return nothing
+		id = @view(sim.cell_ids[2:end-1, 2:end-1])[i, j]
+		return sim.cells[n][id]
+	end)); lt=(a, b) -> a.center[2] < b.center[2])
+end
+
+# ╔═╡ e0a934d6-3962-46d5-b172-fb970a537cc0
+function shock_points(sim::CellBasedEulerSim{T, C}, n, shock_field) where {T, C}
+	sp = shock_cells(sim, n, shock_field)
+	res = Matrix{T}(undef, (length(sp), 2))
+	for i ∈ eachindex(sp)
+		res[i, :] = sp[i].center
+	end
+	#sort!(sp; lt=(a, b) -> a[2] < b[2])
+	return res
+end
+
+# ╔═╡ 62ebd91b-8980-4dc5-b61b-ba6a21ac357d
+all_shock_points = shock_points(tangent, 267, sf);
+
+# ╔═╡ be8ba02d-0d31-4720-9e39-595b549814cc
+sp_interp = LinearInterpolation(all_shock_points[:, 2], all_shock_points[:,1]);
+
+# ╔═╡ a1dc855f-0b24-4373-ba00-946719d38d95
+md"""
+---
+"""
+
+# ╔═╡ 93043797-66d1-44c3-b8bb-e17deac70cfa
+md"""
+If we take a set of points along the ``y``-axis, we can create cells that have vertices on any of the:
+ - computational domain boundaries
+ - bow shock
+ - blunt body
+
+We can construct cells from these points and apply the conservation law again to compute ``εξ``.
+"""
+
+# ╔═╡ a0ae957d-26aa-48a5-a642-56cdbf1b8012
+y_axis_points = let
+	y1 = -1.5
+	y2 = first(@view all_shock_points[:, 2])
+	y3 = body.center[2]-body.radius
+	y4 = body.center[2]+body.radius
+	y5 = last(@view all_shock_points[:, 2])
+	y6 = 1.5
+
+	
+	(
+		collect(range(y1, y2; length=8)),
+		collect(range(y2, y3; length=8)),
+		collect(range(y3, y4; length=32)),
+		collect(range(y4, y5; length=8)),
+		collect(range(y5, y6; length=8))
+	)
+	
+end
+
+# ╔═╡ cc0ead94-8af4-4c6b-ad05-79a2539a3271
+below_shock_points = [
+		SMatrix{2, 4}(0.0, y1, -2.0, y1, -2.0, y2, 0.0, y2) for (y1, y2) ∈ zip(y_axis_points[1][1:end-1], y_axis_points[1][2:end])
+];
+
+# ╔═╡ d8a94eb8-2752-4273-bc7b-405c6416f2b2
+above_shock_points = [
+		SMatrix{2, 4}(0.0, y1, -2.0, y1, -2.0, y2, 0.0, y2) for (y1, y2) ∈ zip(y_axis_points[end][1:end-1], y_axis_points[end][2:end])
+];
+
+# ╔═╡ 8960c7e3-2234-46f7-9c5d-d41f656fe48a
+ambient_points = [
+	SMatrix{2, 4}(sp_interp(y1), y1, -2.0, y1, -2.0, y2, sp_interp(y2), y2) for (y1, y2) ∈ zip(vcat(y_axis_points[2:end-1]...)[1:end-1], vcat(y_axis_points[2:end-1]...)[2:end])
+];
+
+# ╔═╡ 44b27e39-b2b7-4548-8091-7479fffbc470
+no_body_points = vcat([
+	SMatrix{2, 4}(0.0, y1, sp_interp(y1), y1, sp_interp(y2), y2, 0, y2) for (y1, y2) ∈ zip(y_axis_points[2][1:end-1], y_axis_points[2][2:end])
+], [
+	SMatrix{2, 4}(0.0, y1, sp_interp(y1), y1, sp_interp(y2), y2, 0, y2) for (y1, y2) ∈ zip(y_axis_points[4][1:end-1], y_axis_points[4][2:end])
+]);
+
+# ╔═╡ 3323f6be-deca-4780-a877-d018b0651aeb
+body_points = [
+	SMatrix{2, 4}(-sqrt(0.75^2-y1^2), y1, sp_interp(y1), y1, sp_interp(y2), y2, -sqrt(0.75^2-y2^2), y2) for (y1, y2) ∈ zip(y_axis_points[3][1:end-1], y_axis_points[3][2:end])
+]
+
+# ╔═╡ c6e3873e-7fef-4c38-bf3f-de71f866057f
+let
+	xc = body.center[1] .+ body.radius .* cos.(0:0.01:2π)
+	yc = body.center[2] .+ body.radius .* sin.(0:0.01:2π)
+	p = plot(xc, yc, aspect_ratio=:equal, xlims=(-2, 0), ylims=(-1.5, 1.5), label=false, fill=true, dpi=1000, size=(600, 800))
+	for poly ∈ vcat(below_shock_points, above_shock_points)
+		pl = hcat(poly, @view poly[:, 1])
+		plot!(p, @view(pl[1, :]), @view(pl[2, :]) , lw=0.5, fill=true, fillalpha=0.5, label=false, color=:black)
+	end
+	for poly ∈ ambient_points
+		pl = hcat(poly, @view poly[:, 1])
+		plot!(p, @view(pl[1, :]), @view(pl[2, :]) , lw=0.5, fill=true, fillalpha=0.5, label=false, color=:orange)
+	end
+	for poly ∈ no_body_points
+		pl = hcat(poly, @view poly[:, 1])
+		plot!(p, @view(pl[1, :]), @view(pl[2, :]) , lw=0.5, fill=true, fillalpha=0.5, label=false, color=:red)
+	end
+	for poly ∈ body_points
+		pl = hcat(poly, @view poly[:, 1])
+		plot!(p, @view(pl[1, :]), @view(pl[2, :]) , lw=0.5, fill=true, fillalpha=0.5, label=false, color=:green)
+	end
+	spys = range(-0.95, 0.93; length=20)
+	spxs = sp_interp.(spys)
+	plot!(p, spxs, spys, label="Shock Front", lw=2)
+	p
+end
+
+# ╔═╡ 4d202323-e1a9-4b24-b98e-7d17a6cc144f
+struct XiCell{T}#, NS, NE}
+	pts::SMatrix{2, 4, T, 8}
+	# wall_length::T
+	# wall_normal::SVector{2, T}
+	# u::SVector{4, T}
+	# u̇::SMatrix{4, NS, T, NE}
+end
+
+# ╔═╡ 38c1679e-803a-49e9-b4cc-b47b1d1ec954
+function find_nearest_idx(range, pt)
+	Δ = step(range)
+	i = findfirst(>(pt), range)
+	if range[i] - pt > Δ/2
+		i -= 1
+	end
+	return i
+end
+
+# ╔═╡ 407e21b2-2c5d-4d98-89f3-4dbfe2672b95
+function overlap_lower(y, cell)
+	y_low = cell.center[2] - cell.extent[2]/2
+	return y-y_low
+end
+
+# ╔═╡ a1885025-00eb-484b-a102-1e8b4f8cfe0a
+function build_split_ξ_cells(y, dy, sp_func, sim::CellBasedEulerSim{T, TangentQuadCell{T, NS, PC}}) where {T, NS, PC}
+	y1 = y-dy/2
+	y2 = y+dy/2
+	ycs = cell_centers(sim,2)
+	j1 = find_nearest_idx(ycs, y1)
+	j2 = find_nearest_idx(ycs, y2)
+
+	s1 = sp_func(y1)
+	s2 = sp_func(y2)
+
+	xcs = cell_centers(sim, 1)
+	i1 = find_nearest_idx(xcs, s1)
+	i2 = find_nearest_idx(xcs, s2)
+
+	id1 = 1
+	
+	
+	return j1, j2, i1, i2
+end
+
+# ╔═╡ fb42c01e-bb70-4b00-b6e1-17889437ce8b
+j = build_split_ξ_cells(0, 0.1, sp_interp, tangent)
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
 [deps]
-DSP = "717857b8-e6f2-59f4-9121-6e50c889abd2"
 Euler2D = "c24a2923-03cb-4692-957a-ccd31f2ad327"
 ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
+Interpolations = "a98d9a8b-a2ab-59e6-89dd-64a1c18fca59"
 LaTeXStrings = "b964fa9f-0449-5b57-a5c2-d3ea65f4040f"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 Plots = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
@@ -179,9 +585,9 @@ StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 Unitful = "1986cc42-f94f-5a68-af5c-568840ba703d"
 
 [compat]
-DSP = "~0.7.10"
 Euler2D = "~0.5.1"
 ForwardDiff = "~0.10.38"
+Interpolations = "~0.14.0"
 LaTeXStrings = "~1.4.0"
 Plots = "~1.40.9"
 PlutoUI = "~0.7.60"
@@ -194,20 +600,9 @@ Unitful = "~1.21.0"
 PLUTO_MANIFEST_TOML_CONTENTS = """
 # This file is machine-generated - editing it directly is not advised
 
-julia_version = "1.11.1"
+julia_version = "1.11.2"
 manifest_format = "2.0"
-project_hash = "4ca3596927e166d971ce48586b2859a1ac595d0c"
-
-[[deps.AbstractFFTs]]
-deps = ["LinearAlgebra"]
-git-tree-sha1 = "d92ad398961a3ed262d8bf04a1a2b8340f915fef"
-uuid = "621f4979-c628-5d54-868e-fcf4e3e8185c"
-version = "1.5.0"
-weakdeps = ["ChainRulesCore", "Test"]
-
-    [deps.AbstractFFTs.extensions]
-    AbstractFFTsChainRulesCoreExt = "ChainRulesCore"
-    AbstractFFTsTestExt = "Test"
+project_hash = "09079fb36193631658a9052667d66a91b6645d79"
 
 [[deps.AbstractPlutoDingetjes]]
 deps = ["Pkg"]
@@ -247,6 +642,12 @@ version = "1.1.2"
 [[deps.Artifacts]]
 uuid = "56f22d72-fd6d-98f1-02f0-08ddc0907c33"
 version = "1.11.0"
+
+[[deps.AxisAlgorithms]]
+deps = ["LinearAlgebra", "Random", "SparseArrays", "WoodburyMatrices"]
+git-tree-sha1 = "66771c8d21c8ff5e3a93379480a2307ac36863f7"
+uuid = "13072b0f-2c55-5437-9ae7-d433b7a33950"
+version = "1.0.1"
 
 [[deps.Base64]]
 uuid = "2a0f44e3-6c83-55bd-87e4-b1978d98bd5f"
@@ -369,12 +770,6 @@ git-tree-sha1 = "439e35b0b36e2e5881738abc8857bd92ad6ff9a8"
 uuid = "d38c429a-6771-53c6-b99e-75d170b6e991"
 version = "0.6.3"
 
-[[deps.DSP]]
-deps = ["Compat", "FFTW", "IterTools", "LinearAlgebra", "Polynomials", "Random", "Reexport", "SpecialFunctions", "Statistics"]
-git-tree-sha1 = "0df00546373af8eee1598fb4b2ba480b1ebe895c"
-uuid = "717857b8-e6f2-59f4-9121-6e50c889abd2"
-version = "0.7.10"
-
 [[deps.DataAPI]]
 git-tree-sha1 = "abe83f3a2f1b857aac70ef8b269080af17764bbe"
 uuid = "9a962f9c-6df0-11e9-0e5d-c546b8b5ee8a"
@@ -414,6 +809,11 @@ deps = ["IrrationalConstants", "LogExpFunctions", "NaNMath", "Random", "SpecialF
 git-tree-sha1 = "23163d55f885173722d1e4cf0f6110cdbaf7e272"
 uuid = "b552c78f-8df3-52c6-915a-8e097449b14b"
 version = "1.15.1"
+
+[[deps.Distributed]]
+deps = ["Random", "Serialization", "Sockets"]
+uuid = "8ba89e20-285c-5b6f-9357-94700520ee1b"
+version = "1.11.0"
 
 [[deps.DocStringExtensions]]
 deps = ["LibGit2"]
@@ -462,18 +862,6 @@ git-tree-sha1 = "466d45dc38e15794ec7d5d63ec03d776a9aff36e"
 uuid = "b22a6f82-2f65-5046-a5b2-351ab43fb4e5"
 version = "4.4.4+1"
 
-[[deps.FFTW]]
-deps = ["AbstractFFTs", "FFTW_jll", "LinearAlgebra", "MKL_jll", "Preferences", "Reexport"]
-git-tree-sha1 = "4820348781ae578893311153d69049a93d05f39d"
-uuid = "7a1cc6ca-52ef-59f5-83cd-3a7055c09341"
-version = "1.8.0"
-
-[[deps.FFTW_jll]]
-deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
-git-tree-sha1 = "4d81ed14783ec49ce9f2e168208a12ce1815aa25"
-uuid = "f5851436-0d7a-5f13-b9de-f02708fd171a"
-version = "3.3.10+1"
-
 [[deps.FileWatching]]
 uuid = "7b1f6079-737a-58dc-b8bc-7a2ca5c1b5ee"
 version = "1.11.0"
@@ -516,11 +904,6 @@ deps = ["Artifacts", "JLLWrappers", "Libdl"]
 git-tree-sha1 = "1ed150b39aebcc805c26b93a8d0122c940f64ce2"
 uuid = "559328eb-81f9-559d-9380-de523a88c83c"
 version = "1.0.14+0"
-
-[[deps.Future]]
-deps = ["Random"]
-uuid = "9fa8497b-333b-5362-9e8d-4d0656e87820"
-version = "1.11.0"
 
 [[deps.GLFW_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Libglvnd_jll", "Xorg_libXcursor_jll", "Xorg_libXi_jll", "Xorg_libXinerama_jll", "Xorg_libXrandr_jll", "libdecor_jll", "xkbcommon_jll"]
@@ -593,16 +976,16 @@ git-tree-sha1 = "b6d6bfdd7ce25b0f9b2f6b3dd56b2673a66c8770"
 uuid = "b5f81e59-6552-4d32-b1f0-c071b021bf89"
 version = "0.2.5"
 
-[[deps.IntelOpenMP_jll]]
-deps = ["Artifacts", "JLLWrappers", "LazyArtifacts", "Libdl"]
-git-tree-sha1 = "10bd689145d2c3b2a9844005d01087cc1194e79e"
-uuid = "1d5cc7b8-4909-519e-a0f8-d0f5ad9712d0"
-version = "2024.2.1+0"
-
 [[deps.InteractiveUtils]]
 deps = ["Markdown"]
 uuid = "b77e0a4c-d291-57a0-90e8-8db25a27a240"
 version = "1.11.0"
+
+[[deps.Interpolations]]
+deps = ["AxisAlgorithms", "ChainRulesCore", "LinearAlgebra", "OffsetArrays", "Random", "Ratios", "Requires", "SharedArrays", "SparseArrays", "StaticArrays", "WoodburyMatrices"]
+git-tree-sha1 = "00a19d6ab0cbdea2978fc23c5a6482e02c192501"
+uuid = "a98d9a8b-a2ab-59e6-89dd-64a1c18fca59"
+version = "0.14.0"
 
 [[deps.InverseFunctions]]
 git-tree-sha1 = "a779299d77cd080bf77b97535acecd73e1c5e5cb"
@@ -618,11 +1001,6 @@ weakdeps = ["Dates", "Test"]
 git-tree-sha1 = "630b497eafcc20001bba38a4651b327dcfc491d2"
 uuid = "92d709cd-6900-40b7-9082-c6be49f344b6"
 version = "0.2.2"
-
-[[deps.IterTools]]
-git-tree-sha1 = "42d5f897009e7ff2cf88db414a389e5ed1bdd023"
-uuid = "c8e1da08-722c-5040-9ed9-7db0dc04731e"
-version = "1.10.0"
 
 [[deps.JLFzf]]
 deps = ["Pipe", "REPL", "Random", "fzf_jll"]
@@ -692,11 +1070,6 @@ version = "0.16.5"
     DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
     SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
     SymEngine = "123dc426-2d89-5057-bbad-38513e3affd8"
-
-[[deps.LazyArtifacts]]
-deps = ["Artifacts", "Pkg"]
-uuid = "4af54fe1-eca0-43a8-85a7-787d91b784e3"
-version = "1.11.0"
 
 [[deps.LibCURL]]
 deps = ["LibCURL_jll", "MozillaCACerts_jll"]
@@ -811,12 +1184,6 @@ git-tree-sha1 = "65f28ad4b594aebe22157d6fac869786a255b7eb"
 uuid = "6c6e2e6c-3030-632d-7369-2d6c69616d65"
 version = "0.1.4"
 
-[[deps.MKL_jll]]
-deps = ["Artifacts", "IntelOpenMP_jll", "JLLWrappers", "LazyArtifacts", "Libdl", "oneTBB_jll"]
-git-tree-sha1 = "f046ccd0c6db2832a9f639e2c669c6fe867e5f4f"
-uuid = "856f044c-d86e-5d09-b602-aeab76dc8ba7"
-version = "2024.2.0+0"
-
 [[deps.MacroTools]]
 deps = ["Markdown", "Random"]
 git-tree-sha1 = "2fa9ee3e63fd3a4f7a9a4f4744a52f4856de82df"
@@ -867,6 +1234,17 @@ version = "1.0.2"
 [[deps.NetworkOptions]]
 uuid = "ca575930-c2e3-43a9-ace4-1e988b2c1908"
 version = "1.2.0"
+
+[[deps.OffsetArrays]]
+git-tree-sha1 = "1a27764e945a152f7ca7efa04de513d473e9542e"
+uuid = "6fe1bfb0-de20-5000-8ca7-80f57d26f881"
+version = "1.14.1"
+
+    [deps.OffsetArrays.extensions]
+    OffsetArraysAdaptExt = "Adapt"
+
+    [deps.OffsetArrays.weakdeps]
+    Adapt = "79e6a3ab-5dfb-504d-930d-738a2a938a0e"
 
 [[deps.Ogg_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
@@ -988,24 +1366,6 @@ git-tree-sha1 = "eba4810d5e6a01f612b948c9fa94f905b49087b0"
 uuid = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
 version = "0.7.60"
 
-[[deps.Polynomials]]
-deps = ["LinearAlgebra", "OrderedCollections", "RecipesBase", "Requires", "Setfield", "SparseArrays"]
-git-tree-sha1 = "adc25dbd4d13f148f3256b6d4743fe7e63a71c4a"
-uuid = "f27b6e38-b328-58d1-80ce-0feddd5e7a45"
-version = "4.0.12"
-
-    [deps.Polynomials.extensions]
-    PolynomialsChainRulesCoreExt = "ChainRulesCore"
-    PolynomialsFFTWExt = "FFTW"
-    PolynomialsMakieCoreExt = "MakieCore"
-    PolynomialsMutableArithmeticsExt = "MutableArithmetics"
-
-    [deps.Polynomials.weakdeps]
-    ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
-    FFTW = "7a1cc6ca-52ef-59f5-83cd-3a7055c09341"
-    MakieCore = "20f20a25-4f0e-4fdf-b5d1-57303727442b"
-    MutableArithmetics = "d8a4904e-b15c-11e9-3269-09a3773c0cb0"
-
 [[deps.PrecompileTools]]
 deps = ["Preferences"]
 git-tree-sha1 = "5aa36f7049a63a1528fe8f7c3f2113413ffd4e1f"
@@ -1057,6 +1417,16 @@ deps = ["SHA"]
 uuid = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 version = "1.11.0"
 
+[[deps.Ratios]]
+deps = ["Requires"]
+git-tree-sha1 = "1342a47bf3260ee108163042310d26f2be5ec90b"
+uuid = "c84ed2f1-dad5-54f0-aa8e-dbefe2724439"
+version = "0.4.5"
+weakdeps = ["FixedPointNumbers"]
+
+    [deps.Ratios.extensions]
+    RatiosFixedPointNumbersExt = "FixedPointNumbers"
+
 [[deps.RecipesBase]]
 deps = ["PrecompileTools"]
 git-tree-sha1 = "5c3d09cc4f31f5fc6af001c250bf1278733100ff"
@@ -1100,11 +1470,10 @@ version = "1.2.1"
 uuid = "9e88b42a-f829-5b0c-bbe9-9e923198166b"
 version = "1.11.0"
 
-[[deps.Setfield]]
-deps = ["ConstructionBase", "Future", "MacroTools", "StaticArraysCore"]
-git-tree-sha1 = "e2cc6d8c88613c05e1defb55170bf5ff211fbeac"
-uuid = "efcf1570-3423-57d1-acb7-fd33fddbac46"
-version = "1.1.1"
+[[deps.SharedArrays]]
+deps = ["Distributed", "Mmap", "Random", "Serialization"]
+uuid = "1a1011a3-84de-559e-8e89-a11a2f7dc383"
+version = "1.11.0"
 
 [[deps.ShockwaveProperties]]
 deps = ["LinearAlgebra", "StaticArrays", "Unitful"]
@@ -1315,6 +1684,12 @@ deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
 git-tree-sha1 = "93f43ab61b16ddfb2fd3bb13b3ce241cafb0e6c9"
 uuid = "2381bf8a-dfd0-557d-9999-79630e7b1b91"
 version = "1.31.0+0"
+
+[[deps.WoodburyMatrices]]
+deps = ["LinearAlgebra", "SparseArrays"]
+git-tree-sha1 = "5f24e158cf4cee437052371455fe361f526da062"
+uuid = "efce3f68-66dc-5838-9240-27a6d6f5f9b6"
+version = "0.5.6"
 
 [[deps.XML2_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Libiconv_jll", "Zlib_jll"]
@@ -1571,12 +1946,6 @@ deps = ["Artifacts", "Libdl"]
 uuid = "8e850ede-7688-5339-a07c-302acd2aaf8d"
 version = "1.59.0+0"
 
-[[deps.oneTBB_jll]]
-deps = ["Artifacts", "JLLWrappers", "Libdl"]
-git-tree-sha1 = "7d0ea0f4895ef2f5cb83645fa689e52cb55cf493"
-uuid = "1317d2d5-d96f-522e-a858-c73665f53c3e"
-version = "2021.12.0+0"
-
 [[deps.p7zip_jll]]
 deps = ["Artifacts", "Libdl"]
 uuid = "3f19e933-33d8-53b3-aaab-bd5110c3b7a0"
@@ -1604,31 +1973,64 @@ version = "1.4.1+1"
 # ╔═╡ Cell order:
 # ╠═6f1542ea-a747-11ef-2466-fd7f67d1ef2c
 # ╠═f5fd0c28-99a8-4c44-a5e4-d7b24e43482c
+# ╟─e7001548-a4b4-4709-b10c-0633a11bd624
 # ╟─c87b546e-8796-44bf-868c-b2d3ad340aa1
 # ╠═0df888bd-003e-4b49-9c2a-c28a7ccc33d2
 # ╠═afc11d27-1958-49ba-adfa-237ba7bbd186
 # ╠═3fe1be0d-148a-43f2-b0a5-bb177d1c041d
 # ╠═b23f691e-371e-42c8-86a4-ef534587c699
-# ╠═131d7d07-26a1-4280-aab2-87fa043ade30
-# ╠═c8d34f97-9abf-4f55-91e1-1d6f81339a4e
-# ╠═efca6cac-c0ce-477f-8361-227d36f54d05
+# ╠═c1a81ef6-5e0f-4ad5-8e73-e9e7f09cefa6
+# ╠═e55363f4-5d1d-4837-a30f-80b0b9ae7a8e
 # ╟─d832aeb4-42d6-4b72-88ee-4cdd702a4f48
-# ╠═90bf50cf-7254-4de8-b860-938430e121a9
-# ╠═88f1388b-4945-4fcb-ac82-80751695cb1c
+# ╟─90bf50cf-7254-4de8-b860-938430e121a9
+# ╠═33e635b3-7c63-4b91-a1f2-49da93307f29
+# ╠═4dc7eebf-48cc-4474-aef0-0cabf1d8eda5
+# ╠═d1e47908-c435-4a2e-814b-778d87fd95d3
 # ╟─8bd1c644-1690-46cf-ac80-60654fc6d8c0
 # ╠═f6147284-02ec-42dd-9c2f-a1a7534ae9fa
-# ╠═be117d54-f7b4-401e-900a-7165393f783d
-# ╠═9866e7de-e334-441d-b06b-8e105ca2bb2e
-# ╠═e1817ad2-e7e2-4fb5-ae1d-3389a361fd28
-# ╠═c99d51b3-7a2b-49ee-96bf-9968b8c20345
-# ╠═06e77b51-9ac9-4b22-b4a4-f8b51fe5aefc
-# ╠═ed7fc6dd-b6bb-4d2e-81f0-d08efc024ce7
-# ╠═0e5e0dca-b725-409f-8602-b47b9b3a109e
 # ╟─d14c3b81-0f19-4207-8e67-13c09fd7636a
-# ╠═893ec2c8-88e8-4d72-aab7-88a1efa30b47
+# ╟─893ec2c8-88e8-4d72-aab7-88a1efa30b47
 # ╠═cc53f78e-62f5-4bf8-bcb3-5aa72c5fde99
 # ╠═2e3b9675-4b66-4623-b0c4-01acdf4e158c
-# ╠═d5db89be-7526-4e6d-9dec-441f09606a04
-# ╠═6599ac72-8621-48dc-b4c3-8aca5d23126b
+# ╟─d5db89be-7526-4e6d-9dec-441f09606a04
+# ╟─4e9fb962-cfaa-4650-b50e-2a6245d4bfb4
+# ╠═bcdd4862-ac68-4392-94e2-30b1456d411a
+# ╟─e2bdc923-53e6-4a7d-9621-4d3b356a6e41
+# ╟─44ff921b-09d0-42a4-8852-e911212924f9
+# ╟─4f8b4b5d-58de-4197-a676-4090912225a1
+# ╟─706146ae-3dbf-4b78-9fcc-e0832aeebb28
+# ╟─9b6ab300-6434-4a96-96be-87e30e35111f
+# ╟─21cbdeec-3438-4809-b058-d23ebafc9ee2
+# ╟─90ff1023-103a-4342-b521-e229157001fc
+# ╟─5c0be95f-3c4a-4062-afeb-3c1681cae549
+# ╟─88889293-9afc-4540-a2b9-f30afb62b1de
+# ╟─6da05b47-9763-4d0c-99cc-c945630c770d
+# ╟─351d4e18-4c95-428e-a008-5128f547c66d
+# ╟─bc0c6a41-adc8-4d18-9574-645704f54b72
+# ╟─4a5086bc-5c36-4e71-9d3a-8f77f48a90f9
+# ╠═747f0b67-546e-4222-abc8-2007daa3f658
+# ╠═2cb33e16-d735-4e60-82a5-aa22da0288fb
+# ╠═4b036b02-1089-4fa8-bd3a-95659c9293cd
+# ╟─24da34ca-04cd-40ae-ac12-c342824fa26e
+# ╟─92044a9f-2078-48d1-8181-34be87b03c4c
+# ╟─eb5a2dc6-9c7e-4099-a564-15f1cec11caa
+# ╠═9c601619-aaf1-4f3f-b2e2-10422d8ac640
+# ╠═e0a934d6-3962-46d5-b172-fb970a537cc0
+# ╠═62ebd91b-8980-4dc5-b61b-ba6a21ac357d
+# ╠═be8ba02d-0d31-4720-9e39-595b549814cc
+# ╟─a1dc855f-0b24-4373-ba00-946719d38d95
+# ╟─93043797-66d1-44c3-b8bb-e17deac70cfa
+# ╠═a0ae957d-26aa-48a5-a642-56cdbf1b8012
+# ╠═cc0ead94-8af4-4c6b-ad05-79a2539a3271
+# ╠═d8a94eb8-2752-4273-bc7b-405c6416f2b2
+# ╠═8960c7e3-2234-46f7-9c5d-d41f656fe48a
+# ╠═44b27e39-b2b7-4548-8091-7479fffbc470
+# ╠═3323f6be-deca-4780-a877-d018b0651aeb
+# ╟─c6e3873e-7fef-4c38-bf3f-de71f866057f
+# ╠═4d202323-e1a9-4b24-b98e-7d17a6cc144f
+# ╟─38c1679e-803a-49e9-b4cc-b47b1d1ec954
+# ╟─407e21b2-2c5d-4d98-89f3-4dbfe2672b95
+# ╠═a1885025-00eb-484b-a102-1e8b4f8cfe0a
+# ╠═fb42c01e-bb70-4b00-b6e1-17889437ce8b
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

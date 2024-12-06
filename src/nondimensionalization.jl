@@ -46,6 +46,12 @@ function dimensionless_speed_of_sound(
     return sqrt(gas.γ * (P_star / u_star[1]))
 end
 
+function dimensionless_mach_number(u_star::SVector{N, T}, gas::CaloricallyPerfectGas) where {N, T}
+    a = dimensionless_speed_of_sound(u_star, gas)
+    ρa = u_star[1] * a
+    return select_middle(u_star) ./ ρa
+end
+
 """
     dimensionless_total_enthalpy_density(u_star, gas)
 
