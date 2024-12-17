@@ -808,41 +808,32 @@ let
 	p
 end
 
-# ╔═╡ 3808e261-3f8b-4127-8878-1e8e69e61e0f
-coarse_cells
+# ╔═╡ 3a8cd7e2-fae9-4e70-8c92-004b17352506
+md"""
+## Solving for ``\dot x``
 
-# ╔═╡ 45b1dc63-1ea2-4ca0-8ef9-625c2ac92750
-@view eachcol(coarse_cells[1].pts)[2:end]
+Each of the points on the shock can be used to define new cells ``P_i``. For each of the original cells, as well as the new cells, we know that:
+```math
+\oint_{\partial P_i} F(\bar{u}_i)\cdot\hat n\,ds = 0
+```
 
-# ╔═╡ eb26c0fd-7ad7-408b-bc75-5a5e48bbe822
-function normcoldiff_static(m::SMatrix{M, N, T, L}) where {M, N, T, L}
-	d = diff(m; dims=2)
-	for j = 1:N-1
-		v = norm(SVector(d[1, j], d[2, j]))
-		for i=1:M
-			@reset d[i, j] = d[i,j]/ v
-		end
-	end
-	return d
-end
+This defines a system of equations, where only the ``x``-coordinate of the points on the shock is free. ``P_{N, S, E, W}`` is the neighbor cell to the north, south, east , or west respectively.
 
-# ╔═╡ 21a9935e-ce62-41c4-8da2-f573f7e0a65e
-@benchmark normcoldiff_static($(polyA))
+```math
+	\left(F(\bar u_i) - F(\bar u_S)\right)\hat n_{i,S}L_{i, S} + F(\bar u_i)\hat n_{i,E}L_{i, E} + F(\bar u_i)\hat n_{i,N}L_{i, N} + F(\bar u_i)\hat n_{i,W}L_{i, W} = 0
+```
 
-# ╔═╡ 310b14b6-364a-4828-a10d-874188b11d9c
-normcoldiff_static(polyA)
+We can stack all of these equations into ``\mathcal G``, and then use the implicit function theorem:
+```math
+\begin{aligned}
+0 &= \mathcal {G}(\bar u, x)\\
+0 &= \nabla_u\mathcal{G}(\bar u, x)\dot u + \nabla_x\mathcal{G}(\bar u, x)\dot x\\
+-\nabla_x\mathcal{G}(\bar u, x)\dot x &= \nabla_u\mathcal{G}(\bar u, x)\dot u
+\end{aligned}
+```
 
-# ╔═╡ ff524def-2208-4113-a1fd-b60c2eb81e52
-a=@SVector [1,2]
-
-# ╔═╡ 4d5ba856-777e-40df-9df4-d6f573e5d2dc
-b=@SVector [1,2]
-
-# ╔═╡ 11fb2625-aca5-4d3e-bf46-39b0aad9c60d
-hcat(a, b)
-
-# ╔═╡ 3118df76-bcf7-4930-bcc8-62b1b6b88cd8
-tangent.cells[267][first(all_cells_overlapping(coarse_cells[20].pts, tangent))]
+``\bar u``, ``x``, and ``\dot u`` are known, so we _should_ be able to solve this system of equations.
+"""
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
@@ -860,19 +851,6 @@ Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 ShockwaveProperties = "77d2bf28-a3e9-4b9c-9fcf-b85f74cc8a50"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 Unitful = "1986cc42-f94f-5a68-af5c-568840ba703d"
-
-[compat]
-Accessors = "~0.1.38"
-BenchmarkTools = "~1.5.0"
-Euler2D = "~0.5.1"
-ForwardDiff = "~0.10.38"
-Interpolations = "~0.14.0"
-LaTeXStrings = "~1.4.0"
-Plots = "~1.40.9"
-PlutoUI = "~0.7.60"
-ShockwaveProperties = "~0.2.6"
-StaticArrays = "~1.9.8"
-Unitful = "~1.21.0"
 """
 
 # ╔═╡ 00000000-0000-0000-0000-000000000002
@@ -881,7 +859,7 @@ PLUTO_MANIFEST_TOML_CONTENTS = """
 
 julia_version = "1.11.2"
 manifest_format = "2.0"
-project_hash = "ea4edada027aef3b7b33921cd5bc527e8f6d810f"
+project_hash = "4cb2d3e2491daac741b6453834925e52bf4739ec"
 
 [[deps.AbstractPlutoDingetjes]]
 deps = ["Pkg"]
@@ -914,6 +892,16 @@ version = "0.1.38"
     Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
     Unitful = "1986cc42-f94f-5a68-af5c-568840ba703d"
 
+[[deps.Adapt]]
+deps = ["LinearAlgebra", "Requires"]
+git-tree-sha1 = "50c3c56a52972d78e8be9fd135bfb91c9574c140"
+uuid = "79e6a3ab-5dfb-504d-930d-738a2a938a0e"
+version = "4.1.1"
+weakdeps = ["StaticArrays"]
+
+    [deps.Adapt.extensions]
+    AdaptStaticArraysExt = "StaticArrays"
+
 [[deps.ArgTools]]
 uuid = "0dad84c5-d112-42e6-8d28-ef12dabb789f"
 version = "1.1.2"
@@ -924,9 +912,9 @@ version = "1.11.0"
 
 [[deps.AxisAlgorithms]]
 deps = ["LinearAlgebra", "Random", "SparseArrays", "WoodburyMatrices"]
-git-tree-sha1 = "66771c8d21c8ff5e3a93379480a2307ac36863f7"
+git-tree-sha1 = "01b8ccb13d68535d73d2b0c23e39bd23155fb712"
 uuid = "13072b0f-2c55-5437-9ae7-d433b7a33950"
-version = "1.0.1"
+version = "1.1.0"
 
 [[deps.Base64]]
 uuid = "2a0f44e3-6c83-55bd-87e4-b1978d98bd5f"
@@ -1118,10 +1106,10 @@ uuid = "2702e6a9-849d-5ed8-8c21-79e8b8f9ee43"
 version = "0.0.20230411+0"
 
 [[deps.Euler2D]]
-deps = ["Accessors", "Dates", "ForwardDiff", "LinearAlgebra", "ShockwaveProperties", "StaticArrays", "Tullio", "Unitful", "UnitfulChainRules"]
-git-tree-sha1 = "9694e00dd557fb937a5070fd2cf65668f617bad7"
+deps = ["Accessors", "ForwardDiff", "LinearAlgebra", "ShockwaveProperties", "StaticArrays", "Tullio", "Unitful", "UnitfulChainRules"]
+git-tree-sha1 = "72664f0daaa9eb7f529ccf96a82771b6cca8160b"
 uuid = "c24a2923-03cb-4692-957a-ccd31f2ad327"
-version = "0.5.1"
+version = "0.4.0"
 
 [[deps.ExceptionUnwrapping]]
 deps = ["Test"]
@@ -1131,9 +1119,9 @@ version = "0.1.10"
 
 [[deps.Expat_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl"]
-git-tree-sha1 = "cc5231d52eb1771251fbd37171dbc408bcc8a1b6"
+git-tree-sha1 = "1c6317308b9dc757616f0b5cb379db10494443a7"
 uuid = "2e619515-83b5-522b-bb60-26c02a35a201"
-version = "2.6.4+0"
+version = "2.6.2+0"
 
 [[deps.FFMPEG]]
 deps = ["FFMPEG_jll"]
@@ -1267,10 +1255,14 @@ uuid = "b77e0a4c-d291-57a0-90e8-8db25a27a240"
 version = "1.11.0"
 
 [[deps.Interpolations]]
-deps = ["AxisAlgorithms", "ChainRulesCore", "LinearAlgebra", "OffsetArrays", "Random", "Ratios", "Requires", "SharedArrays", "SparseArrays", "StaticArrays", "WoodburyMatrices"]
-git-tree-sha1 = "00a19d6ab0cbdea2978fc23c5a6482e02c192501"
+deps = ["Adapt", "AxisAlgorithms", "ChainRulesCore", "LinearAlgebra", "OffsetArrays", "Random", "Ratios", "Requires", "SharedArrays", "SparseArrays", "StaticArrays", "WoodburyMatrices"]
+git-tree-sha1 = "88a101217d7cb38a7b481ccd50d21876e1d1b0e0"
 uuid = "a98d9a8b-a2ab-59e6-89dd-64a1c18fca59"
-version = "0.14.0"
+version = "0.15.1"
+weakdeps = ["Unitful"]
+
+    [deps.Interpolations.extensions]
+    InterpolationsUnitfulExt = "Unitful"
 
 [[deps.InverseFunctions]]
 git-tree-sha1 = "a779299d77cd080bf77b97535acecd73e1c5e5cb"
@@ -1524,12 +1516,10 @@ version = "1.2.0"
 git-tree-sha1 = "1a27764e945a152f7ca7efa04de513d473e9542e"
 uuid = "6fe1bfb0-de20-5000-8ca7-80f57d26f881"
 version = "1.14.1"
+weakdeps = ["Adapt"]
 
     [deps.OffsetArrays.extensions]
     OffsetArraysAdaptExt = "Adapt"
-
-    [deps.OffsetArrays.weakdeps]
-    Adapt = "79e6a3ab-5dfb-504d-930d-738a2a938a0e"
 
 [[deps.Ogg_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
@@ -1976,15 +1966,15 @@ version = "1.31.0+0"
 
 [[deps.WoodburyMatrices]]
 deps = ["LinearAlgebra", "SparseArrays"]
-git-tree-sha1 = "5f24e158cf4cee437052371455fe361f526da062"
+git-tree-sha1 = "c1a7aa6219628fcd757dede0ca95e245c5cd9511"
 uuid = "efce3f68-66dc-5838-9240-27a6d6f5f9b6"
-version = "0.5.6"
+version = "1.0.0"
 
 [[deps.XML2_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Libiconv_jll", "Zlib_jll"]
-git-tree-sha1 = "a2fccc6559132927d4c5dc183e3e01048c6dcbd6"
+git-tree-sha1 = "6a451c6f33a176150f315726eba8b92fbfdb9ae7"
 uuid = "02c8fc9c-b97f-50b9-bbe4-9be30ff0a78a"
-version = "2.13.5+0"
+version = "2.13.4+0"
 
 [[deps.XSLT_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Libgcrypt_jll", "Libgpg_error_jll", "Libiconv_jll", "XML2_jll", "Zlib_jll"]
@@ -2349,14 +2339,6 @@ version = "1.4.1+1"
 # ╠═4d202323-e1a9-4b24-b98e-7d17a6cc144f
 # ╟─5d9e020f-e35b-4325-8cc1-e2a2b3c246c9
 # ╠═c6e3873e-7fef-4c38-bf3f-de71f866057f
-# ╠═3808e261-3f8b-4127-8878-1e8e69e61e0f
-# ╠═45b1dc63-1ea2-4ca0-8ef9-625c2ac92750
-# ╠═eb26c0fd-7ad7-408b-bc75-5a5e48bbe822
-# ╠═21a9935e-ce62-41c4-8da2-f573f7e0a65e
-# ╠═310b14b6-364a-4828-a10d-874188b11d9c
-# ╠═ff524def-2208-4113-a1fd-b60c2eb81e52
-# ╠═4d5ba856-777e-40df-9df4-d6f573e5d2dc
-# ╠═11fb2625-aca5-4d3e-bf46-39b0aad9c60d
-# ╠═3118df76-bcf7-4930-bcc8-62b1b6b88cd8
+# ╟─3a8cd7e2-fae9-4e70-8c92-004b17352506
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002
