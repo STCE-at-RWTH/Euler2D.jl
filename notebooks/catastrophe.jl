@@ -32,6 +32,12 @@ begin
 	using Unitful
 end
 
+# ╔═╡ 88fd25c1-0df7-4e12-a3a0-95f2d7178829
+using Accessors
+
+# ╔═╡ d4157e10-eea4-4ebb-bb53-7474d2609241
+using BenchmarkTools
+
 # ╔═╡ f5fd0c28-99a8-4c44-a5e4-d7b24e43482c
 PlutoUI.TableOfContents()
 
@@ -105,9 +111,6 @@ We also know that this simulation was done with a blunt, cylindrical obstacle of
 # ╔═╡ 4dc7eebf-48cc-4474-aef0-0cabf1d8eda5
 body = CircularObstacle(SVector(0.,0.), 0.75);
 
-# ╔═╡ d1e47908-c435-4a2e-814b-778d87fd95d3
-
-
 # ╔═╡ 8bd1c644-1690-46cf-ac80-60654fc6d8c0
 md"""
 ## Pressure Field Sensitivities
@@ -134,12 +137,21 @@ function dPdp(sim::CellBasedEulerSim{T, C}, n) where {T, C<:Euler2D.TangentQuadC
 	return res 
 end
 
+# ╔═╡ ce89ba5f-4858-426d-88ec-51e1f03987e1
+let
+	tdata = map(pressure_field(tangent, n_tsteps(tangent), DRY_AIR)) do val
+		isnothing(val) ? missing : val
+	end
+	tempplot = heatmap(tdata', xlims=(0,300), ylims=(0,450), aspect_ratio=:equal, title=L"P", size=(400, 500), dpi=1000)
+	savefig(tempplot, "../gfx/pressure_plot_longtime.pdf")
+end
+
 # ╔═╡ 2e3b9675-4b66-4623-b0c4-01acdf4e158c
 @bind n Slider(2:n_tsteps(tangent); show_value=true)
 
 # ╔═╡ f6147284-02ec-42dd-9c2f-a1a7534ae9fa
 pfield = map(pressure_field(tangent, n, DRY_AIR)) do val
-	isnothing(val) ? 0.0 : val
+	isnothing(val) ? missing : val
 end;
 
 # ╔═╡ cc53f78e-62f5-4bf8-bcb3-5aa72c5fde99
@@ -160,13 +172,23 @@ begin
 end
 
 # ╔═╡ 4e9fb962-cfaa-4650-b50e-2a6245d4bfb4
-@bind n2 Slider(1:n_tsteps(tangent), show_value=true)
+@bind n2 confirm(Slider(1:n_tsteps(tangent), show_value=true))
 
 # ╔═╡ bcdd4862-ac68-4392-94e2-30b1456d411a
 let
 	dPdM = dPdp(tangent, n2)
 	title = L"\frac{\partial P}{\partial M_\inf}"
 	p = heatmap((@view(dPdM[2, :, :]))', xlims=(0,300), ylims=(0,450), aspect_ratio=:equal, clims=(-10, 10), title=title, size=(450, 600))
+	p
+end
+
+# ╔═╡ 7604c406-c0a3-45bb-9109-389c7a47b8b3
+let
+	n=268
+	dPdM = dPdp(tangent, n)
+	title = L"\frac{\partial P}{\partial \rho},\,n=%$(n)"
+	p = heatmap((@view(dPdM[1, :, :]))', xlims=(0,300), ylims=(0,450), aspect_ratio=:equal, title=title, size=(450, 500), dpi=1000)
+	#savefig(p, "../gfx/dpdrho_plot_$n.pdf")
 	p
 end
 
@@ -371,7 +393,7 @@ The implemented shock sensor has some issues (we need to set ``TOL=0.7``), but p
 
 # ╔═╡ 4b036b02-1089-4fa8-bd3a-95659c9293cd
 # ╠═╡ show_logs = false
-sf = find_shock_in_timestep(tangent, 267, DRY_AIR; rh_rel_error_max=rh_err, continuous_variation_thold=smoothness_err);
+sf = find_shock_in_timestep(tangent, 268, DRY_AIR; rh_rel_error_max=rh_err, continuous_variation_thold=smoothness_err);
 
 # ╔═╡ 24da34ca-04cd-40ae-ac12-c342824fa26e
 let
@@ -382,9 +404,8 @@ let
 			v1
 		end
 	end
-	p = heatmap(cell_centers(tangent, 1)[3:end-2], cell_centers(tangent, 2)[3:end-2], data', cbar=false, aspect_ratio=:equal, xlims=(-2, 0), ylims=(-1.5, 1.5), title="Marked Shock Locations", xlabel=L"x", ylabel=L"y", size=(400, 600, ),dpi=1000)
-	ys = -0.9:0.05:0.9
-	#plot!(p, sp_interp.(ys), ys, label=false, lw=2, style=:dot)
+	p = heatmap(cell_centers(tangent, 1)[3:end-2], cell_centers(tangent, 2)[3:end-2], data', cbar=false, aspect_ratio=:equal, xlims=(-2, 0), ylims=(-1.5, 1.5), xlabel=L"x", ylabel=L"y", size=(350, 500),dpi=1000)
+	savefig(p, "../gfx/shock_sensor_07_01.pdf")
 	p
 end
 
@@ -457,29 +478,33 @@ y_axis_points = let
 
 	
 	(
-		collect(range(y1, y2; length=8)),
-		collect(range(y2, y3; length=8)),
-		collect(range(y3, y4; length=32)),
-		collect(range(y4, y5; length=8)),
-		collect(range(y5, y6; length=8))
+		collect(range(y1, y2; length=5)),
+		collect(range(y2, y3; length=5)),
+		collect(range(y3, y4; length=10)),
+		collect(range(y4, y5; length=5)),
+		collect(range(y5, y6; length=5))
 	)
 	
 end
 
 # ╔═╡ cc0ead94-8af4-4c6b-ad05-79a2539a3271
-below_shock_points = [
-		SMatrix{2, 4}(0.0, y1, -2.0, y1, -2.0, y2, 0.0, y2) for (y1, y2) ∈ zip(y_axis_points[1][1:end-1], y_axis_points[1][2:end])
-];
+below_shock_points = vcat([
+		SMatrix{2, 4}(-1.0, y1, -2.0, y1, -2.0, y2, -1.0, y2) for (y1, y2) ∈ zip(y_axis_points[1][1:end-1], y_axis_points[1][2:end])
+],[
+		SMatrix{2, 4}(0.0, y1, -1.0, y1, -1.0, y2, 0.0, y2) for (y1, y2) ∈ zip(y_axis_points[1][1:end-1], y_axis_points[1][2:end])
+]);
 
 # ╔═╡ d8a94eb8-2752-4273-bc7b-405c6416f2b2
-above_shock_points = [
-		SMatrix{2, 4}(0.0, y1, -2.0, y1, -2.0, y2, 0.0, y2) for (y1, y2) ∈ zip(y_axis_points[end][1:end-1], y_axis_points[end][2:end])
-];
+above_shock_points = vcat([
+		SMatrix{2, 4}(-1.0, y1, -2.0, y1, -2.0, y2, -1.0, y2) for (y1, y2) ∈ zip(y_axis_points[end][1:end-1], y_axis_points[end][2:end])
+],[
+		SMatrix{2, 4}(0.0, y1, -1.0, y1, -1.0, y2, 0.0, y2) for (y1, y2) ∈ zip(y_axis_points[end][1:end-1], y_axis_points[end][2:end])
+]);
 
 # ╔═╡ 8960c7e3-2234-46f7-9c5d-d41f656fe48a
-ambient_points = [
-	SMatrix{2, 4}(sp_interp(y1), y1, -2.0, y1, -2.0, y2, sp_interp(y2), y2) for (y1, y2) ∈ zip(vcat(y_axis_points[2:end-1]...)[1:end-1], vcat(y_axis_points[2:end-1]...)[2:end])
-];
+ambient_points = reduce(vcat, [
+	[SMatrix{2, 4}(sp_interp(y1), y1, -2.0, y1, -2.0, y2, sp_interp(y2), y2) for (y1, y2) ∈ zip(yp[1:end-1], yp[2:end])] for yp ∈ y_axis_points[2:end-1]
+]);
 
 # ╔═╡ 44b27e39-b2b7-4548-8091-7479fffbc470
 no_body_points = vcat([
@@ -491,43 +516,7 @@ no_body_points = vcat([
 # ╔═╡ 3323f6be-deca-4780-a877-d018b0651aeb
 body_points = [
 	SMatrix{2, 4}(-sqrt(0.75^2-y1^2), y1, sp_interp(y1), y1, sp_interp(y2), y2, -sqrt(0.75^2-y2^2), y2) for (y1, y2) ∈ zip(y_axis_points[3][1:end-1], y_axis_points[3][2:end])
-]
-
-# ╔═╡ c6e3873e-7fef-4c38-bf3f-de71f866057f
-let
-	xc = body.center[1] .+ body.radius .* cos.(0:0.01:2π)
-	yc = body.center[2] .+ body.radius .* sin.(0:0.01:2π)
-	p = plot(xc, yc, aspect_ratio=:equal, xlims=(-2, 0), ylims=(-1.5, 1.5), label=false, fill=true, dpi=1000, size=(600, 800))
-	for poly ∈ vcat(below_shock_points, above_shock_points)
-		pl = hcat(poly, @view poly[:, 1])
-		plot!(p, @view(pl[1, :]), @view(pl[2, :]) , lw=0.5, fill=true, fillalpha=0.5, label=false, color=:black)
-	end
-	for poly ∈ ambient_points
-		pl = hcat(poly, @view poly[:, 1])
-		plot!(p, @view(pl[1, :]), @view(pl[2, :]) , lw=0.5, fill=true, fillalpha=0.5, label=false, color=:orange)
-	end
-	for poly ∈ no_body_points
-		pl = hcat(poly, @view poly[:, 1])
-		plot!(p, @view(pl[1, :]), @view(pl[2, :]) , lw=0.5, fill=true, fillalpha=0.5, label=false, color=:red)
-	end
-	for poly ∈ body_points
-		pl = hcat(poly, @view poly[:, 1])
-		plot!(p, @view(pl[1, :]), @view(pl[2, :]) , lw=0.5, fill=true, fillalpha=0.5, label=false, color=:green)
-	end
-	spys = range(-0.95, 0.93; length=20)
-	spxs = sp_interp.(spys)
-	plot!(p, spxs, spys, label="Shock Front", lw=2)
-	p
-end
-
-# ╔═╡ 4d202323-e1a9-4b24-b98e-7d17a6cc144f
-struct XiCell{T}#, NS, NE}
-	pts::SMatrix{2, 4, T, 8}
-	# wall_length::T
-	# wall_normal::SVector{2, T}
-	# u::SVector{4, T}
-	# u̇::SMatrix{4, NS, T, NE}
-end
+];
 
 # ╔═╡ 38c1679e-803a-49e9-b4cc-b47b1d1ec954
 function find_nearest_idx(range, pt)
@@ -539,39 +528,327 @@ function find_nearest_idx(range, pt)
 	return i
 end
 
-# ╔═╡ 407e21b2-2c5d-4d98-89f3-4dbfe2672b95
-function overlap_lower(y, cell)
-	y_low = cell.center[2] - cell.extent[2]/2
-	return y-y_low
+# ╔═╡ 641efc27-f5ba-4970-94b1-cc8761407564
+function is_poly_closed(poly::SMatrix{2,NV,T}) where {T,NV}
+    return poly[1, 1] == poly[1, NV] && poly[2, 1] == poly[2, NV]
 end
 
-# ╔═╡ a1885025-00eb-484b-a102-1e8b4f8cfe0a
-function build_split_ξ_cells(y, dy, sp_func, sim::CellBasedEulerSim{T, TangentQuadCell{T, NS, PC}}) where {T, NS, PC}
-	y1 = y-dy/2
-	y2 = y+dy/2
-	ycs = cell_centers(sim,2)
-	j1 = find_nearest_idx(ycs, y1)
-	j2 = find_nearest_idx(ycs, y2)
-
-	s1 = sp_func(y1)
-	s2 = sp_func(y2)
-
-	xcs = cell_centers(sim, 1)
-	i1 = find_nearest_idx(xcs, s1)
-	i2 = find_nearest_idx(xcs, s2)
-
-	id1 = 1
-	
-	
-	return j1, j2, i1, i2
+# ╔═╡ 6aa1657f-1ee3-4055-bc58-17325f894d5b
+function is_poly_closed(poly)
+    return @view(poly[:, 1]) == @view(poly[:, end])
 end
 
-# ╔═╡ fb42c01e-bb70-4b00-b6e1-17889437ce8b
-j = build_split_ξ_cells(0, 0.1, sp_interp, tangent)
+# ╔═╡ 0bfde9c6-4f22-4caf-9628-7d84706109ca
+function make_closed(poly::SMatrix{2,NV,T,NCOORDS}) where {T,NV,NCOORDS}
+    v1 = SVector{2,T}(poly[1, 1], poly[2, 1])
+    return hcat(poly, v1)
+end
+
+# ╔═╡ 6c8bf0e2-68df-4a09-a33f-13924560a871
+function make_closed(poly)
+    return hcat(poly, @view(poly[:, 1]))
+end
+
+# ╔═╡ 5033ce87-7695-4f21-acfd-ac952e429393
+function point_in_right_half_plane(p0, dir, point; atol=1.0e-12)
+    n_dir = SVector(dir[2], -dir[1])
+    v1 = n_dir ⋅ point
+    v2 = n_dir ⋅ p0
+    return v1 > v2 || isapprox(v1, v2; atol=atol)
+end
+
+# ╔═╡ 0e4858f9-b4e4-4036-ba2f-22df03e4ecf3
+function point_inside(closed_poly, pt; atol = 1.0e-12)
+    if !is_poly_closed(closed_poly)
+        throw(ArgumentError("Cannot test if point is inside a polygon that is not closed."))
+    end
+    edge_starts = @view(eachcol(closed_poly)[1:end-1])
+	edge_ends = @view(eachcol(closed_poly)[2:end])
+    return all(zip(edge_starts, edge_ends)) do (p0, p1)
+		u = SVector(p0[1], p0[2])
+		v = SVector(p1[1], p1[2])
+        point_in_right_half_plane(u, v-u, pt; atol=atol)
+    end
+end
+
+# ╔═╡ 5d025c37-dde6-48fe-91f5-546a03f61309
+function polygon_area(p)
+	twoA = zero(eltype(p))
+	for i = 1:(size(p)[2]-1)
+		twoA -= (p[1, i]*p[2, i+1] - p[1, i+1]*p[2,i])
+	end
+	return twoA/2
+end
+
+# ╔═╡ 9564dc10-f407-4b24-a27b-f0c3e5993bb8
+function normcoldiff(m::SMatrix{M,N,T,L}) where {M,N,T,L}
+    d = coldiff(m)
+    for j = 1:N-1
+        v = norm(SVector(d[1, j], d[2, j]))
+        for i = 1:M
+            @reset d[i, j] = d[i, j] / v
+        end
+    end
+    return d
+end
+
+# ╔═╡ d77581ac-1393-491a-b07b-462cce95f39d
+function normcoldiff(m)
+    d = diff(m; dims=2)
+    foreach(normalize!, eachcol(d))
+    return d
+end
+
+# ╔═╡ 6d4e503f-24ff-49a0-b2db-7e23d14e61ee
+function cell_points(cell)
+	c = cell.center
+	dx, dy = cell.extent/2
+	return foldl(hcat, (c + SVector(dx, -dy), 
+				 		c + SVector(-dx, -dy),
+				 		c + SVector(-dx, dy),
+						c + SVector(dx, dy)))
+end
+
+# ╔═╡ d9fb063e-51ce-4ace-8e84-1d9d5c120e8b
+function line_intersect(
+    p1::SVector{2,T},
+    s::SVector{2,T},
+    p2::SVector{2,T},
+    t::SVector{2,T},
+) where {T}
+    # if (abs(s ⋅ t) ≈ 1)
+    #     return SVector{T}(NaN, NaN)
+    # end
+    d = p2 - p1
+    A = hcat(s, -1 * t)
+    try
+        return p2 + (A\d)[2] * t
+    catch err
+        if err isa SingularException || err isa ArgumentError
+            return SVector{T}(NaN, NaN)
+        else
+            rethrow()
+        end
+    end
+end
+
+# ╔═╡ 3accd3b6-395f-4548-9b28-8d89a6be446d
+function poly_line_intersections(closed_poly, pt, t̂)
+    if !is_poly_closed(closed_poly)
+        throw(ArgumentError("Cannot test if point is inside a polygon that is not closed."))
+    end
+    ds = normcoldiff(closed_poly)
+    poly_pts = @view eachcol(closed_poly)[1:end-1]
+    return mapfoldl(hcat, zip(poly_pts, eachcol(ds))) do (p, ŝ)
+        line_intersect(SVector(p[1], p[2]), SVector(ŝ[1], ŝ[2]), SVector(pt[1], pt[2]), SVector(t̂[1], t̂[2]))
+    end
+end
+
+# ╔═╡ f588d598-bd4a-496b-a950-a0d88ba64ce7
+function cut_quad(poly::AbstractMatrix{T}, line_start, line_end) where {T}
+	t̂ = line_end-line_start
+	n̂ = SVector(t̂[2], -t̂[1])
+	isect_pts = poly_line_intersections(poly, line_start, t̂)
+	keep_poly = map(eachcol(poly)) do p
+		point_in_right_half_plane(line_start, t̂, p)
+	end
+	keep = mapreduce(vcat, zip(eachcol(poly), eachcol(isect_pts))) do (p1, p2)
+		SVector(point_in_right_half_plane(line_start, t̂, p1), 
+		point_in_right_half_plane(line_start, t̂, p2) && point_inside(poly, p2))
+	end
+	out = mapreduce(hcat, zip(eachcol(poly), eachcol(isect_pts))) do (p1, p2)
+		hcat(p1, p2)
+	end
+	make_closed(out[:, keep])
+end
+
+# ╔═╡ 666d3a99-d030-429f-9f0a-f1eff9570d4d
+function poly_intersection(poly1, poly2)
+	res = Matrix(copy(poly1))
+	pts1 = eachcol(@view(poly2[:, 1:end-1]))
+	pts2 = eachcol(@view(poly2[:, 2:end]))
+	for (p1, p2) ∈ zip(pts1, pts2)
+		res = cut_quad(res, SVector(p1[1], p1[2]), SVector(p2[1], p2[2]))
+	end
+	return res
+end
+
+# ╔═╡ d94d20c2-20b3-4c0d-a8e5-034d82ecaab7
+polyA = make_closed(SMatrix{2, 4}(2., 0., 0., 0., 0., 2., 2., 2.))
+
+# ╔═╡ 5fc3aab9-67e4-49f5-ba04-5b2ca2a7ee26
+polyB = make_closed(SMatrix{2,4}(3., 1., 1., 1., 1., 3., 3., 3.))
+
+# ╔═╡ f38835ec-ec81-47c1-8596-392893c9cab0
+test_intersect = poly_intersection(polyA, polyB)
+
+# ╔═╡ 1e1f2543-5bea-418f-b522-02096efaf29c
+let
+	p = plot(polyA'[:, 1], polyA'[:, 2], seriestype=:shape, fillalpha=1.0)
+	plot!(p, test_intersect'[:, 1], test_intersect'[:, 2], seriestype=:shape, fillalpha=0.5)
+end
+
+# ╔═╡ 729ebc48-bba1-4858-8369-fcee9f133ee0
+function is_cell_contained_by(cell::Euler2D.QuadCell, closed_poly)
+	return all(eachcol(cell_points(cell))) do p
+		point_inside(closed_poly, p)
+	end
+end
+
+# ╔═╡ 5cffaaf5-9a5e-4839-a056-30e238308c51
+function is_cell_overlapping(cell::Euler2D.QuadCell, poly)
+	closed_poly = is_poly_closed(poly) ? poly : make_closed(poly)
+	v = map(eachcol(cell_points(cell))) do p
+		point_inside(closed_poly, p)
+	end
+	return any(v) && !all(v)
+end
+
+# ╔═╡ f252b8d0-f067-468b-beb3-ff6ecaeca722
+function all_cells_contained_by(poly, sim)
+	closed_poly = is_poly_closed(poly) ? poly : make_closed(poly)
+	_, cells = nth_step(sim, 1)
+	return filter(sim.cell_ids) do id
+		id == 0 && return false
+		return is_cell_contained_by(cells[id], closed_poly)
+	end
+end
+
+# ╔═╡ 571b1ee7-bb07-4b30-9870-fbd18349a2ef
+function all_cells_overlapping(poly, sim)
+	closed_poly = is_poly_closed(poly) ? poly : make_closed(poly)
+	_, cells = nth_step(sim, 1)
+	return filter(sim.cell_ids) do id
+		id == 0 && return false
+		return is_cell_overlapping(cells[id], closed_poly)
+	end
+end
+
+# ╔═╡ 4e4e3e05-c960-406a-af25-af22484b15da
+all_cells_contained_by(body_points[3], tangent) |> length
+
+# ╔═╡ 0aedf7ef-be4f-4b2e-ac50-2db376f5126c
+make_closed(body_points[2])
+
+# ╔═╡ 7059363b-6891-4476-bb71-e11a9719ae1c
+nth_step(tangent, 267)[2] |> length
+
+# ╔═╡ 80cde447-282a-41e5-812f-8eac044b0c15
+function overlapping_cell_area(cell::Euler2D.QuadCell, poly)
+	isect = poly_intersection(make_closed(cell_points(cell)), poly)
+	return polygon_area(isect)
+end
+
+# ╔═╡ 4d202323-e1a9-4b24-b98e-7d17a6cc144f
+struct CoarseQuadCell{T, NS, NTAN}
+	id::Int
+	pts::SMatrix{2, 4, T, 8}
+	# wall_length::T
+	# wall_normal::SVector{2, T}
+	u::SVector{4, T}
+	u̇::SMatrix{4, NS, T, NTAN}
+end
+
+# ╔═╡ 5d9e020f-e35b-4325-8cc1-e2a2b3c246c9
+function compute_coarse_cell_contents(coarse_cell::CoarseQuadCell{T, NS, NTAN}, sim::CellBasedEulerSim{T, TangentQuadCell{T, NS, NTAN}}, n) where {T, NS, NTAN}
+	contained = all_cells_contained_by(coarse_cell.pts, sim)
+	overlapped = all_cells_overlapping(coarse_cell.pts, sim)
+	u_a = mapreduce(+, contained) do id
+		_, cs = nth_step(sim, n)
+		return Euler2D.cell_volume(cs[id]) * cs[id].u
+	end
+	u_b = mapreduce(+, overlapped) do id
+		_, cs = nth_step(sim, n)
+		A = overlapping_cell_area(cs[id], coarse_cell.pts)
+		return A*cs[id].u
+	end
+	u̇_a = mapreduce(+, contained) do id
+		_, cs = nth_step(sim, n)
+		return Euler2D.cell_volume(cs[id]) * cs[id].u̇
+	end
+	u̇_b = mapreduce(+, overlapped) do id
+		_, cs = nth_step(sim, n)
+		A = overlapping_cell_area(cs[id], coarse_cell.pts)
+		return A*cs[id].u̇
+	end
+	return (u_a+u_b , u̇_a + u̇_b)
+end
+
+# ╔═╡ 5d77d782-2def-4b3a-ab3a-118bf8e96b6b
+coarse_cells = let
+	d = Dict([id=>CoarseQuadCell(id, poly, zero(SVector{4, Float64}), zero(SMatrix{4, 3, Float64, 12})) for (id, poly)∈enumerate(vcat(below_shock_points, above_shock_points,ambient_points, no_body_points, body_points))]);
+	for c∈keys(d)
+		v1, v2 = compute_coarse_cell_contents(d[c], tangent, 267)
+		@reset d[c].u = v1
+		@reset d[c].u̇ = v2
+	end
+	d
+end
+
+# ╔═╡ c6e3873e-7fef-4c38-bf3f-de71f866057f
+let
+	xc = body.center[1] .+ body.radius .* cos.(0:0.01:2π)
+	yc = body.center[2] .+ body.radius .* sin.(0:0.01:2π)
+	p = plot(xc, yc, aspect_ratio=:equal, xlims=(-2, 0), ylims=(0., 1.5), label=false, fill=true, dpi=1000, size=(800, 1000))
+	id = 0
+	maxdensity = maximum(coarse_cells) do (_, c)
+		c.u[1]
+	end
+	for (id, cell) ∈ coarse_cells
+		poly = cell.pts
+		pl = hcat(poly, @view poly[:, 1])
+		plot!(p, @view(pl[1, :]), @view(pl[2, :]) , lw=0.5, fill=true, fillalpha=(cell.u[1]/maxdensity), label=false, color=:red)
+		v = sum(eachcol(poly))/4
+		annotate!(p,v..., Plots.text(L"P_{%$id}", 8))
+	end
+	spys = range(-0.95, 0.93; length=20)
+	spxs = sp_interp.(spys)
+	plot!(p, spxs, spys, label="Strong Shock Front", lw=4)
+	#savefig(p, "../gfx/silly_rectangles.pdf")
+	p
+end
+
+# ╔═╡ 3808e261-3f8b-4127-8878-1e8e69e61e0f
+coarse_cells
+
+# ╔═╡ 45b1dc63-1ea2-4ca0-8ef9-625c2ac92750
+@view eachcol(coarse_cells[1].pts)[2:end]
+
+# ╔═╡ eb26c0fd-7ad7-408b-bc75-5a5e48bbe822
+function normcoldiff_static(m::SMatrix{M, N, T, L}) where {M, N, T, L}
+	d = diff(m; dims=2)
+	for j = 1:N-1
+		v = norm(SVector(d[1, j], d[2, j]))
+		for i=1:M
+			@reset d[i, j] = d[i,j]/ v
+		end
+	end
+	return d
+end
+
+# ╔═╡ 21a9935e-ce62-41c4-8da2-f573f7e0a65e
+@benchmark normcoldiff_static($(polyA))
+
+# ╔═╡ 310b14b6-364a-4828-a10d-874188b11d9c
+normcoldiff_static(polyA)
+
+# ╔═╡ ff524def-2208-4113-a1fd-b60c2eb81e52
+a=@SVector [1,2]
+
+# ╔═╡ 4d5ba856-777e-40df-9df4-d6f573e5d2dc
+b=@SVector [1,2]
+
+# ╔═╡ 11fb2625-aca5-4d3e-bf46-39b0aad9c60d
+hcat(a, b)
+
+# ╔═╡ 3118df76-bcf7-4930-bcc8-62b1b6b88cd8
+tangent.cells[267][first(all_cells_overlapping(coarse_cells[20].pts, tangent))]
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
 [deps]
+Accessors = "7d9f7c33-5ae7-4f3b-8dc6-eff91059b697"
+BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
 Euler2D = "c24a2923-03cb-4692-957a-ccd31f2ad327"
 ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
 Interpolations = "a98d9a8b-a2ab-59e6-89dd-64a1c18fca59"
@@ -585,6 +862,8 @@ StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 Unitful = "1986cc42-f94f-5a68-af5c-568840ba703d"
 
 [compat]
+Accessors = "~0.1.38"
+BenchmarkTools = "~1.5.0"
 Euler2D = "~0.5.1"
 ForwardDiff = "~0.10.38"
 Interpolations = "~0.14.0"
@@ -602,7 +881,7 @@ PLUTO_MANIFEST_TOML_CONTENTS = """
 
 julia_version = "1.11.2"
 manifest_format = "2.0"
-project_hash = "09079fb36193631658a9052667d66a91b6645d79"
+project_hash = "ea4edada027aef3b7b33921cd5bc527e8f6d810f"
 
 [[deps.AbstractPlutoDingetjes]]
 deps = ["Pkg"]
@@ -652,6 +931,12 @@ version = "1.0.1"
 [[deps.Base64]]
 uuid = "2a0f44e3-6c83-55bd-87e4-b1978d98bd5f"
 version = "1.11.0"
+
+[[deps.BenchmarkTools]]
+deps = ["JSON", "Logging", "Printf", "Profile", "Statistics", "UUIDs"]
+git-tree-sha1 = "f1dff6729bc61f4d49e140da1af55dcd1ac97b2f"
+uuid = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
+version = "1.5.0"
 
 [[deps.BitFlags]]
 git-tree-sha1 = "0691e34b3bb8be9307330f88d1a3c3f25466c24d"
@@ -1383,6 +1668,10 @@ deps = ["Unicode"]
 uuid = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 version = "1.11.0"
 
+[[deps.Profile]]
+uuid = "9abbd945-dff8-562f-b5e8-e1ebf5ef1b79"
+version = "1.11.0"
+
 [[deps.Qt6Base_jll]]
 deps = ["Artifacts", "CompilerSupportLibraries_jll", "Fontconfig_jll", "Glib_jll", "JLLWrappers", "Libdl", "Libglvnd_jll", "OpenSSL_jll", "Vulkan_Loader_jll", "Xorg_libSM_jll", "Xorg_libXext_jll", "Xorg_libXrender_jll", "Xorg_libxcb_jll", "Xorg_xcb_util_cursor_jll", "Xorg_xcb_util_image_jll", "Xorg_xcb_util_keysyms_jll", "Xorg_xcb_util_renderutil_jll", "Xorg_xcb_util_wm_jll", "Zlib_jll", "libinput_jll", "xkbcommon_jll"]
 git-tree-sha1 = "492601870742dcd38f233b23c3ec629628c1d724"
@@ -1985,33 +2274,34 @@ version = "1.4.1+1"
 # ╟─90bf50cf-7254-4de8-b860-938430e121a9
 # ╠═33e635b3-7c63-4b91-a1f2-49da93307f29
 # ╠═4dc7eebf-48cc-4474-aef0-0cabf1d8eda5
-# ╠═d1e47908-c435-4a2e-814b-778d87fd95d3
 # ╟─8bd1c644-1690-46cf-ac80-60654fc6d8c0
 # ╠═f6147284-02ec-42dd-9c2f-a1a7534ae9fa
 # ╟─d14c3b81-0f19-4207-8e67-13c09fd7636a
 # ╟─893ec2c8-88e8-4d72-aab7-88a1efa30b47
 # ╠═cc53f78e-62f5-4bf8-bcb3-5aa72c5fde99
+# ╠═ce89ba5f-4858-426d-88ec-51e1f03987e1
 # ╠═2e3b9675-4b66-4623-b0c4-01acdf4e158c
 # ╟─d5db89be-7526-4e6d-9dec-441f09606a04
-# ╟─4e9fb962-cfaa-4650-b50e-2a6245d4bfb4
+# ╠═4e9fb962-cfaa-4650-b50e-2a6245d4bfb4
 # ╠═bcdd4862-ac68-4392-94e2-30b1456d411a
+# ╠═7604c406-c0a3-45bb-9109-389c7a47b8b3
 # ╟─e2bdc923-53e6-4a7d-9621-4d3b356a6e41
 # ╟─44ff921b-09d0-42a4-8852-e911212924f9
 # ╟─4f8b4b5d-58de-4197-a676-4090912225a1
-# ╟─706146ae-3dbf-4b78-9fcc-e0832aeebb28
-# ╟─9b6ab300-6434-4a96-96be-87e30e35111f
-# ╟─21cbdeec-3438-4809-b058-d23ebafc9ee2
+# ╠═706146ae-3dbf-4b78-9fcc-e0832aeebb28
+# ╠═9b6ab300-6434-4a96-96be-87e30e35111f
+# ╠═21cbdeec-3438-4809-b058-d23ebafc9ee2
 # ╟─90ff1023-103a-4342-b521-e229157001fc
 # ╟─5c0be95f-3c4a-4062-afeb-3c1681cae549
-# ╟─88889293-9afc-4540-a2b9-f30afb62b1de
-# ╟─6da05b47-9763-4d0c-99cc-c945630c770d
-# ╟─351d4e18-4c95-428e-a008-5128f547c66d
+# ╠═88889293-9afc-4540-a2b9-f30afb62b1de
+# ╠═6da05b47-9763-4d0c-99cc-c945630c770d
+# ╠═351d4e18-4c95-428e-a008-5128f547c66d
 # ╟─bc0c6a41-adc8-4d18-9574-645704f54b72
 # ╟─4a5086bc-5c36-4e71-9d3a-8f77f48a90f9
 # ╠═747f0b67-546e-4222-abc8-2007daa3f658
 # ╠═2cb33e16-d735-4e60-82a5-aa22da0288fb
 # ╠═4b036b02-1089-4fa8-bd3a-95659c9293cd
-# ╟─24da34ca-04cd-40ae-ac12-c342824fa26e
+# ╠═24da34ca-04cd-40ae-ac12-c342824fa26e
 # ╟─92044a9f-2078-48d1-8181-34be87b03c4c
 # ╟─eb5a2dc6-9c7e-4099-a564-15f1cec11caa
 # ╠═9c601619-aaf1-4f3f-b2e2-10422d8ac640
@@ -2026,11 +2316,47 @@ version = "1.4.1+1"
 # ╠═8960c7e3-2234-46f7-9c5d-d41f656fe48a
 # ╠═44b27e39-b2b7-4548-8091-7479fffbc470
 # ╠═3323f6be-deca-4780-a877-d018b0651aeb
-# ╟─c6e3873e-7fef-4c38-bf3f-de71f866057f
+# ╠═38c1679e-803a-49e9-b4cc-b47b1d1ec954
+# ╠═641efc27-f5ba-4970-94b1-cc8761407564
+# ╠═6aa1657f-1ee3-4055-bc58-17325f894d5b
+# ╠═0bfde9c6-4f22-4caf-9628-7d84706109ca
+# ╠═6c8bf0e2-68df-4a09-a33f-13924560a871
+# ╠═5033ce87-7695-4f21-acfd-ac952e429393
+# ╠═0e4858f9-b4e4-4036-ba2f-22df03e4ecf3
+# ╠═5d025c37-dde6-48fe-91f5-546a03f61309
+# ╠═9564dc10-f407-4b24-a27b-f0c3e5993bb8
+# ╠═d77581ac-1393-491a-b07b-462cce95f39d
+# ╠═6d4e503f-24ff-49a0-b2db-7e23d14e61ee
+# ╠═d9fb063e-51ce-4ace-8e84-1d9d5c120e8b
+# ╠═3accd3b6-395f-4548-9b28-8d89a6be446d
+# ╠═88fd25c1-0df7-4e12-a3a0-95f2d7178829
+# ╠═f588d598-bd4a-496b-a950-a0d88ba64ce7
+# ╠═666d3a99-d030-429f-9f0a-f1eff9570d4d
+# ╠═d94d20c2-20b3-4c0d-a8e5-034d82ecaab7
+# ╠═5fc3aab9-67e4-49f5-ba04-5b2ca2a7ee26
+# ╠═f38835ec-ec81-47c1-8596-392893c9cab0
+# ╠═1e1f2543-5bea-418f-b522-02096efaf29c
+# ╠═d4157e10-eea4-4ebb-bb53-7474d2609241
+# ╠═729ebc48-bba1-4858-8369-fcee9f133ee0
+# ╠═5cffaaf5-9a5e-4839-a056-30e238308c51
+# ╠═f252b8d0-f067-468b-beb3-ff6ecaeca722
+# ╠═571b1ee7-bb07-4b30-9870-fbd18349a2ef
+# ╠═4e4e3e05-c960-406a-af25-af22484b15da
+# ╠═0aedf7ef-be4f-4b2e-ac50-2db376f5126c
+# ╠═7059363b-6891-4476-bb71-e11a9719ae1c
+# ╠═80cde447-282a-41e5-812f-8eac044b0c15
+# ╠═5d77d782-2def-4b3a-ab3a-118bf8e96b6b
 # ╠═4d202323-e1a9-4b24-b98e-7d17a6cc144f
-# ╟─38c1679e-803a-49e9-b4cc-b47b1d1ec954
-# ╟─407e21b2-2c5d-4d98-89f3-4dbfe2672b95
-# ╠═a1885025-00eb-484b-a102-1e8b4f8cfe0a
-# ╠═fb42c01e-bb70-4b00-b6e1-17889437ce8b
+# ╟─5d9e020f-e35b-4325-8cc1-e2a2b3c246c9
+# ╠═c6e3873e-7fef-4c38-bf3f-de71f866057f
+# ╠═3808e261-3f8b-4127-8878-1e8e69e61e0f
+# ╠═45b1dc63-1ea2-4ca0-8ef9-625c2ac92750
+# ╠═eb26c0fd-7ad7-408b-bc75-5a5e48bbe822
+# ╠═21a9935e-ce62-41c4-8da2-f573f7e0a65e
+# ╠═310b14b6-364a-4828-a10d-874188b11d9c
+# ╠═ff524def-2208-4113-a1fd-b60c2eb81e52
+# ╠═4d5ba856-777e-40df-9df4-d6f573e5d2dc
+# ╠═11fb2625-aca5-4d3e-bf46-39b0aad9c60d
+# ╠═3118df76-bcf7-4930-bcc8-62b1b6b88cd8
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002
