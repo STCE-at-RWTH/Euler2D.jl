@@ -612,14 +612,14 @@ point_inside(s::Obstacle, q) = point_inside(s, q.center)
 
 function vertices(cell_center::SVector, dx, dy)
     return (
-        e = cell_center + @SVector([dx, 0]),
-        se = cell_center + @SVector([dx, -dy]),
-        s = cell_center + @SVector([0, -dy]),
-        sw = cell_center + @SVector([-dx, -dy]),
-        w = cell_center + @SVector([-dx, 0]),
-        nw = cell_center + @SVector([-dx, dy]),
-        n = cell_center + @SVector([0, dy]),
-        ne = cell_center + @SVector([dx, dy]),
+        e = cell_center + 0.5 * @SVector([dx, 0]),
+        se = cell_center + 0.5 * @SVector([dx, -dy]),
+        s = cell_center + 0.5 * @SVector([0, -dy]),
+        sw = cell_center + 0.5 * @SVector([-dx, -dy]),
+        w = cell_center + 0.5 * @SVector([-dx, 0]),
+        nw = cell_center + 0.5 * @SVector([-dx, dy]),
+        n = cell_center + 0.5 * @SVector([0, dy]),
+        ne = cell_center + 0.5 * @SVector([dx, dy]),
     )
 end
 
@@ -670,7 +670,7 @@ function active_cell_mask(cell_centers, extent, obstacles)
         for o ∈ obstacles
             id = return_cell_type_id(o, cell_center, extent)
             if id == 0
-                return id
+                return 0
             elseif id == -1
                 contains_boundary = true
             end
