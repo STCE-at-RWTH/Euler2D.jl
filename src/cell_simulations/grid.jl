@@ -655,24 +655,27 @@ end
 function return_cell_type_id(obs::Obstacle, cell_center::SVector, extent::SVector) # TODO:Review logic to id BCells
     vert = vertices(cell_center, extent...)
     if any(v -> point_inside(obs, v), vert)
-        if all(v -> point_inside(obs, v), vert)
-            return 0
+        if any(v -> !point_inside(obs, v), vert)
+            return -1
         end
-        return -1
+        return 0
     end
     return 1
 end
 
 function active_cell_mask(cell_centers, extent, obstacles)
     return map(Iterators.product(cell_centers...)) do (x, y)
-        p = SVector{2}(x, y)
+        cell_center = SVector{2}(x, y)
+        contains_boundary = false
         for o ∈ obstacles
-            id = return_cell_type_id(o, p, extent)
-            if id != 1
+            id = return_cell_type_id(o, cell_center, extent)
+            if id == 0
                 return id
+            elseif id == -1
+                contains_boundary = true
             end
         end
-        return 1
+        return contains_boundary ? -1 : 1
     end
 end
 

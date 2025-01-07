@@ -30,7 +30,7 @@ begin
 end
 
 # ╔═╡ 1b1c0430-bacf-454a-a0bf-b00c7b723b48
-esim = load_cell_sim("../data/circular_obstacle_radius_1.celltape")
+esim = load_cell_sim("../data/circular_obstacle_primal.celltape")
 
 # ╔═╡ 01380877-d1cb-4ac7-ad08-8c8c57d95dcc
 count(≠(0), esim.cell_ids)
