@@ -44,7 +44,7 @@ Fields
  - `u`: What is the cell-averaged `ConservedProps` in this cell?
  - `neighbors`: What are this cell's neighbors?
 """
-struct PrimalQuadCell{T} <: QuadCell # TODO:Implement way to store intersection point for boundary cells
+struct PrimalQuadCell{T} <: QuadCell # TODO:Make normal cells not save unnecessary data
     id::Int
     idx::CartesianIndex{2}
     center::SVector{2,T}
@@ -56,6 +56,8 @@ struct PrimalQuadCell{T} <: QuadCell # TODO:Implement way to store intersection 
         (:north, :south, :east, :west),
         NTuple{4,Tuple{CellNeighboring,Int}},
     }
+    contains_boundary::Bool
+    intersection_points::NTuple{2,SVector{2,T}} # option of Union with Nothing broke writing
 end
 
 """
@@ -74,7 +76,7 @@ Fields
  - `u̇`: What are the cell-averaged pushforwards in this cell?
  - `neighbors`: What are this cell's neighbors?
 """
-struct TangentQuadCell{T,NSEEDS,PARAMCOUNT} <: QuadCell
+struct TangentQuadCell{T,NSEEDS,PARAMCOUNT} <: QuadCell # TODO:Make normal cells not save unnecessary data
     id::Int
     idx::CartesianIndex{2}
     center::SVector{2,T}
@@ -85,6 +87,8 @@ struct TangentQuadCell{T,NSEEDS,PARAMCOUNT} <: QuadCell
         (:north, :south, :east, :west),
         NTuple{4,Tuple{CellNeighboring,Int}},
     }
+    contains_boundary::Bool
+    intersection_points::NTuple{2,SVector{2,T}} # option of Union with Nothing broke writing
 end
 
 numeric_dtype(::PrimalQuadCell{T}) where {T} = T
@@ -623,20 +627,64 @@ function vertices(cell_center::SVector, dx, dy)
     )
 end
 
-function intersection_point(
-    immersed_boundary::Obstacle,
-    vtx_left::SVector,
-    vtx_right::SVector,
-    dir::Symbol,
-)
-    if dir == :north || dir == :south
+function get_intersection_points(
+    obstacles,
+    cell_center::SVector,
+    extent::SVector,
+    neighbors::NamedTuple,
+)::NTuple{2,SVector{2}}
+    vert = vertices(cell_center, extent...)
+    intersectionPoints = Vector[]
+    for o ∈ obstacles
+        id = return_cell_type_id(o, cell_center, extent)
+        id == -1 || continue
+        for dir in keys(neighbors)
+            if neighbors[dir][2] < 0 ||
+               (neighbors[dir][1] == Euler2D.BOUNDARY_CONDITION && neighbors[dir][2] != 5)
+                push!(intersectionPoints, intersection_point(o, vert, dir))
+            end
+        end
+    end
+    return (intersectionPoints[1], intersectionPoints[2])
+end
+
+function intersection_point(immersed_boundary::Obstacle, vertices::NamedTuple, dir::Symbol)
+    if dir == :north
+        vtx_left = vertices.nw
+        vtx_right = vertices.ne
         @assert vtx_left[2] == vtx_right[2]
         x = find_intersection(immersed_boundary, vtx_left[2], vtx_left[1], vtx_right[1], 1)
         return SVector(x, vtx_left[2])
+    elseif dir == :south
+        vtx_left = vertices.sw
+        vtx_right = vertices.se
+        @assert vtx_left[2] == vtx_right[2]
+        x = find_intersection(immersed_boundary, vtx_left[2], vtx_left[1], vtx_right[1], 1)
+        return SVector(x, vtx_left[2])
+    elseif dir == :west
+        vtx_bottom = vertices.sw
+        vtx_top = vertices.nw
+        @assert vtx_bottom[1] == vtx_top[1]
+        y = find_intersection(
+            immersed_boundary,
+            vtx_bottom[1],
+            vtx_bottom[2],
+            vtx_top[2],
+            2,
+        )
+        return SVector(vtx_bottom[1], y)
     else
-        @assert vtx_left[1] == vtx_right[1]
-        y = find_intersection(immersed_boundary, vtx_left[1], vtx_left[2], vtx_right[2], 2)
-        return SVector(vtx_left[1], y)
+        vtx_bottom = vertices.se
+        vtx_top = vertices.ne
+        @assert vtx_bottom[1] == vtx_top[1]
+        y = find_intersection(
+            immersed_boundary,
+            vtx_bottom[1],
+            vtx_bottom[2],
+            vtx_top[2],
+            2,
+        )
+        return SVector(vtx_bottom[1], y)
     end
 end
 
@@ -652,7 +700,7 @@ function find_intersection(circ::CircularObstacle, coord, min, max, idx)
     end
 end
 
-function return_cell_type_id(obs::Obstacle, cell_center::SVector, extent::SVector) # TODO:Review logic to id BCells
+function return_cell_type_id(obs::Obstacle, cell_center::SVector, extent::SVector)
     vert = vertices(cell_center, extent...)
     if any(v -> point_inside(obs, v), vert)
         if any(v -> !point_inside(obs, v), vert)
@@ -747,15 +795,37 @@ function primal_quadcell_list_and_id_grid(u0, params, bounds, ncells, scaling, o
     # @assert sum(active_mask) == last(active_ids) TODO:Implement new Check that works
     cell_list = Dict{Int,PrimalQuadCell{eltype(eltype(u0_grid))}}()
     sizehint!(cell_list, sum(active_mask))
-    for i ∈ eachindex(IndexCartesian(), active_ids, active_mask) # TODO:Handle Boundary cells differently
+    for i ∈ eachindex(IndexCartesian(), active_ids, active_mask)
         active_mask[i] != 0 || continue
-        j = active_ids[i]
+        cell_id = active_ids[i]
         (m, n) = Tuple(i)
         x_i = centers[1][m]
         y_j = centers[2][n]
+        cell_center = SVector(x_i, y_j)
         neighbors = cell_neighbor_status(i, active_ids)
-        cell_list[j] =
-            PrimalQuadCell(j, i, SVector(x_i, y_j), extent, u0_grid[i], neighbors)
+        if active_mask[i] == 1
+            cell_list[cell_id] = PrimalQuadCell(
+                cell_id,
+                i,
+                cell_center,
+                extent,
+                u0_grid[i],
+                neighbors,
+                false,
+                (SVector(0.0, 0.0), SVector(0.0, 0.0)), # HACK:Because writing broke
+            )
+            continue
+        end
+        cell_list[cell_id] = PrimalQuadCell(
+            cell_id,
+            i,
+            cell_center,
+            extent,
+            u0_grid[i],
+            neighbors,
+            true,
+            get_intersection_points(obstacles, cell_center, extent, neighbors),
+        )
     end
     return cell_list, active_ids
 end
@@ -798,21 +868,38 @@ function tangent_quadcell_list_and_id_grid(u0, params, bounds, ncells, scaling, 
 
     cell_list = Dict{Int,TangentQuadCell{T,NSEEDS,4 * NSEEDS}}()
     sizehint!(cell_list, sum(active_mask))
-    for i ∈ eachindex(IndexCartesian(), active_ids, active_mask) # TODO:Handle Boundary Cells differently
+    for i ∈ eachindex(IndexCartesian(), active_ids, active_mask)
         active_mask[i] != 0 || continue
         cell_id = active_ids[i]
         (m, n) = Tuple(i)
         x_i = centers[1][m]
         y_j = centers[2][n]
+        cell_center = SVector(x_i, y_j)
         neighbors = cell_neighbor_status(i, active_ids)
+        if active_mask[i] == 1
+            cell_list[cell_id] = TangentQuadCell(
+                cell_id,
+                i,
+                cell_center,
+                extent,
+                u0_grid[i],
+                u̇0_grid[i],
+                neighbors,
+                false,
+                (SVector(0.0, 0.0), SVector(0.0, 0.0)), # HACK:Because writing broke
+            )
+            continue
+        end
         cell_list[cell_id] = TangentQuadCell(
             cell_id,
             i,
-            SVector(x_i, y_j),
+            cell_center,
             extent,
             u0_grid[i],
             u̇0_grid[i],
             neighbors,
+            true,
+            get_intersection_points(obstacles, cell_center, extent, neighbors),
         )
     end
     return cell_list, active_ids
