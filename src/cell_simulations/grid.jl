@@ -418,6 +418,7 @@ function compute_cell_update_and_max_Δt(
     active_cells,
     boundary_conditions,
     gas,
+    obstacles::Vector{<:Obstacle}
 )
     neighbors = neighbor_cells(cell, active_cells, boundary_conditions, gas)
     ifaces = (
@@ -437,9 +438,19 @@ function compute_cell_update_and_max_Δt(
         (cell_L.extent[dim] + cell_R.extent[dim]) / 2
     end
 
+    # Define Φ (function added to update rule Δu) in the cell only if intersection points were calculated
+
+    Φ = zeros(4)
+    a, b = cell.intersection_points[1][1], cell.intersection_points[2][1]
+    if a != 0 && b != 0
+        P = 0.0 # Define pressure value P at cell
+        S = surface_integral_circle(obstacles,a, b,cell.center) # Define value of surface integral along circular curve between a and b
+        Φ = [0.0, -P*S, -P*S, 0.0]
+    end
+
     Δu = (
         inv(Δx.west) * ϕ.west - inv(Δx.east) * ϕ.east + inv(Δx.south) * ϕ.south -
-        inv(Δx.north) * ϕ.north
+        inv(Δx.north) * ϕ.north + Φ
     )
     # tuple madness
     return (Δt_max, (Δu,))
@@ -450,6 +461,7 @@ function compute_cell_update_and_max_Δt(
     active_cells,
     boundary_conditions,
     gas,
+    obstacles::Vector{<:Obstacle}
 ) where {T,N,P}
     neighbors = neighbor_cells(cell, active_cells, boundary_conditions, gas)
     ifaces = (
@@ -490,6 +502,7 @@ function compute_partition_update_and_max_Δt!(
     cell_partition::CellGridPartition{T},
     boundary_conditions,
     gas::CaloricallyPerfectGas,
+    obstacles::Vector{<:Obstacle,}
 ) where {T}
     computation_region = view(
         cell_partition.cells_copied_ids,
@@ -504,6 +517,7 @@ function compute_partition_update_and_max_Δt!(
             cell_partition.cells_map,
             boundary_conditions,
             gas,
+            obstacles,
         )
         Δt_max = min(Δt_max, cell_Δt_max)
         cell_partition.cells_update[cell_id] = cell_Δu
@@ -572,13 +586,14 @@ function step_cell_simulation!(
     boundary_conditions,
     cfl_limit,
     gas::CaloricallyPerfectGas,
+    obstacles::Vector{<:Obstacle},
 )
     T = numeric_dtype(eltype(cell_partitions))
     # compute Δu from flux functions
     compute_partition_update_tasks = map(cell_partitions) do cell_partition
         Threads.@spawn begin
             # not sure what to interpolate here
-            compute_partition_update_and_max_Δt!(cell_partition, $boundary_conditions, $gas)
+            compute_partition_update_and_max_Δt!(cell_partition, $boundary_conditions, $gas, obstacles)
         end
     end
     partition_max_Δts::Array{T,length(size(compute_partition_update_tasks))} =
@@ -698,6 +713,47 @@ function find_intersection(circ::CircularObstacle, coord, min, max, idx)
     else
         return -intPoint + circ.center[idx]
     end
+end
+
+function calculate_normal_vector_circle(circ::CircularObstacle, a::Float64, b::Float64, cell_center::SVector)
+    center = circ.center
+    xa, xb = min(a,b), max(a,b)
+    x_point = xa + (xb-xa)/2
+    if (cell_center[2]-center[2]<0)
+        y_point = center[2] - sqrt(circ.radius^2-(x_point-center[1])^2)
+    elseif (cell_center[2]-center[2]>=0 && a!=b)
+        y_point = center[2] + sqrt(circ.radius^2-(x_point-center[1])^2)
+    elseif (xa==xb)
+        y_point = center[2]
+    end
+    point = SVector(x_point, y_point)
+    n = point - center
+    return normalize(n)
+end
+
+function surface_integral_circle(circ::Vector{CircularObstacle{Float64}}, a::Float64, b::Float64, cell_center::SVector)
+    circ = circ[1]
+    center, radius = circ.center, circ.radius
+    z_x, z_y = center[1], center[2]
+    xa, xb = max(a, z_x - radius), min(b, z_x + radius)
+    y_a = sqrt(radius^2 - (xa - z_x)^2)
+    y_b = sqrt(radius^2 - (xb - z_x)^2)
+
+    n = calculate_normal_vector_circle(circ, xa, xb, cell_center)
+
+    if (cell_center[2]-z_y<0) # Calculation bellow x-axis
+        integral = n[1] * (xb - xa) + n[2] * (y_b - y_a)
+    elseif (cell_center[2]-z_y>0) # # Calculation above x-axis
+        integral = n[1] * (xb - xa) - n[2] * (y_b - y_a)
+    else # Case when xa = xb
+        n_a = calculate_normal_vector_circle(circ, a, radius, cell_center)
+        y_r = sqrt(radius^2 - (radius - z_x)^2)
+        integral = 2* (n_a[1] * (radius - xb) - n_a[2] * (y_r - y_b))
+        if (xb<0)
+            integral = -integral 
+        end
+    end
+    return integral
 end
 
 function return_cell_type_id(obs::Obstacle, cell_center::SVector, extent::SVector)
