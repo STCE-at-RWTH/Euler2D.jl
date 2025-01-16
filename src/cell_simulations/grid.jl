@@ -58,6 +58,7 @@ struct PrimalQuadCell{T} <: QuadCell # TODO:Make normal cells not save unnecessa
     }
     contains_boundary::Bool
     intersection_points::NTuple{2,SVector{2,T}} # option of Union with Nothing broke writing
+    surface_integral_val::T
 end
 
 """
@@ -89,6 +90,7 @@ struct TangentQuadCell{T,NSEEDS,PARAMCOUNT} <: QuadCell # TODO:Make normal cells
     }
     contains_boundary::Bool
     intersection_points::NTuple{2,SVector{2,T}} # option of Union with Nothing broke writing
+    surface_integral_val::T
 end
 
 numeric_dtype(::PrimalQuadCell{T}) where {T} = T
@@ -418,7 +420,6 @@ function compute_cell_update_and_max_Δt(
     active_cells,
     boundary_conditions,
     gas,
-    obstacles::Vector{<:Obstacle}
 )
     neighbors = neighbor_cells(cell, active_cells, boundary_conditions, gas)
     ifaces = (
@@ -439,14 +440,18 @@ function compute_cell_update_and_max_Δt(
     end
 
     # Define Φ (function added to update rule Δu) in the cell only if intersection points were calculated
-
-    Φ = zeros(4)
-    a, b = cell.intersection_points[1][1], cell.intersection_points[2][1]
-    if a != 0 && b != 0
-        P = 0.0 # Define pressure value P at cell
-        S = surface_integral_circle(obstacles,a, b,cell.center) # Define value of surface integral along circular curve between a and b
-        Φ = [0.0, -P*S, -P*S, 0.0]
+    if !cell.contains_boundary
+        Δu = (
+            inv(Δx.west) * ϕ.west - inv(Δx.east) * ϕ.east + inv(Δx.south) * ϕ.south -
+            inv(Δx.north) * ϕ.north
+        )
+        # tuple madness
+        return (Δt_max, (Δu,))
     end
+    Φ = zeros(4)
+    P = 0.0 # Define pressure value P at cell
+    S = cell.surface_integral_val
+    Φ = [0.0, -P * S, -P * S, 0.0]
 
     Δu = (
         inv(Δx.west) * ϕ.west - inv(Δx.east) * ϕ.east + inv(Δx.south) * ϕ.south -
@@ -461,7 +466,6 @@ function compute_cell_update_and_max_Δt(
     active_cells,
     boundary_conditions,
     gas,
-    obstacles::Vector{<:Obstacle}
 ) where {T,N,P}
     neighbors = neighbor_cells(cell, active_cells, boundary_conditions, gas)
     ifaces = (
@@ -502,7 +506,6 @@ function compute_partition_update_and_max_Δt!(
     cell_partition::CellGridPartition{T},
     boundary_conditions,
     gas::CaloricallyPerfectGas,
-    obstacles::Vector{<:Obstacle,}
 ) where {T}
     computation_region = view(
         cell_partition.cells_copied_ids,
@@ -517,7 +520,6 @@ function compute_partition_update_and_max_Δt!(
             cell_partition.cells_map,
             boundary_conditions,
             gas,
-            obstacles,
         )
         Δt_max = min(Δt_max, cell_Δt_max)
         cell_partition.cells_update[cell_id] = cell_Δu
@@ -593,7 +595,7 @@ function step_cell_simulation!(
     compute_partition_update_tasks = map(cell_partitions) do cell_partition
         Threads.@spawn begin
             # not sure what to interpolate here
-            compute_partition_update_and_max_Δt!(cell_partition, $boundary_conditions, $gas, obstacles)
+            compute_partition_update_and_max_Δt!(cell_partition, $boundary_conditions, $gas)
         end
     end
     partition_max_Δts::Array{T,length(size(compute_partition_update_tasks))} =
@@ -715,15 +717,15 @@ function find_intersection(circ::CircularObstacle, coord, min, max, idx)
     end
 end
 
-function calculate_normal_vector_circle(circ::CircularObstacle, a::Float64, b::Float64, cell_center::SVector)
+function calculate_normal_vector(circ::CircularObstacle, a, b, cell_center::SVector)
     center = circ.center
-    xa, xb = min(a,b), max(a,b)
-    x_point = xa + (xb-xa)/2
-    if (cell_center[2]-center[2]<0)
-        y_point = center[2] - sqrt(circ.radius^2-(x_point-center[1])^2)
-    elseif (cell_center[2]-center[2]>=0 && a!=b)
-        y_point = center[2] + sqrt(circ.radius^2-(x_point-center[1])^2)
-    elseif (xa==xb)
+    xa, xb = min(a, b), max(a, b)
+    x_point = xa + (xb - xa) / 2
+    if (cell_center[2] - center[2] < 0)
+        y_point = center[2] - sqrt(circ.radius^2 - (x_point - center[1])^2)
+    elseif (cell_center[2] - center[2] >= 0 && a != b)
+        y_point = center[2] + sqrt(circ.radius^2 - (x_point - center[1])^2)
+    elseif (xa == xb)
         y_point = center[2]
     end
     point = SVector(x_point, y_point)
@@ -731,26 +733,25 @@ function calculate_normal_vector_circle(circ::CircularObstacle, a::Float64, b::F
     return normalize(n)
 end
 
-function surface_integral_circle(circ::Vector{CircularObstacle{Float64}}, a::Float64, b::Float64, cell_center::SVector)
-    circ = circ[1]
-    center, radius = circ.center, circ.radius
+function surface_integral(obstacle::CircularObstacle, a, b, cell_center::SVector)
+    center, radius = obstacle.center, obstacle.radius
     z_x, z_y = center[1], center[2]
     xa, xb = max(a, z_x - radius), min(b, z_x + radius)
     y_a = sqrt(radius^2 - (xa - z_x)^2)
     y_b = sqrt(radius^2 - (xb - z_x)^2)
 
-    n = calculate_normal_vector_circle(circ, xa, xb, cell_center)
+    n = calculate_normal_vector(obstacle, xa, xb, cell_center)
 
-    if (cell_center[2]-z_y<0) # Calculation bellow x-axis
+    if (cell_center[2] - z_y < 0) # Calculation bellow x-axis
         integral = n[1] * (xb - xa) + n[2] * (y_b - y_a)
-    elseif (cell_center[2]-z_y>0) # # Calculation above x-axis
+    elseif (cell_center[2] - z_y > 0) # # Calculation above x-axis
         integral = n[1] * (xb - xa) - n[2] * (y_b - y_a)
     else # Case when xa = xb
-        n_a = calculate_normal_vector_circle(circ, a, radius, cell_center)
+        n_a = calculate_normal_vector(obstacle, a, radius, cell_center)
         y_r = sqrt(radius^2 - (radius - z_x)^2)
-        integral = 2* (n_a[1] * (radius - xb) - n_a[2] * (y_r - y_b))
-        if (xb<0)
-            integral = -integral 
+        integral = 2 * (n_a[1] * (radius - xb) - n_a[2] * (y_r - y_b))
+        if (xb < 0)
+            integral = -integral
         end
     end
     return integral
@@ -869,9 +870,11 @@ function primal_quadcell_list_and_id_grid(u0, params, bounds, ncells, scaling, o
                 neighbors,
                 false,
                 (SVector(0.0, 0.0), SVector(0.0, 0.0)), # HACK:Because writing broke
+                0.0,
             )
             continue
         end
+        a, b = get_intersection_points(obstacles, cell_center, extent, neighbors)
         cell_list[cell_id] = PrimalQuadCell(
             cell_id,
             i,
@@ -880,7 +883,8 @@ function primal_quadcell_list_and_id_grid(u0, params, bounds, ncells, scaling, o
             u0_grid[i],
             neighbors,
             true,
-            get_intersection_points(obstacles, cell_center, extent, neighbors),
+            (a, b), # FIX:Only works for 1 Cirular Obstacle
+            surface_integral(obstacles[1], a[1], b[1], cell_center),
         )
     end
     return cell_list, active_ids
@@ -943,9 +947,11 @@ function tangent_quadcell_list_and_id_grid(u0, params, bounds, ncells, scaling, 
                 neighbors,
                 false,
                 (SVector(0.0, 0.0), SVector(0.0, 0.0)), # HACK:Because writing broke
+                0.0,
             )
             continue
         end
+        a, b = get_intersection_points(obstacles, cell_center, extent, neighbors)
         cell_list[cell_id] = TangentQuadCell(
             cell_id,
             i,
@@ -955,7 +961,8 @@ function tangent_quadcell_list_and_id_grid(u0, params, bounds, ncells, scaling, 
             u̇0_grid[i],
             neighbors,
             true,
-            get_intersection_points(obstacles, cell_center, extent, neighbors),
+            (a, b), # FIX:Only works for 1 Cirular Obstacle
+            surface_integral(obstacles[1], a[1], b[1], cell_center),
         )
     end
     return cell_list, active_ids
