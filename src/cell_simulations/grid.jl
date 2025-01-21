@@ -449,7 +449,7 @@ function compute_cell_update_and_max_Δt(
         return (Δt_max, (Δu,))
     end
     Φ = zeros(4)
-    P = 0.0 # Define pressure value P at cell
+    P = _pressure(cell.u,gas)
     S = cell.surface_integral_val
     Φ = [0.0, -P * S, -P * S, 0.0]
 
