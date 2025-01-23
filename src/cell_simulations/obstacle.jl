@@ -11,7 +11,7 @@ end
 
 function point_inside(s::CircularObstacle, pt)
     Δr = pt - s.center
-    return sum(x -> x^2, Δr) <= s.radius^2
+    return sum(x -> x^2, Δr) < s.radius^2
 end
 
 struct RectangularObstacle{T} <: Obstacle
@@ -21,7 +21,7 @@ end
 
 function point_inside(s::RectangularObstacle, pt)
     Δx = pt - s.center
-    return all(abs.(Δx) .<= s.extent / 2)
+    return all(abs.(Δx) .< s.extent / 2)
 end
 
 struct TriangularObstacle{T} <: Obstacle
