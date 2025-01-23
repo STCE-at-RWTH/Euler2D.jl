@@ -44,7 +44,7 @@ Fields
  - `u`: What is the cell-averaged `ConservedProps` in this cell?
  - `neighbors`: What are this cell's neighbors?
 """
-struct PrimalQuadCell{T} <: QuadCell
+struct PrimalQuadCell{T} <: QuadCell # TODO:Make normal cells not save unnecessary data
     id::Int
     idx::CartesianIndex{2}
     center::SVector{2,T}
@@ -56,6 +56,9 @@ struct PrimalQuadCell{T} <: QuadCell
         (:north, :south, :east, :west),
         NTuple{4,Tuple{CellNeighboring,Int}},
     }
+    contains_boundary::Bool
+    intersection_points::NTuple{2,SVector{2,T}} # option of Union with Nothing broke writing
+    surface_integral_val::T
 end
 
 """
@@ -74,7 +77,7 @@ Fields
  - `u̇`: What are the cell-averaged pushforwards in this cell?
  - `neighbors`: What are this cell's neighbors?
 """
-struct TangentQuadCell{T,NSEEDS,PARAMCOUNT} <: QuadCell
+struct TangentQuadCell{T,NSEEDS,PARAMCOUNT} <: QuadCell # TODO:Make normal cells not save unnecessary data
     id::Int
     idx::CartesianIndex{2}
     center::SVector{2,T}
@@ -85,6 +88,9 @@ struct TangentQuadCell{T,NSEEDS,PARAMCOUNT} <: QuadCell
         (:north, :south, :east, :west),
         NTuple{4,Tuple{CellNeighboring,Int}},
     }
+    contains_boundary::Bool
+    intersection_points::NTuple{2,SVector{2,T}} # option of Union with Nothing broke writing
+    surface_integral_val::T
 end
 
 numeric_dtype(::PrimalQuadCell{T}) where {T} = T
@@ -433,9 +439,23 @@ function compute_cell_update_and_max_Δt(
         (cell_L.extent[dim] + cell_R.extent[dim]) / 2
     end
 
+    # Define Φ (function added to update rule Δu) in the cell only if intersection points were calculated
+    if !cell.contains_boundary
+        Δu = (
+            inv(Δx.west) * ϕ.west - inv(Δx.east) * ϕ.east + inv(Δx.south) * ϕ.south -
+            inv(Δx.north) * ϕ.north
+        )
+        # tuple madness
+        return (Δt_max, (Δu,))
+    end
+    Φ = zeros(4)
+    P = _pressure(cell.u,gas)
+    S = cell.surface_integral_val
+    Φ = [0.0, -P * S, -P * S, 0.0]
+
     Δu = (
         inv(Δx.west) * ϕ.west - inv(Δx.east) * ϕ.east + inv(Δx.south) * ϕ.south -
-        inv(Δx.north) * ϕ.north
+        inv(Δx.north) * ϕ.north + Φ
     )
     # tuple madness
     return (Δt_max, (Δu,))
@@ -568,6 +588,7 @@ function step_cell_simulation!(
     boundary_conditions,
     cfl_limit,
     gas::CaloricallyPerfectGas,
+    obstacles::Vector{<:Obstacle},
 )
     T = numeric_dtype(eltype(cell_partitions))
     # compute Δu from flux functions
@@ -610,22 +631,170 @@ end
 #  and then computing volume-averaged quantities
 point_inside(s::Obstacle, q) = point_inside(s, q.center)
 
-function active_cell_mask(cell_centers_x, cell_centers_y, obstacles)
-    return map(Iterators.product(cell_centers_x, cell_centers_y)) do (x, y)
-        p = SVector{2}(x, y)
-        return all(obstacles) do o
-            !point_inside(o, p)
+function vertices(cell_center::SVector, dx, dy)
+    return (
+        e = cell_center + 0.5 * @SVector([dx, 0]),
+        se = cell_center + 0.5 * @SVector([dx, -dy]),
+        s = cell_center + 0.5 * @SVector([0, -dy]),
+        sw = cell_center + 0.5 * @SVector([-dx, -dy]),
+        w = cell_center + 0.5 * @SVector([-dx, 0]),
+        nw = cell_center + 0.5 * @SVector([-dx, dy]),
+        n = cell_center + 0.5 * @SVector([0, dy]),
+        ne = cell_center + 0.5 * @SVector([dx, dy]),
+    )
+end
+
+function get_intersection_points(
+    obstacles,
+    cell_center::SVector,
+    extent::SVector,
+    neighbors::NamedTuple,
+)::NTuple{2,SVector{2}}
+    vert = vertices(cell_center, extent...)
+    intersectionPoints = Vector[]
+    for o ∈ obstacles
+        id = return_cell_type_id(o, cell_center, extent)
+        id == -1 || continue
+        for dir in keys(neighbors)
+            if neighbors[dir][2] < 0 ||
+               (neighbors[dir][1] == Euler2D.BOUNDARY_CONDITION && neighbors[dir][2] != 5)
+                push!(intersectionPoints, intersection_point(o, vert, dir))
+            end
         end
+    end
+    return (intersectionPoints[1], intersectionPoints[2])
+end
+
+function intersection_point(immersed_boundary::Obstacle, vertices::NamedTuple, dir::Symbol)
+    if dir == :north
+        vtx_left = vertices.nw
+        vtx_right = vertices.ne
+        @assert vtx_left[2] == vtx_right[2]
+        x = find_intersection(immersed_boundary, vtx_left[2], vtx_left[1], vtx_right[1], 1)
+        return SVector(x, vtx_left[2])
+    elseif dir == :south
+        vtx_left = vertices.sw
+        vtx_right = vertices.se
+        @assert vtx_left[2] == vtx_right[2]
+        x = find_intersection(immersed_boundary, vtx_left[2], vtx_left[1], vtx_right[1], 1)
+        return SVector(x, vtx_left[2])
+    elseif dir == :west
+        vtx_bottom = vertices.sw
+        vtx_top = vertices.nw
+        @assert vtx_bottom[1] == vtx_top[1]
+        y = find_intersection(
+            immersed_boundary,
+            vtx_bottom[1],
+            vtx_bottom[2],
+            vtx_top[2],
+            2,
+        )
+        return SVector(vtx_bottom[1], y)
+    else
+        vtx_bottom = vertices.se
+        vtx_top = vertices.ne
+        @assert vtx_bottom[1] == vtx_top[1]
+        y = find_intersection(
+            immersed_boundary,
+            vtx_bottom[1],
+            vtx_bottom[2],
+            vtx_top[2],
+            2,
+        )
+        return SVector(vtx_bottom[1], y)
+    end
+end
+
+function find_intersection(circ::CircularObstacle, coord, min, max, idx)
+    c1 = min - circ.center[idx]
+    c2 = max - circ.center[idx]
+    coordTick = coord - circ.center[3-idx]
+    intPoint = sqrt(circ.radius^2 - coordTick^2)
+    if c1 < intPoint < c2
+        return intPoint + circ.center[idx]
+    else
+        return -intPoint + circ.center[idx]
+    end
+end
+
+function calculate_normal_vector(circ::CircularObstacle, a, b, cell_center::SVector)
+    center = circ.center
+    xa, xb = min(a, b), max(a, b)
+    x_point = xa + (xb - xa) / 2
+    if (cell_center[2] - center[2] < 0)
+        y_point = center[2] - sqrt(circ.radius^2 - (x_point - center[1])^2)
+    elseif (cell_center[2] - center[2] >= 0 && a != b)
+        y_point = center[2] + sqrt(circ.radius^2 - (x_point - center[1])^2)
+    elseif (xa == xb)
+        y_point = center[2]
+    end
+    point = SVector(x_point, y_point)
+    n = point - center
+    return normalize(n)
+end
+
+function surface_integral(obstacle::CircularObstacle, a, b, cell_center::SVector)
+    center, radius = obstacle.center, obstacle.radius
+    z_x, z_y = center[1], center[2]
+    xa, xb = max(a, z_x - radius), min(b, z_x + radius)
+    y_a = sqrt(radius^2 - (xa - z_x)^2)
+    y_b = sqrt(radius^2 - (xb - z_x)^2)
+
+    n = calculate_normal_vector(obstacle, xa, xb, cell_center)
+
+    if (cell_center[2] - z_y < 0) # Calculation bellow x-axis
+        integral = n[1] * (xb - xa) + n[2] * (y_b - y_a)
+    elseif (cell_center[2] - z_y > 0) # # Calculation above x-axis
+        integral = n[1] * (xb - xa) - n[2] * (y_b - y_a)
+    else # Case when xa = xb
+        n_a = calculate_normal_vector(obstacle, a, radius, cell_center)
+        y_r = sqrt(radius^2 - (radius - z_x)^2)
+        integral = 2 * (n_a[1] * (radius - xb) - n_a[2] * (y_r - y_b))
+        if (xb < 0)
+            integral = -integral
+        end
+    end
+    return integral
+end
+
+function return_cell_type_id(obs::Obstacle, cell_center::SVector, extent::SVector)
+    vert = vertices(cell_center, extent...)
+    if any(v -> point_inside(obs, v), vert)
+        if any(v -> !point_inside(obs, v), vert)
+            return -1
+        end
+        return 0
+    end
+    return 1
+end
+
+function active_cell_mask(cell_centers, extent, obstacles)
+    return map(Iterators.product(cell_centers...)) do (x, y)
+        cell_center = SVector{2}(x, y)
+        contains_boundary = false
+        for o ∈ obstacles
+            id = return_cell_type_id(o, cell_center, extent)
+            if id == 0
+                return 0
+            elseif id == -1
+                contains_boundary = true
+            end
+        end
+        return contains_boundary ? -1 : 1
     end
 end
 
 function active_cell_ids_from_mask(active_mask)::Array{Int,2}
     cell_ids = zeros(Int, size(active_mask))
     live_count = 0
+    boundary_count = 0
     for i ∈ eachindex(IndexLinear(), active_mask, cell_ids)
-        live_count += active_mask[i]
-        if active_mask[i]
+        if active_mask[i] == 1
+            live_count += active_mask[i]
             cell_ids[i] = live_count
+        elseif active_mask[i] == -1
+            boundary_count += active_mask[i]
+            cell_ids[i] = boundary_count
         end
     end
     return cell_ids
@@ -678,20 +847,45 @@ function primal_quadcell_list_and_id_grid(u0, params, bounds, ncells, scaling, o
     @show T
 
     u0_grid = map(_u0_func, pts)
-    active_mask = active_cell_mask(centers..., obstacles)
+    active_mask = active_cell_mask(centers, extent, obstacles)
     active_ids = active_cell_ids_from_mask(active_mask)
-    @assert sum(active_mask) == last(active_ids)
+    # @assert sum(active_mask) == last(active_ids) TODO:Implement new Check that works
     cell_list = Dict{Int,PrimalQuadCell{eltype(eltype(u0_grid))}}()
     sizehint!(cell_list, sum(active_mask))
     for i ∈ eachindex(IndexCartesian(), active_ids, active_mask)
-        active_mask[i] || continue
-        j = active_ids[i]
+        active_mask[i] != 0 || continue
+        cell_id = active_ids[i]
         (m, n) = Tuple(i)
         x_i = centers[1][m]
         y_j = centers[2][n]
+        cell_center = SVector(x_i, y_j)
         neighbors = cell_neighbor_status(i, active_ids)
-        cell_list[j] =
-            PrimalQuadCell(j, i, SVector(x_i, y_j), extent, u0_grid[i], neighbors)
+        if active_mask[i] == 1
+            cell_list[cell_id] = PrimalQuadCell(
+                cell_id,
+                i,
+                cell_center,
+                extent,
+                u0_grid[i],
+                neighbors,
+                false,
+                (SVector(0.0, 0.0), SVector(0.0, 0.0)), # HACK:Because writing broke
+                0.0,
+            )
+            continue
+        end
+        a, b = get_intersection_points(obstacles, cell_center, extent, neighbors)
+        cell_list[cell_id] = PrimalQuadCell(
+            cell_id,
+            i,
+            cell_center,
+            extent,
+            u0_grid[i],
+            neighbors,
+            true,
+            (a, b), # FIX:Only works for 1 Cirular Obstacle
+            surface_integral(obstacles[1], a[1], b[1], cell_center),
+        )
     end
     return cell_list, active_ids
 end
@@ -728,27 +922,47 @@ function tangent_quadcell_list_and_id_grid(u0, params, bounds, ncells, scaling, 
 
     u0_grid = map(_u0_func, pts)
     u̇0_grid = map(_u̇0_func, pts)
-    active_mask = active_cell_mask(centers..., obstacles)
+    active_mask = active_cell_mask(centers, extent, obstacles)
     active_ids = active_cell_ids_from_mask(active_mask)
-    @assert sum(active_mask) == last(active_ids)
+    # @assert sum(active_mask) == last(active_ids) TODO:Implement new Check that works
 
     cell_list = Dict{Int,TangentQuadCell{T,NSEEDS,4 * NSEEDS}}()
     sizehint!(cell_list, sum(active_mask))
     for i ∈ eachindex(IndexCartesian(), active_ids, active_mask)
-        active_mask[i] || continue
+        active_mask[i] != 0 || continue
         cell_id = active_ids[i]
         (m, n) = Tuple(i)
         x_i = centers[1][m]
         y_j = centers[2][n]
+        cell_center = SVector(x_i, y_j)
         neighbors = cell_neighbor_status(i, active_ids)
+        if active_mask[i] == 1
+            cell_list[cell_id] = TangentQuadCell(
+                cell_id,
+                i,
+                cell_center,
+                extent,
+                u0_grid[i],
+                u̇0_grid[i],
+                neighbors,
+                false,
+                (SVector(0.0, 0.0), SVector(0.0, 0.0)), # HACK:Because writing broke
+                0.0,
+            )
+            continue
+        end
+        a, b = get_intersection_points(obstacles, cell_center, extent, neighbors)
         cell_list[cell_id] = TangentQuadCell(
             cell_id,
             i,
-            SVector(x_i, y_j),
+            cell_center,
             extent,
             u0_grid[i],
             u̇0_grid[i],
             neighbors,
+            true,
+            (a, b), # FIX:Only works for 1 Cirular Obstacle
+            surface_integral(obstacles[1], a[1], b[1], cell_center),
         )
     end
     return cell_list, active_ids
