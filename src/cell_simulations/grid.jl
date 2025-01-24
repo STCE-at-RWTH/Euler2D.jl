@@ -425,8 +425,8 @@ function compute_cell_update_and_max_Δt(
     ifaces = (
         north = (2, cell, neighbors.north),
         south = (2, neighbors.south, cell),
-        east = (1, cell, neighbors.east),
-        west = (1, neighbors.west, cell),
+        east  = (1, cell, neighbors.east),
+        west  = (1, neighbors.west, cell),
     )
     a = maximum_cell_signal_speeds(ifaces, gas)
     Δt_max = min((cell.extent ./ a)...)
@@ -439,26 +439,24 @@ function compute_cell_update_and_max_Δt(
         (cell_L.extent[dim] + cell_R.extent[dim]) / 2
     end
 
-    # Define Φ (function added to update rule Δu) in the cell only if intersection points were calculated
-    if !cell.contains_boundary
-        Δu = (
-            inv(Δx.west) * ϕ.west - inv(Δx.east) * ϕ.east + inv(Δx.south) * ϕ.south -
-            inv(Δx.north) * ϕ.north
-        )
-        # tuple madness
-        return (Δt_max, (Δu,))
-    end
-    Φ = zeros(4)
-    P = _pressure(cell.u,gas)
-    S = cell.surface_integral_val
-    Φ = [0.0, -P * S, -P * S, 0.0]
-
     Δu = (
         inv(Δx.west) * ϕ.west - inv(Δx.east) * ϕ.east + inv(Δx.south) * ϕ.south -
-        inv(Δx.north) * ϕ.north + Φ
+        inv(Δx.north) * ϕ.north
     )
-    # tuple madness
-    return (Δt_max, (Δu,))
+
+    # Define Φ (function added to update rule Δu) in the cell only if intersection points were calculated
+    if !cell.contains_boundary
+        return (Δt_max, (Δu,))
+    else
+        Φ = zeros(4)
+        pressure = _pressure(cell.u,gas)
+        S = cell.surface_integral_val
+        Φ = [0.0, -pressure * S, -pressure * S, 0.0]
+    
+        Δu_total = Δu + Φ
+        # tuple madness
+        return (Δt_max, (Δu_total,))
+    end
 end
 
 function compute_cell_update_and_max_Δt(
@@ -471,8 +469,8 @@ function compute_cell_update_and_max_Δt(
     ifaces = (
         north = (2, cell, neighbors.north),
         south = (2, neighbors.south, cell),
-        east = (1, cell, neighbors.east),
-        west = (1, neighbors.west, cell),
+        east  = (1, cell, neighbors.east),
+        west  = (1, neighbors.west, cell),
     )
     a = maximum_cell_signal_speeds(ifaces, gas)
     Δt_max = min((cell.extent ./ a)...)
@@ -488,17 +486,42 @@ function compute_cell_update_and_max_Δt(
         (cell_L.extent[dim] + cell_R.extent[dim]) / 2
     end
 
-    RESULT_DTYPE = update_dtype(typeof(cell))
-    Δu::RESULT_DTYPE = (
-        (
-            (inv(Δx.west) * ϕ.west) - (inv(Δx.east) * ϕ.east) + (inv(Δx.south) * ϕ.south) - (inv(Δx.north) .* ϕ.north)
-        ),
-        (
-            (inv(Δx.west) * ϕ_jvp.west) - (inv(Δx.east) * ϕ_jvp.east) +
-            (inv(Δx.south) * ϕ_jvp.south) - (inv(Δx.north) .* ϕ_jvp.north)
-        ),
+    # Interface flux accumulation
+    Δu_primal = (
+        inv(Δx.west) * ϕ.west -
+        inv(Δx.east) * ϕ.east +
+        inv(Δx.south) * ϕ.south -
+        inv(Δx.north) * ϕ.north
     )
-    return (Δt_max, Δu)
+    Δu_tangent = (
+        inv(Δx.west) * ϕ_jvp.west -
+        inv(Δx.east) * ϕ_jvp.east +
+        inv(Δx.south) * ϕ_jvp.south -
+        inv(Δx.north) * ϕ_jvp.north
+    )
+
+    if !cell.contains_boundary
+        return (Δt_max, (Δu_primal, Δu_tangent))
+    else
+		# The primal boundary flux
+        S = cell.surface_integral_val
+        function boundary_flux(u)
+            pressure = _pressure(u, gas)
+            return @SVector [0.0, -pressure * S, -pressure * S, 0.0]
+        end
+        Φ = boundary_flux(cell.u)
+
+        # The tangent of that boundary flux
+        #  For each column in u̇, multiply by the Jacobian of Φ wrt. u.
+        #  Because `u̇` is a 4×NSEEDS matrix:
+        Φ_jac = ForwardDiff.jacobian(boundary_flux, cell.u)
+        Φ_jvp = Φ_jac * cell.u̇  # same shape as u̇ => (4, NSEEDS)
+
+        Δu_primal_total  = Δu_primal   + Φ
+        Δu_tangent_total = Δu_tangent + Φ_jvp
+
+        return (Δt_max, (Δu_primal_total, Δu_tangent_total))
+    end
 end
 
 # no longer allocates since we pre-allocate the update dict in the struct itself!

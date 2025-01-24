@@ -64,7 +64,7 @@ end
 plot_scalar_field(esim, i_esim, "Pressure") do esim, n
 	pf = pressure_field(esim, n, DRY_AIR)
 	map(pf) do val
-		isnothing(val) ? 0. : ustrip(u"MPa", val)
+		isnothing(val) ? 0. : val
 	end
 end
 
