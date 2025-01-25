@@ -181,7 +181,7 @@ function phantom_neighbor(
             NamedTuple{(:north, :south, :east, :west)}(ntuple(Returns((IS_PHANTOM, 0)), 4))
 
         # TODO there must be a way to do this with Accessors.jl and "lenses" that makes sense
-        # HACK is this utter nonsense????? I do not know. 
+        # HACK is this utter nonsense????? I do not know.
         dim = _dirs_dim[dir]
         u = _dirs_bc_is_reversed[dir] ? flip_velocity(cell.u, dim) : cell.u
         u̇ = _dirs_bc_is_reversed[dir] ? flip_velocity(cell.u̇, dim) : cell.u̇
@@ -204,7 +204,7 @@ end
 """
     neighbor_cells(cell, active_cells, boundary_conditions, gas)
 
-Extract the states of the neighboring cells to `cell` from `active_cells`. 
+Extract the states of the neighboring cells to `cell` from `active_cells`.
 Will compute phantoms as necessary from `boundary_conditions` and `gas`.
 """
 function neighbor_cells(cell, active_cells, boundary_conditions, gas)
@@ -531,8 +531,8 @@ end
 """
     propagate_updates_to!(dest, src, global_cell_ids)
 
-After computing the cell updates for the regions 
-that a partition is responsible for, propagate the updates 
+After computing the cell updates for the regions
+that a partition is responsible for, propagate the updates
 to other partitions.
 
 Returns the number of cells updated.
@@ -849,7 +849,8 @@ function primal_quadcell_list_and_id_grid(u0, params, bounds, ncells, scaling, o
     u0_grid = map(_u0_func, pts)
     active_mask = active_cell_mask(centers, extent, obstacles)
     active_ids = active_cell_ids_from_mask(active_mask)
-    # @assert sum(active_mask) == last(active_ids) TODO:Implement new Check that works
+    @assert sum(active_mask[active_mask.>0]) == last(active_ids[active_ids.>0])
+    @assert sum(active_mask[active_mask.<0]) == last(active_ids[active_ids.<0])
     cell_list = Dict{Int,PrimalQuadCell{eltype(eltype(u0_grid))}}()
     sizehint!(cell_list, sum(active_mask))
     for i ∈ eachindex(IndexCartesian(), active_ids, active_mask)
@@ -924,7 +925,8 @@ function tangent_quadcell_list_and_id_grid(u0, params, bounds, ncells, scaling, 
     u̇0_grid = map(_u̇0_func, pts)
     active_mask = active_cell_mask(centers, extent, obstacles)
     active_ids = active_cell_ids_from_mask(active_mask)
-    # @assert sum(active_mask) == last(active_ids) TODO:Implement new Check that works
+    @assert sum(active_mask[active_mask.>0]) == last(active_ids[active_ids.>0])
+    @assert sum(active_mask[active_mask.<0]) == last(active_ids[active_ids.<0])
 
     cell_list = Dict{Int,TangentQuadCell{T,NSEEDS,4 * NSEEDS}}()
     sizehint!(cell_list, sum(active_mask))
