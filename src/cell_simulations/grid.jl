@@ -705,30 +705,18 @@ function intersection_point(immersed_boundary::Obstacle, vertices::NamedTuple, d
         vtx_bottom = vertices.sw
         vtx_top = vertices.nw
         @assert vtx_bottom[1] == vtx_top[1]
-        y = find_intersection(
-            immersed_boundary,
-            vtx_bottom[1],
-            vtx_bottom[2],
-            vtx_top[2],
-            2,
-        )
+        y = find_intersection(immersed_boundary, vtx_bottom[1], vtx_bottom[2], vtx_top[2], 2)
         return SVector(vtx_bottom[1], y)
     else
         vtx_bottom = vertices.se
         vtx_top = vertices.ne
         @assert vtx_bottom[1] == vtx_top[1]
-        y = find_intersection(
-            immersed_boundary,
-            vtx_bottom[1],
-            vtx_bottom[2],
-            vtx_top[2],
-            2,
-        )
+        y = find_intersection(immersed_boundary, vtx_bottom[1], vtx_bottom[2], vtx_top[2], 2)
         return SVector(vtx_bottom[1], y)
     end
 end
 
-function find_intersection(circ::ParametricObstacle, coord, min, max, idx) #FIX: It is only working for circular parametric obstacle.
+"function find_intersection(circ::ParametricObstacle, coord, min, max, idx) #FIX: It is only working for circular parametric obstacle.
     c1 = min - circ.center[idx]
     c2 = max - circ.center[idx]
     coordTick = coord - circ.center[3-idx]
@@ -737,6 +725,43 @@ function find_intersection(circ::ParametricObstacle, coord, min, max, idx) #FIX:
         return intPoint + circ.center[idx]
     else
         return -intPoint + circ.center[idx]
+    end
+end"
+
+function find_intersection(obstacle::ParametricObstacle, coord, min, max, idx) #FIX: Not working for polynomial
+    params = obstacle.parameters
+    center = obstacle.center
+    shape_type = obstacle.shape_type
+    c1 = min - center[idx]
+    c2 = max - center[idx]
+    coordTick = coord - center[3-idx]
+
+    if shape_type == :circle
+        r = params.r
+    elseif shape_type == :ellipse || shape_type == :hyperbola
+        a = params.a
+        b = params.b
+        h = params.h
+        k = params.k
+        if idx == 1
+            t_idx = shape_type == :ellipse ? asin((coord - k) / b) - π : atan((coord - k) / b) - π
+        elseif idx == 2
+            t_idx = shape_type == :ellipse ? acos((coord - h) / a) - π : asec((coord - h) / a) - π
+        end
+
+        if shape_type == :ellipse
+            r = sqrt((a * cos(t_idx))^2 + (b * sin(t_idx))^2)
+        else # :hyperbola
+            r = sqrt((a * sec(t_idx))^2 + (b * tan(t_idx))^2)
+        end
+    else
+        throw(ArgumentError("Unsupported shape type: $shape_type"))
+    end
+    intPoint = sqrt(r^2 - coordTick^2)
+    if c1 < intPoint < c2
+        return intPoint + center[idx]
+    else
+        return -intPoint + center[idx]
     end
 end
 
