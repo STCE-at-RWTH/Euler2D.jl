@@ -58,7 +58,7 @@ struct PrimalQuadCell{T} <: QuadCell # TODO:Make normal cells not save unnecessa
     }
     contains_boundary::Bool
     intersection_points::NTuple{2,SVector{2,T}} # option of Union with Nothing broke writing
-    surface_integral_val::T
+    line_integral_val::T
 end
 
 """
@@ -90,7 +90,7 @@ struct TangentQuadCell{T,NSEEDS,PARAMCOUNT} <: QuadCell # TODO:Make normal cells
     }
     contains_boundary::Bool
     intersection_points::NTuple{2,SVector{2,T}} # option of Union with Nothing broke writing
-    surface_integral_val::T
+    line_integral_val::T
 end
 
 numeric_dtype(::PrimalQuadCell{T}) where {T} = T
@@ -425,8 +425,8 @@ function compute_cell_update_and_max_Δt(
     ifaces = (
         north = (2, cell, neighbors.north),
         south = (2, neighbors.south, cell),
-        east = (1, cell, neighbors.east),
-        west = (1, neighbors.west, cell),
+        east  = (1, cell, neighbors.east),
+        west  = (1, neighbors.west, cell),
     )
     a = maximum_cell_signal_speeds(ifaces, gas)
     Δt_max = min((cell.extent ./ a)...)
@@ -439,26 +439,24 @@ function compute_cell_update_and_max_Δt(
         (cell_L.extent[dim] + cell_R.extent[dim]) / 2
     end
 
-    # Define Φ (function added to update rule Δu) in the cell only if intersection points were calculated
-    if !cell.contains_boundary
-        Δu = (
-            inv(Δx.west) * ϕ.west - inv(Δx.east) * ϕ.east + inv(Δx.south) * ϕ.south -
-            inv(Δx.north) * ϕ.north
-        )
-        # tuple madness
-        return (Δt_max, (Δu,))
-    end
-    Φ = zeros(4)
-    P = 0.0 # Define pressure value P at cell
-    S = cell.surface_integral_val
-    Φ = [0.0, -P * S, -P * S, 0.0]
-
     Δu = (
         inv(Δx.west) * ϕ.west - inv(Δx.east) * ϕ.east + inv(Δx.south) * ϕ.south -
-        inv(Δx.north) * ϕ.north + Φ
+        inv(Δx.north) * ϕ.north
     )
-    # tuple madness
-    return (Δt_max, (Δu,))
+
+    # Define Φ (function added to update rule Δu) in the cell only if intersection points were calculated
+    if !cell.contains_boundary
+        return (Δt_max, (Δu,))
+    else
+        Φ = zeros(4)
+        pressure = _pressure(cell.u,gas)
+        S = cell.line_integral_val
+        Φ = [0.0, -pressure * S, -pressure * S, 0.0]
+    
+        Δu_total = Δu + Φ
+        # tuple madness
+        return (Δt_max, (Δu_total,))
+    end
 end
 
 function compute_cell_update_and_max_Δt(
@@ -471,8 +469,8 @@ function compute_cell_update_and_max_Δt(
     ifaces = (
         north = (2, cell, neighbors.north),
         south = (2, neighbors.south, cell),
-        east = (1, cell, neighbors.east),
-        west = (1, neighbors.west, cell),
+        east  = (1, cell, neighbors.east),
+        west  = (1, neighbors.west, cell),
     )
     a = maximum_cell_signal_speeds(ifaces, gas)
     Δt_max = min((cell.extent ./ a)...)
@@ -488,17 +486,42 @@ function compute_cell_update_and_max_Δt(
         (cell_L.extent[dim] + cell_R.extent[dim]) / 2
     end
 
-    RESULT_DTYPE = update_dtype(typeof(cell))
-    Δu::RESULT_DTYPE = (
-        (
-            (inv(Δx.west) * ϕ.west) - (inv(Δx.east) * ϕ.east) + (inv(Δx.south) * ϕ.south) - (inv(Δx.north) .* ϕ.north)
-        ),
-        (
-            (inv(Δx.west) * ϕ_jvp.west) - (inv(Δx.east) * ϕ_jvp.east) +
-            (inv(Δx.south) * ϕ_jvp.south) - (inv(Δx.north) .* ϕ_jvp.north)
-        ),
+    # Interface flux accumulation
+    Δu_primal = (
+        inv(Δx.west) * ϕ.west -
+        inv(Δx.east) * ϕ.east +
+        inv(Δx.south) * ϕ.south -
+        inv(Δx.north) * ϕ.north
     )
-    return (Δt_max, Δu)
+    Δu_tangent = (
+        inv(Δx.west) * ϕ_jvp.west -
+        inv(Δx.east) * ϕ_jvp.east +
+        inv(Δx.south) * ϕ_jvp.south -
+        inv(Δx.north) * ϕ_jvp.north
+    )
+
+    if !cell.contains_boundary
+        return (Δt_max, (Δu_primal, Δu_tangent))
+    else
+		# The primal boundary flux
+        S = cell.line_integral_val
+        function boundary_flux(u)
+            pressure = _pressure(u, gas)
+            return @SVector [0.0, -pressure * S, -pressure * S, 0.0]
+        end
+        Φ = boundary_flux(cell.u)
+
+        # The tangent of that boundary flux
+        #  For each column in u̇, multiply by the Jacobian of Φ wrt. u.
+        #  Because `u̇` is a 4×NSEEDS matrix:
+        Φ_jac = ForwardDiff.jacobian(boundary_flux, cell.u)
+        Φ_jvp = Φ_jac * cell.u̇  # same shape as u̇ => (4, NSEEDS)
+
+        Δu_primal_total  = Δu_primal   + Φ
+        Δu_tangent_total = Δu_tangent + Φ_jvp
+
+        return (Δt_max, (Δu_primal_total, Δu_tangent_total))
+    end
 end
 
 # no longer allocates since we pre-allocate the update dict in the struct itself!
@@ -682,26 +705,63 @@ function intersection_point(immersed_boundary::Obstacle, vertices::NamedTuple, d
         vtx_bottom = vertices.sw
         vtx_top = vertices.nw
         @assert vtx_bottom[1] == vtx_top[1]
-        y = find_intersection(
-            immersed_boundary,
-            vtx_bottom[1],
-            vtx_bottom[2],
-            vtx_top[2],
-            2,
-        )
+        y = find_intersection(immersed_boundary, vtx_bottom[1], vtx_bottom[2], vtx_top[2], 2)
         return SVector(vtx_bottom[1], y)
     else
         vtx_bottom = vertices.se
         vtx_top = vertices.ne
         @assert vtx_bottom[1] == vtx_top[1]
-        y = find_intersection(
-            immersed_boundary,
-            vtx_bottom[1],
-            vtx_bottom[2],
-            vtx_top[2],
-            2,
-        )
+        y = find_intersection(immersed_boundary, vtx_bottom[1], vtx_bottom[2], vtx_top[2], 2)
         return SVector(vtx_bottom[1], y)
+    end
+end
+
+"function find_intersection(circ::ParametricObstacle, coord, min, max, idx) #FIX: It is only working for circular parametric obstacle.
+    c1 = min - circ.center[idx]
+    c2 = max - circ.center[idx]
+    coordTick = coord - circ.center[3-idx]
+    intPoint = sqrt(circ.parameters.r^2 - coordTick^2)
+    if c1 < intPoint < c2
+        return intPoint + circ.center[idx]
+    else
+        return -intPoint + circ.center[idx]
+    end
+end"
+
+function find_intersection(obstacle::ParametricObstacle, coord, min, max, idx) #FIX: Not working for polynomial
+    params = obstacle.parameters
+    center = obstacle.center
+    shape_type = obstacle.shape_type
+    c1 = min - center[idx]
+    c2 = max - center[idx]
+    coordTick = coord - center[3-idx]
+
+    if shape_type == :circle
+        r = params.r
+    elseif shape_type == :ellipse || shape_type == :hyperbola
+        a = params.a
+        b = params.b
+        h = params.h
+        k = params.k
+        if idx == 1
+            t_idx = shape_type == :ellipse ? asin((coord - k) / b) - π : atan((coord - k) / b) - π
+        elseif idx == 2
+            t_idx = shape_type == :ellipse ? acos((coord - h) / a) - π : asec((coord - h) / a) - π
+        end
+
+        if shape_type == :ellipse
+            r = sqrt((a * cos(t_idx))^2 + (b * sin(t_idx))^2)
+        else # :hyperbola
+            r = sqrt((a * sec(t_idx))^2 + (b * tan(t_idx))^2)
+        end
+    else
+        throw(ArgumentError("Unsupported shape type: $shape_type"))
+    end
+    intPoint = sqrt(r^2 - coordTick^2)
+    if c1 < intPoint < c2
+        return intPoint + center[idx]
+    else
+        return -intPoint + center[idx]
     end
 end
 
@@ -715,6 +775,81 @@ function find_intersection(circ::CircularObstacle, coord, min, max, idx)
     else
         return -intPoint + circ.center[idx]
     end
+end
+
+
+function atan2(y, x, shape_type)
+    
+    if (shape_type == :hyperbola)
+        return -π + atan(y)
+    elseif x > 0
+        return atan(y / x)
+    elseif x < 0 && y >= 0
+        return atan(y / x) + π
+    elseif x < 0 && y < 0
+        return atan(y / x) - π
+    elseif x == 0 && y > 0
+        return π / 2
+    elseif x == 0 && y < 0
+        return -π / 2
+    else
+        throw(ArgumentError("Undefined atan2 for (y, x) = ($y, $x)"))
+    end
+
+end
+
+function from_cartesian_to_polar(a::SVector{2, Float64}, b::SVector{2, Float64}, shape, params)
+    ax, bx = min(a[1],b[1]), max(a[1], b[1])
+    ay, by = min(a[2],b[2]), max(a[2], b[2])
+    if (shape == :circle)
+        h, k, r = params.h, params.k, params.r
+        t_a = atan2(ay - k, ax - h, shape)
+        t_b = atan2(by - k, bx - h, shape)
+    elseif (shape == :ellipse)
+        h, k, a, b = params.h, params.k, params.a, params.b
+        t_a = atan2((ay - k) / b, (ax - h) / a, shape)
+        t_b = atan2((by - k) / b, (bx - h) / a, shape)
+    elseif (shape == :hyperbola)
+        h, k, a, b = params.h, params.k, params.a, params.b
+        tan_t_a = (ay - k) / b
+        tan_t_b = (by - k) / b
+        t_a = atan2((tan_t_a) , 0, shape)
+        t_b = atan2((tan_t_b) , 0, shape)
+    elseif (shape == :polynomial)
+        t_a, t_b = ax, bx
+    else 
+        throw(ArgumentError("Unsupported shape type: $shape"))
+    end
+    t_c = t_b + (t_a - t_b) / 2
+
+    return t_a, t_b, t_c, ax, bx, ay, by
+end
+
+function calculate_normal_vector(spline::ParametricObstacle, a::SVector{2, Float64}, b::SVector{2, Float64}, bound::Float64)
+
+    # Extract calculation parameters
+    x_fun, y_fun, params, shape = spline.x_func, spline.y_func, spline.parameters, spline.shape_type
+    _, _, t_c, ax, bx, ay, by = from_cartesian_to_polar(a,b,shape,params)
+
+    # Calculate derivatives for normal vector calculation
+    x_wrapped = t -> x_fun(t, params)
+    y_wrapped = t -> y_fun(t, params)
+    dx_dt = ForwardDiff.derivative(x_wrapped, t_c)
+    dy_dt = ForwardDiff.derivative(y_wrapped, t_c)
+
+    # Determine and normalize normal vector
+    tangent = SVector{2, Float64}(dx_dt, dy_dt)
+    n = SVector(-tangent[2], tangent[1])
+    n_norm = normalize(n)
+
+    # Check direction of n_norm
+    P_curve = SVector(x_fun(t_c, params), y_fun(t_c,params))
+    P_test = P_curve + SVector(bound, 0.0)
+    if dot(n_norm, P_test - P_curve)<0
+        n_norm = -n_norm
+    end
+
+    return n_norm  # Return the unit normal vector
 end
 
 function calculate_normal_vector(circ::CircularObstacle, a, b, cell_center::SVector)
@@ -733,7 +868,24 @@ function calculate_normal_vector(circ::CircularObstacle, a, b, cell_center::SVec
     return normalize(n)
 end
 
-function surface_integral(obstacle::CircularObstacle, a, b, cell_center::SVector)
+function calculate_line_integral(spline::ParametricObstacle, a::SVector{2, Float64}, b::SVector{2, Float64}, bound::Float64)
+
+    # Extract calculation parameters
+    x_fun, y_fun, params, shape = spline.x_func, spline.y_func, spline.parameters, spline.shape_type
+    t_a, t_b, t_c, ax, bx, ay, by = from_cartesian_to_polar(a,b,shape,params)
+    n = calculate_normal_vector(spline,a,b,bound)
+    
+    # Calculate value of line integral
+    if (shape== :polynomial)
+        integral = n[1] * (x_fun(bx, params) - x_fun(ax, params)) + n[2] * (y_fun(bx, params) - y_fun(ax, params))
+    else
+        integral = n[1] * (x_fun(t_b, params) - x_fun(t_a, params)) + n[2] * (y_fun(t_b, params) - y_fun(t_a, params))
+    end
+
+    return integral
+end
+
+function calculate_line_integral(obstacle::CircularObstacle, a, b, cell_center::SVector)
     center, radius = obstacle.center, obstacle.radius
     z_x, z_y = center[1], center[2]
     xa, xb = max(a, z_x - radius), min(b, z_x + radius)
@@ -876,6 +1028,13 @@ function primal_quadcell_list_and_id_grid(u0, params, bounds, ncells, scaling, o
             continue
         end
         a, b = get_intersection_points(obstacles, cell_center, extent, neighbors)
+        if isa(obstacles[1], CircularObstacle)
+            line_integral_value = calculate_line_integral(obstacles[1], a[1], b[1], cell_center)
+        elseif isa(obstacles[1], ParametricObstacle)
+            line_integral_value = calculate_line_integral(obstacles[1],a,b,bounds[1][1])
+        else
+            println("Unsupported obstacle type.")
+        end
         cell_list[cell_id] = PrimalQuadCell(
             cell_id,
             i,
@@ -885,7 +1044,7 @@ function primal_quadcell_list_and_id_grid(u0, params, bounds, ncells, scaling, o
             neighbors,
             true,
             (a, b), # FIX:Only works for 1 Cirular Obstacle
-            surface_integral(obstacles[1], a[1], b[1], cell_center),
+            line_integral_value,
         )
     end
     return cell_list, active_ids
@@ -954,6 +1113,13 @@ function tangent_quadcell_list_and_id_grid(u0, params, bounds, ncells, scaling, 
             continue
         end
         a, b = get_intersection_points(obstacles, cell_center, extent, neighbors)
+        if isa(obstacles[1], CircularObstacle)
+            line_integral_value = calculate_line_integral(obstacles[1], a[1], b[1], cell_center)
+        elseif isa(obstacles[1], ParametricObstacle)
+            line_integral_value = calculate_line_integral(obstacles[1],a,b,bounds[1][1])
+        else
+            println("Unsupported obstacle type.")
+        end
         cell_list[cell_id] = TangentQuadCell(
             cell_id,
             i,
@@ -964,7 +1130,7 @@ function tangent_quadcell_list_and_id_grid(u0, params, bounds, ncells, scaling, 
             neighbors,
             true,
             (a, b), # FIX:Only works for 1 Cirular Obstacle
-            surface_integral(obstacles[1], a[1], b[1], cell_center),
+            line_integral_value,
         )
     end
     return cell_list, active_ids
