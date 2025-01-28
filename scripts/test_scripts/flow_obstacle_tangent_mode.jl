@@ -10,6 +10,16 @@ using ShockwaveProperties
 using StaticArrays
 using Unitful
 
+function u0(x, p)
+    pp = PrimitiveProps(p[1], SVector(p[2], 0.0), p[3])
+    return ConservedProps(pp, DRY_AIR)
+end
+
+function make_circle(p)
+    center = (0.0, 0.0)
+    radius = p[4]  # now the radius is the 4th component of the parameter vector
+    return CircularObstacle(center, radius)
+end
 
 bcs = (
     ExtrapolateToPhantom(), # north 
@@ -19,15 +29,9 @@ bcs = (
     StrongWall(), # walls
 )
 bounds = ((-2.0, 0.0), (-1.5, 1.5))
-just_circle = [CircularObstacle((0.0, 0.0), 0.75)]
 ncells = (50, 75)
 
-starting_parameters = SVector(0.662, 4.0, 220.0)
-
-function u0(x, p)
-    pp = PrimitiveProps(p[1], SVector(p[2], 0.0), p[3])
-    return ConservedProps(pp, DRY_AIR)
-end
+starting_parameters = SVector(0.662, 4.0, 220.0, 0.75)
 
 ambient = u0(nothing, starting_parameters)
 
@@ -36,20 +40,22 @@ a0 = speed_of_sound(ambient, DRY_AIR)
 ρ0 = density(ambient)
 scale = EulerEqnsScaling(x0, ρ0, a0)
 
+obstacle = make_circle(starting_parameters)
+just_circle = [obstacle]
 
 # compile and run everything.
 
 global_cells, global_ids = tangent_quadcell_list_and_id_grid(u0, starting_parameters, bounds, ncells, scale, just_circle);
 @assert isconcretetype(valtype(global_cells))
 cell_partitions = partition_cell_list(global_cells, global_ids, 2);
-step_cell_simulation!(cell_partitions, 0.1, bcs, 0.5, DRY_AIR)
+step_cell_simulation!(cell_partitions, 0.1, bcs, 0.5, DRY_AIR, just_circle)
 
 ## 
 # now profile it
 cell_partitions = partition_cell_list(global_cells, global_ids, 2);
 Profile.Allocs.clear()
 Profile.Allocs.@profile sample_rate = 1 begin
-    step_cell_simulation!(cell_partitions, 0.1, bcs, 0.5, DRY_AIR)
+    step_cell_simulation!(cell_partitions, 0.1, bcs, 0.5, DRY_AIR, just_circle)
 end
 prof = Profile.Allocs.fetch();
 
@@ -64,7 +70,7 @@ using Euler2D: compute_cell_update_and_max_Δt, maximum_cell_signal_speeds
 using Euler2D: ϕ_hll, ϕ_hll_jvp
 
 cell_partitions2 = partition_cell_list(global_cells, global_ids, 2);
-@benchmark step_cell_simulation!($cell_partitions2, 0.1, $bcs, 0.5, $DRY_AIR)
+@benchmark step_cell_simulation!($cell_partitions2, 0.1, $bcs, 0.5, $DRY_AIR, $just_circle)
 
 part1 = cell_partitions2[1];
 cell1 = part1.cells_map[1]
@@ -96,8 +102,8 @@ end
 @benchmark neighbor_cells($cell1, $(part1.cells_map), $bcs, $DRY_AIR)
 @code_warntype neighbor_cells(cell1, (part1.cells_map), bcs, DRY_AIR)
 
-@code_warntype compute_cell_update_and_max_Δt(cell1, (part1.cells_map), bcs, DRY_AIR)
-@benchmark compute_cell_update_and_max_Δt($cell1, $(part1.cells_map), $bcs, $DRY_AIR)
+@code_warntype compute_cell_update_and_max_Δt(cell1, (part1.cells_map), bcs, DRY_AIR, just_circle)
+@benchmark compute_cell_update_and_max_Δt($cell1, $(part1.cells_map), $bcs, $DRY_AIR, $just_circle)
 
 @code_warntype phantom_neighbor(cell1, :south, bcs[2], DRY_AIR)
 @code_warntype flip_velocity(cell1.u̇, 2)

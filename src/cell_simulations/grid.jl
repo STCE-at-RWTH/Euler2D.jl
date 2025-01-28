@@ -420,6 +420,7 @@ function compute_cell_update_and_max_Δt(
     active_cells,
     boundary_conditions,
     gas,
+    obstacles,
 )
     neighbors = neighbor_cells(cell, active_cells, boundary_conditions, gas)
     ifaces = (
@@ -464,6 +465,7 @@ function compute_cell_update_and_max_Δt(
     active_cells,
     boundary_conditions,
     gas,
+    obstacles,
 ) where {T,N,P}
     neighbors = neighbor_cells(cell, active_cells, boundary_conditions, gas)
     ifaces = (
@@ -487,6 +489,7 @@ function compute_cell_update_and_max_Δt(
     end
 
     # Interface flux accumulation
+    RESULT_DTYPE = update_dtype(typeof(cell))
     Δu_primal = (
         inv(Δx.west) * ϕ.west -
         inv(Δx.east) * ϕ.east +
@@ -501,26 +504,28 @@ function compute_cell_update_and_max_Δt(
     )
 
     if !cell.contains_boundary
-        return (Δt_max, (Δu_primal, Δu_tangent))
+        Δu = (Δu_primal, Δu_tangent)
+        return (Δt_max, Δu)
     else
 		# The primal boundary flux
-        S = cell.line_integral_val
-        function boundary_flux(u)
+        obstacle = obstacles[1] # TODO: only for one Circular Obstacle
+        a, b = cell.intersection_points
+        function boundary_flux(u) # TODO: Emilio - implement this function properly, for AD
             pressure = _pressure(u, gas)
+            S = calculate_line_integral(obstacle, a[1], b[1], cell.center)
             return @SVector [0.0, -pressure * S, -pressure * S, 0.0]
         end
         Φ = boundary_flux(cell.u)
 
         # The tangent of that boundary flux
-        #  For each column in u̇, multiply by the Jacobian of Φ wrt. u.
-        #  Because `u̇` is a 4×NSEEDS matrix:
         Φ_jac = ForwardDiff.jacobian(boundary_flux, cell.u)
         Φ_jvp = Φ_jac * cell.u̇  # same shape as u̇ => (4, NSEEDS)
 
-        Δu_primal_total  = Δu_primal   + Φ
+        Δu_primal_total  = Δu_primal  + Φ
         Δu_tangent_total = Δu_tangent + Φ_jvp
 
-        return (Δt_max, (Δu_primal_total, Δu_tangent_total))
+        Δu = (Δu_primal_total, Δu_tangent_total)
+        return (Δt_max, Δu)
     end
 end
 
@@ -529,6 +534,7 @@ function compute_partition_update_and_max_Δt!(
     cell_partition::CellGridPartition{T},
     boundary_conditions,
     gas::CaloricallyPerfectGas,
+    obstacles::Vector{<:Obstacle},
 ) where {T}
     computation_region = view(
         cell_partition.cells_copied_ids,
@@ -543,6 +549,7 @@ function compute_partition_update_and_max_Δt!(
             cell_partition.cells_map,
             boundary_conditions,
             gas,
+            obstacles,
         )
         Δt_max = min(Δt_max, cell_Δt_max)
         cell_partition.cells_update[cell_id] = cell_Δu
@@ -618,7 +625,7 @@ function step_cell_simulation!(
     compute_partition_update_tasks = map(cell_partitions) do cell_partition
         Threads.@spawn begin
             # not sure what to interpolate here
-            compute_partition_update_and_max_Δt!(cell_partition, $boundary_conditions, $gas)
+            compute_partition_update_and_max_Δt!(cell_partition, $boundary_conditions, $gas, obstacles)
         end
     end
     partition_max_Δts::Array{T,length(size(compute_partition_update_tasks))} =
