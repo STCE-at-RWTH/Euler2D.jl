@@ -489,7 +489,6 @@ function compute_cell_update_and_max_Δt(
     end
 
     # Interface flux accumulation
-    RESULT_DTYPE = update_dtype(typeof(cell))
     Δu_primal = (
         inv(Δx.west) * ϕ.west -
         inv(Δx.east) * ϕ.east +
@@ -508,9 +507,9 @@ function compute_cell_update_and_max_Δt(
         return (Δt_max, Δu)
     else
 		# The primal boundary flux
-        obstacle = obstacles[1] # TODO: only for one Circular Obstacle
+        obstacle = obstacles[1] # TODO: only for one
         a, b = cell.intersection_points
-        function boundary_flux(u) # TODO: Emilio - implement this function properly, for AD
+        function boundary_flux(u)
             pressure = _pressure(u, gas)
             S = calculate_line_integral(obstacle, a[1], b[1], cell.center)
             return @SVector [0.0, -pressure * S, -pressure * S, 0.0]
@@ -519,7 +518,7 @@ function compute_cell_update_and_max_Δt(
 
         # The tangent of that boundary flux
         Φ_jac = ForwardDiff.jacobian(boundary_flux, cell.u)
-        Φ_jvp = Φ_jac * cell.u̇  # same shape as u̇ => (4, NSEEDS)
+        Φ_jvp = Φ_jac * cell.u̇
 
         Δu_primal_total  = Δu_primal  + Φ
         Δu_tangent_total = Δu_tangent + Φ_jvp
