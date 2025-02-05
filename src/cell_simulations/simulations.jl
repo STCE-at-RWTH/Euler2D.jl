@@ -29,7 +29,7 @@ Represents a completed simulation of the Euler equations on a mesh of 2-dimensio
 - `density_field, momentum_density_field, total_internal_energy_density_field`: Compute quantities at a given time step.
 - `pressure_field, velocity_field, mach_number_field`: Compute quantities at a given time step.
 """
-struct CellBasedEulerSim{T,C<:QuadCell}
+struct CellBasedEulerSim{T,C<:FVMCell}
     ncells::Tuple{Int,Int}
     nsteps::Int
     bounds::NTuple{2,Tuple{T,T}}
@@ -263,7 +263,25 @@ mach_number_field(
     scale::EulerEqnsScaling,
 ) = mach_number_field(csim, n, gas)
 
-function write_tstep_to_stream(stream, t, global_cells)
+function all_cells_contained_by(poly, sim)
+    closed_poly = is_poly_closed(poly) ? poly : make_closed(poly)
+    _, cells = nth_step(sim, 1)
+    return filter(sim.cell_ids) do id
+        id == 0 && return false
+        return is_cell_contained_by(cells[id], closed_poly)
+    end
+end
+
+function all_cells_overlapping(poly, sim)
+    closed_poly = is_poly_closed(poly) ? poly : make_closed(poly)
+    _, cells = nth_step(sim, 1)
+    return filter(sim.cell_ids) do id
+        id == 0 && return false
+        return is_cell_overlapping(cells[id], closed_poly)
+    end
+end
+
+function _write_tstep_to_stream(stream, t, global_cells)
     @info "Writing time step to file." t = t ncells = length(global_cells)
     write(stream, t)
     for (id, cell) ∈ global_cells
@@ -340,9 +358,9 @@ function simulate_euler_equations_cells(
     cell_ifaces = [range(b...; length = n + 1) for (b, n) ∈ zip(bounds, ncells)]
 
     global_cells, global_cell_ids = if mode == PRIMAL
-        primal_quadcell_list_and_id_grid(u0, params, bounds, ncells, scale, obstacles)
+        primal_cell_list_and_id_grid(u0, params, bounds, ncells, scale, obstacles)
     else
-        tangent_quadcell_list_and_id_grid(u0, params, bounds, ncells, scale, obstacles)
+        tangent_cell_list_and_id_grid(u0, params, bounds, ncells, scale, obstacles)
     end
 
     cell_partitions = partition_cell_list(global_cells, global_cell_ids, tasks_per_axis)
@@ -397,7 +415,7 @@ function simulate_euler_equations_cells(
                 if val == :stop
                     break
                 end
-                write_tstep_to_stream(tape_stream, val...)
+                _write_tstep_to_stream(tape_stream, val...)
             end
         end
         put!(writer_channel, (t, global_cells))
@@ -484,7 +502,7 @@ end
 
 Load a cell-based simulation from path, computed with data type `T`.
 """
-function load_cell_sim(path; steps=:all, T = Float64, show_info = true)
+function load_cell_sim(path; steps = :all, T = Float64, show_info = true)
     return open(path, "r") do f
         n_tsteps = read(f, Int)
         mode = read(f, EulerSimulationMode)
@@ -511,7 +529,7 @@ function load_cell_sim(path; steps=:all, T = Float64, show_info = true)
         end
         cell_vals = Vector{Dict{Int,CellDType}}(undef, n_tsteps)
         temp_cell_vals = Vector{CellDType}(undef, n_active)
-        
+
         for k = 1:n_tsteps
             time_steps[k] = read(f, T)
             #@info "Reading..." k t_k = time_steps[k] n_active

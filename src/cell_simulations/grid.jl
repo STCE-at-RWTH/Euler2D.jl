@@ -15,19 +15,38 @@ end
 end
 
 """
-    QuadCell
+    FVMCell
 
 Abstract data type for all cells in a Cartesian grid.
 
-All QuadCells _must_ provide the following methods:
+All FVMCells _must_ provide the following methods:
 
- - `numeric_dtype(::QuadCell)`
- - `update_dtype(::QuadCell)`
+ - `numeric_dtype(::FVMCell)`
+ - `update_dtype(::FVMCell)`
+ - `cell_points(::FVMCell)`
 """
-abstract type QuadCell end
+abstract type FVMCell end
+
+function is_cell_contained_by(cell::FVMCell, closed_poly)
+    return all(eachcol(cell_points(cell))) do p
+        point_inside(closed_poly, p)
+    end
+end
+
+function is_cell_overlapping(cell::FVMCell, closed_poly)
+    v = map(eachcol(cell_points(cell))) do p
+        point_inside(closed_poly, p)
+    end
+    return any(v) && !all(v)
+end
+
+function overlapping_cell_area(cell::FVMCell, poly)
+    isect = poly_intersection(cell_points(cell), poly)
+    return polygon_area(isect)
+end
 
 """
-    PrimalQuadCell{T} <: QuadCell
+    PrimalQuadCell{T} <: FVMCell
 
 QuadCell data type for a primal computation.
 
@@ -44,7 +63,7 @@ Fields
  - `u`: What is the cell-averaged `ConservedProps` in this cell?
  - `neighbors`: What are this cell's neighbors?
 """
-struct PrimalQuadCell{T} <: QuadCell
+struct PrimalQuadCell{T} <: FVMCell
     id::Int
     idx::CartesianIndex{2}
     center::SVector{2,T}
@@ -59,7 +78,7 @@ struct PrimalQuadCell{T} <: QuadCell
 end
 
 """
-    TangentQuadCell{T, NSEEDS,PARAMCOUNT} <: QuadCell
+    TangentQuadCell{T, NSEEDS,PARAMCOUNT} <: FVMCell
 
 QuadCell data type for a primal computation. Pushes forward `NSEEDS` seed values through the JVP of the flux function.
 `PARAMCOUNT` determines the "length" of the underlying `SMatrix` for `u̇`.
@@ -74,7 +93,7 @@ Fields
  - `u̇`: What are the cell-averaged pushforwards in this cell?
  - `neighbors`: What are this cell's neighbors?
 """
-struct TangentQuadCell{T,NSEEDS,PARAMCOUNT} <: QuadCell
+struct TangentQuadCell{T,NSEEDS,PARAMCOUNT} <: FVMCell
     id::Int
     idx::CartesianIndex{2}
     center::SVector{2,T}
@@ -87,6 +106,19 @@ struct TangentQuadCell{T,NSEEDS,PARAMCOUNT} <: QuadCell
     }
 end
 
+"""
+    PolyCell{T, NV}
+
+
+"""
+struct TangentPolyCell{T, NV, NSEEDS, NTANGENTS} <: FVMCell
+    id::Int
+    boundary::SClosedPolygon{T, NV}
+    u::SVector{4, T}
+    u̇::SMatrix{4, NSEEDS, T, NTANGENTS}
+    neighbors::NTuple{NV, Tuple{CellNeighboring, Int}}
+end
+
 numeric_dtype(::PrimalQuadCell{T}) where {T} = T
 numeric_dtype(::Type{PrimalQuadCell{T}}) where {T} = T
 
@@ -94,6 +126,37 @@ numeric_dtype(::TangentQuadCell{T,N,P}) where {T,N,P} = T
 numeric_dtype(::Type{TangentQuadCell{T,N,P}}) where {T,N,P} = T
 n_seeds(::TangentQuadCell{T,N,P}) where {T,N,P} = N
 n_seeds(::Type{TangentQuadCell{T,N,P}}) where {T,N,P} = N
+
+numeric_dtype(::TangentQuadCell{T,N,P}) where {T,N,P} = T
+numeric_dtype(::Type{TangentQuadCell{T,N,P}}) where {T,N,P} = T
+n_seeds(::TangentQuadCell{T,N,P}) where {T,N,P} = N
+n_seeds(::Type{TangentQuadCell{T,N,P}}) where {T,N,P} = N
+
+function cell_points(cell::PrimalQuadCell)
+    c = cell.center
+    dx, dy = cell.extent / 2
+    return make_closed(
+        SVector(
+            c + SVector(dx, -dy),
+            c + SVector(-dx, -dy),
+            c + SVector(-dx, dy),
+            c + SVector(dx, dy),
+        ),
+    )
+end
+
+function cell_points(cell::TangentQuadCell)
+    c = cell.center
+    dx, dy = cell.extent / 2
+    return make_closed(
+        SVector(
+            c + SVector(dx, -dy),
+            c + SVector(-dx, -dy),
+            c + SVector(-dx, dy),
+            c + SVector(dx, dy),
+        ),
+    )
+end
 
 @doc """
         numeric_dtype(cell)
@@ -106,6 +169,13 @@ update_dtype(::Type{T}) where {T<:PrimalQuadCell} = Tuple{SVector{4,numeric_dtyp
 function update_dtype(::Type{TangentQuadCell{T,N,P}}) where {T,N,P}
     return Tuple{SVector{4,T},SMatrix{4,N,T,P}}
 end
+
+@doc """
+        update_dtype(::Type{<:FVMCell})
+    
+Get the tuple type assiocated with updating this cell. This is to help the type checker / inferrer when working with tasks.
+
+""" update_dtype
 
 function inward_normals(T::DataType)
     return (
@@ -265,7 +335,7 @@ struct CellGridPartition{T,U}
         cells_copied_ids,
         cells_map::Dict{Int,T},
         cells_update::Dict{Int},
-    ) where {T<:QuadCell}
+    ) where {T<:FVMCell}
         return new{T,update_dtype(T)}(
             id,
             global_extent,
@@ -394,7 +464,7 @@ function collect_cell_partitions(cell_partitions, global_cell_ids)
     return u_global
 end
 
-function _iface_speed(iface::Tuple{Int,T,T}, gas) where {T<:QuadCell}
+function _iface_speed(iface::Tuple{Int,T,T}, gas) where {T<:FVMCell}
     return max(abs.(interface_signal_speeds(iface[2].u, iface[3].u, iface[1], gas))...)
 end
 
@@ -658,12 +728,12 @@ function cell_neighbor_status(i, cell_ids)
 end
 
 """
-    primal_quadcell_list_and_id_grid(u0, bounds, ncells, obstacles)
+    primal_cell_list_and_id_grid(u0, bounds, ncells, obstacles)
 
 Computes a collection of active cells and their locations in a grid determined by `bounds` and `ncells`.
 `Obstacles` can be placed into the simulation grid.
 """
-function primal_quadcell_list_and_id_grid(u0, params, bounds, ncells, scaling, obstacles)
+function primal_cell_list_and_id_grid(u0, params, bounds, ncells, scaling, obstacles)
     centers = map(zip(bounds, ncells)) do (b, n)
         v = range(b...; length = n + 1)
         return v[1:end-1] .+ step(v) / 2
@@ -697,12 +767,12 @@ function primal_quadcell_list_and_id_grid(u0, params, bounds, ncells, scaling, o
 end
 
 """
-    tangent_quadcell_list_and_id_grid(u0, bounds, ncells, obstacles)
+    tangent_cell_list_and_id_grid(u0, bounds, ncells, obstacles)
 
 Computes a collection of active cells and their locations in a grid determined by `bounds` and `ncells`.
 `Obstacles` can be placed into the simulation grid.
 """
-function tangent_quadcell_list_and_id_grid(u0, params, bounds, ncells, scaling, obstacles)
+function tangent_cell_list_and_id_grid(u0, params, bounds, ncells, scaling, obstacles)
     centers = map(zip(bounds, ncells)) do (b, n)
         v = range(b...; length = n + 1)
         return v[1:end-1] .+ step(v) / 2

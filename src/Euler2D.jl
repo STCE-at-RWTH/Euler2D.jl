@@ -22,7 +22,7 @@ using Unitful: 𝐋, 𝐓, 𝐌, 𝚯, 𝐍
 using Unitful: @derived_dimension, Density, Pressure, Velocity
 
 include("utils.jl")
-include("nondimensionalization.jl")
+include("geometry/Geometry.jl")
 include("transport.jl")
 include("boundary_conditions.jl")
 include("riemann_problem.jl")
