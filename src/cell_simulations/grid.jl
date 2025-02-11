@@ -41,7 +41,7 @@ Fields
  - `idx`: Which grid cell does this data represent?
  - `center`: Where is the center of this quad cell?
  - `extent`: How large is this quad cell?
- - `u`: What is the cell-averaged `ConservedProps` in this cell?
+ - `u`: What are the cell-averaged non-dimensionalized conserved properties in this cell?
  - `neighbors`: What are this cell's neighbors?
 """
 struct PrimalQuadCell{T} <: QuadCell
@@ -70,7 +70,7 @@ Fields
  - `idx`: Which grid cell does this data represent?
  - `center`: Where is the center of this quad cell?
  - `extent`: How large is this quad cell?
- - `u`: What is the cell-averaged `ConservedProps` in this cell?
+ - `u`: What are the cell-averaged non-dimensionalized conserved properties in this cell?
  - `u̇`: What are the cell-averaged pushforwards in this cell?
  - `neighbors`: What are this cell's neighbors?
 """
@@ -106,6 +106,12 @@ update_dtype(::Type{T}) where {T<:PrimalQuadCell} = Tuple{SVector{4,numeric_dtyp
 function update_dtype(::Type{TangentQuadCell{T,N,P}}) where {T,N,P}
     return Tuple{SVector{4,T},SMatrix{4,N,T,P}}
 end
+
+@doc """
+    update_dtype(::Type{T<:QuadCell})
+
+Get the tuple of update data types that must be enforced upon fetch-ing results out of the worker tasks.
+"""
 
 function inward_normals(T::DataType)
     return (
@@ -409,6 +415,22 @@ function maximum_cell_signal_speeds(
     )
 end
 
+"""
+    compute_cell_update_and_max_Δt(cell, active_cells, boundary_conditions, gas)
+
+Computes the update (of type `update_dtype(typeof(cell))`) for a given cell.
+
+Arguments
+---
+- `cell`
+- `active_cells`: The active cell partition or simulation. Usually a `Dict` that maps `id => typeof(cell)`
+- `boundary_conditions`: The boundary conditions
+- `gas::CaloricallyPerfectGas`: The simulation fluid.
+
+Returns
+---
+`(update, Δt_max)`: A tuple of the cell update and the maximum time step size allowed by the CFL condition.
+"""
 function compute_cell_update_and_max_Δt(
     cell::PrimalQuadCell,
     active_cells,
