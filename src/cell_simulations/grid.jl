@@ -509,16 +509,38 @@ function compute_cell_update_and_max_Δt(
 		# The primal boundary flux
         obstacle = obstacles[1] # TODO: only for one
         a, b = cell.intersection_points
-        function boundary_flux(u)
+
+        # # Create a dual version of the radius with a unit derivative.
+        # dual_r = ForwardDiff.Dual(obstacle.radius, 1.0)
+        # # Construct an obstacle with dual radius (ensuring the constructor is dual-friendly)
+        # obstacle_dual = CircularObstacle(obstacle.center, dual_r)
+        # # Compute the line integral using the dual-valued obstacle.
+        # S_dual = calculate_line_integral(obstacle_dual, a[1], b[1], cell.center)
+        
+        # # Print the nominal value and the derivative part.
+        # println("Nominal S: ", ForwardDiff.value(S_dual), "   dS/dr: ", ForwardDiff.partials(S_dual))
+
+        function boundary_flux(u, r)
             pressure = _pressure(u, gas)
-            S = calculate_line_integral(obstacle, a[1], b[1], cell.center)
+            # Create a new obstacle using the current value of the radius.
+            obstacle_new = CircularObstacle(obstacle.center, r)
+            S = calculate_line_integral(obstacle_new, a[1], b[1], cell.center)
             return @SVector [0.0, -pressure * S, -pressure * S, 0.0]
         end
-        Φ = boundary_flux(cell.u)
 
-        # The tangent of that boundary flux
-        Φ_jac = ForwardDiff.jacobian(boundary_flux, cell.u)
-        Φ_jvp = Φ_jac * cell.u̇
+        Φ = boundary_flux(cell.u, obstacle.radius)
+        
+        function combined_flux(x)
+            u_part = SVector(x[1], x[2], x[3], x[4])
+            r_part = x[5]
+            return boundary_flux(u_part, r_part)
+        end
+        
+        input = SVector{5}(cell.u..., obstacle.radius)
+        J_combined = ForwardDiff.jacobian(combined_flux, input)
+        nseeds = n_seeds(cell)
+        combined_tangent = vcat(cell.u̇, SMatrix{1, nseeds}(ones(nseeds)...))
+        Φ_jvp = J_combined * combined_tangent
 
         Δu_primal_total  = Δu_primal  + Φ
         Δu_tangent_total = Δu_tangent + Φ_jvp
