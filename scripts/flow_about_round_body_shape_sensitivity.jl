@@ -3,12 +3,12 @@ using LinearAlgebra
 using Unitful
 using ShockwaveProperties
 using StaticArrays
+using Printf
 
 function u0(x, p)
     ρ∞  = p[1]
     M∞  = p[2]
     T∞  = p[3]
-    r∞ = p[4]
 
     pp = PrimitiveProps(ρ∞, SVector(M∞, 0.0), T∞)
     return ConservedProps(pp, DRY_AIR)
@@ -66,9 +66,11 @@ Euler2D.simulate_euler_equations_cells(
 tangent=load_cell_sim("data/circular_obstacle_tangent.celltape");
 
 cells = tangent.cells[tsteps]
+println("Sensitivity of radius to flow properties at final time step")
 for (cell_id, cell) in cells
     if cell.contains_boundary
         radius_sensitivity = cell.u̇[:, 4]
-        println("Cell ", cell_id, " at ", cell.center, " has radius sensitivity: ", radius_sensitivity)
+        formatted_rs = join(map(x -> @sprintf("%.4g", x), radius_sensitivity), ", ")
+        println("Cell ", cell_id, " at ", cell.center, ": [", formatted_rs, "]")
     end
 end
