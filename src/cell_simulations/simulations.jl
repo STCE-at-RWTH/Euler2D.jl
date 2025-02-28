@@ -410,6 +410,7 @@ function simulate_euler_equations_cells(
             boundary_conditions,
             cfl_limit,
             gas,
+            obstacles,
         )
         current_tstep_wall_clock = Dates.now()
         if show_info && ((n_tsteps - 1) % info_frequency == 0)

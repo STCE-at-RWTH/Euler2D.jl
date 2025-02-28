@@ -14,11 +14,13 @@ function u0(x, p)
     return ConservedProps(pp, DRY_AIR)
 end
 
-function make_circle(p)
-    center = (0.0, 0.0)
-    radius = p[4]  # now the radius is the 4th component of the parameter vector
-    return CircularObstacle(center, radius)
-end
+starting_parameters = SVector(0.662, 4.0, 220.0)
+ambient = u0(nothing, starting_parameters)
+
+x0 = 1.0u"m"
+a0 = speed_of_sound(ambient, DRY_AIR)
+ρ0 = density(ambient)
+scale = EulerEqnsScaling(x0, ρ0, a0)
 
 bcs = (
     ExtrapolateToPhantom(), # north 
@@ -28,19 +30,13 @@ bcs = (
     StrongWall(), # walls
 )
 bounds = ((-2.0, 0.0), (-1.5, 1.5))
+
+
+x_circ = (t, params) -> params.h + params.r * cos(t)
+y_circ = (t, params) -> params.k + params.r * sin(t)
+params_circ = (r = 0.75, h = 0.0, k = 0.0)
+just_circle = [ParametricObstacle(x_circ, y_circ, params_circ, :circle)]
 ncells = (100, 150)
-
-starting_parameters = SVector(0.662, 4.0, 220.0, 0.75)
-
-ambient = u0(nothing, starting_parameters)
-
-x0 = 1.0u"m"
-a0 = speed_of_sound(ambient, DRY_AIR)
-ρ0 = density(ambient)
-scale = EulerEqnsScaling(x0, ρ0, a0)
-
-obstacle = make_circle(starting_parameters)
-just_circle = [obstacle]
 
 ##
 

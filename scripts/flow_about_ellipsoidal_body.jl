@@ -14,11 +14,13 @@ function u0(x, p)
     return ConservedProps(pp, DRY_AIR)
 end
 
-function make_circle(p)
-    center = (0.0, 0.0)
-    radius = p[4]  # now the radius is the 4th component of the parameter vector
-    return CircularObstacle(center, radius)
-end
+starting_parameters = SVector(0.662, 4.0, 220.0)
+ambient = u0(nothing, starting_parameters)
+
+x0 = 1.0u"m"
+a0 = speed_of_sound(ambient, DRY_AIR)
+ρ0 = density(ambient)
+scale = EulerEqnsScaling(x0, ρ0, a0)
 
 bcs = (
     ExtrapolateToPhantom(), # north 
@@ -28,19 +30,14 @@ bcs = (
     StrongWall(), # walls
 )
 bounds = ((-2.0, 0.0), (-1.5, 1.5))
+
+
+x_ell = (t, params) -> params.h + params.a * cos(t)
+y_ell = (t, params) -> params.k + params.b * sin(t)
+params_ell = (a = 0.5, b = 1.5, h = 0.0, k = 0.0)
+
+ell_obstacle = [ParametricObstacle(x_ell, y_ell, params_ell, :ellipse)]
 ncells = (100, 150)
-
-starting_parameters = SVector(0.662, 4.0, 220.0, 0.75)
-
-ambient = u0(nothing, starting_parameters)
-
-x0 = 1.0u"m"
-a0 = speed_of_sound(ambient, DRY_AIR)
-ρ0 = density(ambient)
-scale = EulerEqnsScaling(x0, ρ0, a0)
-
-obstacle = make_circle(starting_parameters)
-just_circle = [obstacle]
 
 ##
 
@@ -49,7 +46,7 @@ Euler2D.simulate_euler_equations_cells(
     starting_parameters,
     1.0,
     bcs,
-    just_circle,
+    ell_obstacle,
     bounds,
     ncells;
     mode = Euler2D.PRIMAL,
@@ -58,7 +55,7 @@ Euler2D.simulate_euler_equations_cells(
     info_frequency = 20,
     write_frequency = 10,
     max_tsteps = 1000,
-    output_tag = "circular_obstacle_primal",
+    output_tag = "ellipse_obstacle_primal",
     output_channel_size = 2,
     tasks_per_axis = 2,
 );
@@ -70,7 +67,7 @@ Euler2D.simulate_euler_equations_cells(
     starting_parameters,
     1.0,
     bcs,
-    just_circle,
+    ell_obstacle,
     bounds,
     ncells;
     mode = Euler2D.TANGENT,
@@ -79,12 +76,12 @@ Euler2D.simulate_euler_equations_cells(
     info_frequency = 20,
     write_frequency = 10,
     max_tsteps = 1000,
-    output_tag = "circular_obstacle_tangent",
+    output_tag = "ellipse_obstacle_tangent",
     output_channel_size = 2,
     tasks_per_axis = 2,
 );
 
 ##
 
-primal=load_cell_sim("data/circular_obstacle_primal.celltape");
-tangent=load_cell_sim("data/circular_obstacle_tangent.celltape");
+primal=load_cell_sim("data/ellipse_obstacle_primal.celltape");
+tangent=load_cell_sim("data/ellipse_obstacle_tangent.celltape");
