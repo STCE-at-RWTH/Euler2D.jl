@@ -6,7 +6,7 @@ struct CircularObstacle{T} <: Obstacle
 end
 
 function CircularObstacle(center, radius)
-    CircularObstacle(SVector{2}(center...), radius)
+    CircularObstacle(SVector{2, typeof(radius)}(center...), radius)
 end
 
 function point_inside(s::CircularObstacle, pt)

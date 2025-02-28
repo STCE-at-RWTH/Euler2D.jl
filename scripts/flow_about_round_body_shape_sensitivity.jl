@@ -3,20 +3,21 @@ using LinearAlgebra
 using Unitful
 using ShockwaveProperties
 using StaticArrays
+using Printf
 
-"""
-    u0(x, p)
-
-Accepts ``x∈ℝ^2`` and a vector of three parameters: free stream density, mach number, and temperature (understood in metric base units)
-"""
 function u0(x, p)
-    pp = PrimitiveProps(p[1], SVector(p[2], 0.0), p[3])
+    ρ∞  = p[1]
+    M∞  = p[2]
+    T∞  = p[3]
+
+    pp = PrimitiveProps(ρ∞, SVector(M∞, 0.0), T∞)
     return ConservedProps(pp, DRY_AIR)
 end
 
-function make_circle(p)
+
+function create_circle(p)
     center = (0.0, 0.0)
-    radius = p[4]  # now the radius is the 4th component of the parameter vector
+    radius = p[4]
     return CircularObstacle(center, radius)
 end
 
@@ -28,7 +29,8 @@ bcs = (
     StrongWall(), # walls
 )
 bounds = ((-2.0, 0.0), (-1.5, 1.5))
-ncells = (100, 150)
+ncells = (50, 75)
+tsteps = 10
 
 starting_parameters = SVector(0.662, 4.0, 220.0, 0.75)
 
@@ -39,31 +41,8 @@ a0 = speed_of_sound(ambient, DRY_AIR)
 ρ0 = density(ambient)
 scale = EulerEqnsScaling(x0, ρ0, a0)
 
-obstacle = make_circle(starting_parameters)
+obstacle = create_circle(starting_parameters)
 just_circle = [obstacle]
-
-##
-
-Euler2D.simulate_euler_equations_cells(
-    u0,
-    starting_parameters,
-    1.0,
-    bcs,
-    just_circle,
-    bounds,
-    ncells;
-    mode = Euler2D.PRIMAL,
-    gas = DRY_AIR,
-    scale = scale,
-    info_frequency = 20,
-    write_frequency = 10,
-    max_tsteps = 1000,
-    output_tag = "circular_obstacle_primal",
-    output_channel_size = 2,
-    tasks_per_axis = 2,
-);
-
-##
 
 Euler2D.simulate_euler_equations_cells(
     u0,
@@ -76,15 +55,22 @@ Euler2D.simulate_euler_equations_cells(
     mode = Euler2D.TANGENT,
     gas = DRY_AIR,
     scale = scale,
-    info_frequency = 20,
-    write_frequency = 10,
-    max_tsteps = 1000,
+    info_frequency = 1,
+    write_frequency = 1,
+    max_tsteps = tsteps,
     output_tag = "circular_obstacle_tangent",
     output_channel_size = 2,
     tasks_per_axis = 2,
-);
+);  
 
-##
-
-primal=load_cell_sim("data/circular_obstacle_primal.celltape");
 tangent=load_cell_sim("data/circular_obstacle_tangent.celltape");
+
+cells = tangent.cells[tsteps]
+println("Sensitivity of radius to flow properties at final time step")
+for (cell_id, cell) in cells
+    if cell.contains_boundary
+        radius_sensitivity = cell.u̇[:, 4]
+        formatted_rs = join(map(x -> @sprintf("%.4g", x), radius_sensitivity), ", ")
+        println("Cell ", cell_id, " at ", cell.center, ": [", formatted_rs, "]")
+    end
+end
