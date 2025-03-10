@@ -4,7 +4,7 @@
 end
 
 """
-    CellBasedEulerSim{T}
+    CellBasedEulerSim{T, C<:QuadCell}
 
 Represents a completed simulation of the Euler equations on a mesh of 2-dimensional quadrilateral cells.
 
@@ -534,5 +534,31 @@ function load_cell_sim(path; T = Float64, show_info = true)
             active_cell_ids,
             cell_vals,
         )
+    end
+end
+
+_sim_mode(::Type{TangentQuadCell{T,N1,N2}}) where {T,N1,N2} = TANGENT
+_sim_mode(::Type{PrimalQuadCell{T}}) where {T} = PRIMAL
+
+function write_cell_sim(path, sim::CellBasedEulerSim{T,C}) where {T,C}
+    return open(path, "w") do f
+        # how many time steps
+        # what is the mode
+        write(f, sim.nsteps, _sim_mode(C))
+        if _sim_mode(C) == TANGENT
+            # if the mode is TANGENT, how many seeds
+            write(f, n_seeds(C))
+        end
+        # how many active cells are in each time step
+        write(f, length(first(sim.cells)))
+        # ndimensions & specific size
+        write(f, length(sim.ncells), sim.ncells...)
+        foreach(sim.bounds) do b
+            write(f, b...)
+        end
+        write(f, sim.cell_ids)
+        foreach(zip(sim.tsteps, sim.cells)) do (t, c)
+            write_tstep_to_stream(f, t, c)
+        end
     end
 end
