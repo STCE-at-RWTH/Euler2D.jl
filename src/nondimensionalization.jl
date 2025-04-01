@@ -30,7 +30,7 @@ end
 
 function _pressure(u_star::SVector{N,T}, gas::CaloricallyPerfectGas) where {N,T}
     ρv_star = select_middle(u_star)
-    return (gas.γ - 1)*(u_star[N] - ρv_star ⋅ ρv_star / (2 * u_star[1]))
+    return (gas.γ - 1) * (u_star[N] - ρv_star ⋅ ρv_star / (2 * u_star[1]))
 end
 
 """
