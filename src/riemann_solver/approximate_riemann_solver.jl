@@ -159,5 +159,3 @@ function ϕ_hll(uL, uR, fL, fR, sL, sR)
         return (sR * fL - sL * fR + sR * sL * (uR - uL)) / (sR - sL)
     end
 end
-
-

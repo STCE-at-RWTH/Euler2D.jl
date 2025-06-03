@@ -1,5 +1,5 @@
 ### A Pluto.jl notebook ###
-# v0.20.4
+# v0.20.8
 
 using Markdown
 using InteractiveUtils
@@ -7,7 +7,7 @@ using InteractiveUtils
 # This Pluto notebook uses @bind for interactivity. When running this notebook outside of Pluto, the following 'mock version' of @bind gives bound variables a default value (instead of an error).
 macro bind(def, element)
     #! format: off
-    quote
+    return quote
         local iv = try Base.loaded_modules[Base.PkgId(Base.UUID("6e696c72-6542-2067-7265-42206c756150"), "AbstractPlutoDingetjes")].Bonds.initial_value catch; b -> missing; end
         local el = $(esc(element))
         global $(esc(def)) = Core.applicable(Base.get, el) ? Base.get(el) : iv(el)
@@ -18,33 +18,42 @@ end
 
 # ╔═╡ 6f1542ea-a747-11ef-2466-fd7f67d1ef2c
 begin
-	using Accessors
-	using Euler2D
-	using Euler2D: TangentQuadCell
-	using ForwardDiff
-	using LaTeXStrings
-	using LinearAlgebra
-	using Interpolations
-	using Plots
-	using PlutoUI
-	using Printf
-	using ShockwaveProperties
-	using StaticArrays
-	using Unitful
+    using Accessors
+    using DifferentiationInterface
+    using ForwardDiff
+    using Interpolations: linear_interpolation
+    using LaTeXStrings
+    using LinearAlgebra
+    import Mooncake
+    using Plots
+    using PlutoUI
+    using Printf
+    using ShockwaveProperties
+    using StaticArrays
+    using Unitful
+end
+
+# ╔═╡ 2e9dafda-a95c-4277-9a7c-bc80d97792f0
+begin
+    using Euler2D
+    using Euler2D: TangentQuadCell
 end
 
 # ╔═╡ 31009964-3f32-4f97-8e4a-2b95be0f0037
 using PlanePolygons
 
-# ╔═╡ b7b83ec1-2a14-44cf-8f37-ec7272cc0807
-# grab reverse-mode AD... even if the library doesn't work very well
-using Mooncake
-
 # ╔═╡ 0679a676-57fa-45ee-846d-0a8961562db3
 begin
-	using Graphs
-	using MetaGraphsNext
+    using Graphs
+    using MetaGraphsNext
 end
+
+# ╔═╡ e4b54bd3-5fa9-4291-b2a4-6b10c494ce34
+# get some internal bindings from Euler2D
+using Euler2D: _dirs_dim, select_middle
+
+# ╔═╡ d8bfb40f-f304-41b0-9543-a4b10e95d182
+using PlanePolygons: _poly_image
 
 # ╔═╡ f5fd0c28-99a8-4c44-a5e4-d7b24e43482c
 PlutoUI.TableOfContents()
@@ -70,26 +79,39 @@ The parameters (taken from a previously-done simulation) are:
 # ╔═╡ 4267b459-7eb7-4678-8f06-7b9deab1f830
 const ambient_primitives = SVector(0.662, 4.0, 220.0)
 
+# ╔═╡ 2716b9b5-07fd-4175-a83e-22be3810e4b3
+md"""
+We can set up `u0` to always return the conserved quantities computed from the ambient primitives. 
+"""
+
 # ╔═╡ afc11d27-1958-49ba-adfa-237ba7bbd186
 function u0(x, p)
-	# ρ, M, T -> ρ, ρv, ρE
+    # ρ, M, T -> ρ, ρv, ρE
     pp = PrimitiveProps(p[1], SVector(p[2], 0.0), p[3])
     return ConservedProps(pp, DRY_AIR)
 end
 
+# ╔═╡ 100a1f91-120b-43a4-8486-8f9e64b8b71e
+md"""
+And, of course, the corresponding scaling for the Euler equations.
+"""
+
 # ╔═╡ 0df888bd-003e-4b49-9c2a-c28a7ccc33d2
-const ambient = u0((-Inf, 0.), ambient_primitives)
+const ambient = u0((-Inf, 0.0), ambient_primitives)
 
 # ╔═╡ 3fe1be0d-148a-43f2-b0a5-bb177d1c041d
 sim_scale = EulerEqnsScaling(
-	1.0u"m", 
-	ShockwaveProperties.density(ambient),
-	speed_of_sound(ambient,DRY_AIR),
+    1.0u"m",
+    ShockwaveProperties.density(ambient),
+    speed_of_sound(ambient, DRY_AIR),
 )
+
+# ╔═╡ 136ab703-ae33-4e46-a883-0ed159360361
+const ambient_u = nondimensionalize(ambient, sim_scale)
 
 # ╔═╡ a9d31e2d-fc4b-4fa5-9015-eb2ac2a3df5d
 const ambient_u̇ = ForwardDiff.jacobian(ambient_primitives) do prim
-	nondimensionalize(u0((-Inf, 0.), prim), sim_scale)
+    nondimensionalize(u0((-Inf, 0.0), prim), sim_scale)
 end
 
 # ╔═╡ c1a81ef6-5e0f-4ad5-8e73-e9e7f09cefa6
@@ -102,7 +124,10 @@ function dimensionless_speed_of_sound(
 end
 
 # ╔═╡ e55363f4-5d1d-4837-a30f-80b0b9ae7a8e
-function dimensionless_mach_number(u_star::SVector{N, T}, gas::CaloricallyPerfectGas) where {N, T}
+function dimensionless_mach_number(
+    u_star::SVector{N,T},
+    gas::CaloricallyPerfectGas,
+) where {N,T}
     a = dimensionless_speed_of_sound(u_star, gas)
     ρa = u_star[1] * a
     return Euler2D.select_middle(u_star) ./ ρa
@@ -114,7 +139,7 @@ Load up a data file. This contains a forward-mode computation on a fine grid all
 """
 
 # ╔═╡ 90bf50cf-7254-4de8-b860-938430e121a9
-sim_with_ad=load_cell_sim("../data/circular_obstacle_tangent_longtime.celltape");
+sim_with_ad = load_cell_sim("../data/tangent_last_tstep.celltape");
 
 # ╔═╡ 33e635b3-7c63-4b91-a1f2-49da93307f29
 md"""
@@ -122,7 +147,7 @@ We also know that this simulation was done with a blunt, cylindrical obstacle of
 """
 
 # ╔═╡ 4dc7eebf-48cc-4474-aef0-0cabf1d8eda5
-body = CircularObstacle(SVector(0.,0.), 0.75);
+body = CircularObstacle(SVector(0.0, 0.0), 0.75);
 
 # ╔═╡ 8bd1c644-1690-46cf-ac80-60654fc6d8c0
 md"""
@@ -130,32 +155,32 @@ md"""
 This mirrors the declaration of `pressure_field`, but returns `missing` values when there's no pressure field value to compute.
 """
 
+# ╔═╡ 893ec2c8-88e8-4d72-aab7-88a1efa30b47
+function dPdp(sim::CellBasedEulerSim{T,C}, n) where {T,C<:Euler2D.TangentQuadCell}
+    _, u_cells = nth_step(sim, n)
+    res = Array{Union{T,Missing}}(missing, (3, grid_size(sim)...))
+    for i ∈ eachindex(IndexCartesian(), sim.cell_ids)
+        sim.cell_ids[i] == 0 && continue
+        cell = u_cells[sim.cell_ids[i]]
+        dP = ForwardDiff.gradient(cell.u) do u
+            Euler2D._pressure(u, DRY_AIR)
+        end
+        res[:, i] = dP' * cell.u̇
+    end
+    return res
+end
+
 # ╔═╡ d14c3b81-0f19-4207-8e67-13c09fd7636a
 md"""
 Computing the full gradient ``\nabla_pP`` is a bit finicky, but ultimately works out to be repeated Jacobian-vector products over the pressure field.
 """
 
-# ╔═╡ 893ec2c8-88e8-4d72-aab7-88a1efa30b47
-function dPdp(sim::CellBasedEulerSim{T, C}, n) where {T, C<:Euler2D.TangentQuadCell}
-	_, u_cells = nth_step(sim, n)
-	res = Array{Union{T, Missing}}(missing, (3, grid_size(sim)...))
-	for i∈eachindex(IndexCartesian(), sim.cell_ids)
-		sim.cell_ids[i] == 0 && continue
-		cell = u_cells[sim.cell_ids[i]]
-		dP = ForwardDiff.gradient(cell.u) do u
-			Euler2D._pressure(u, DRY_AIR)
-		end
-		res[:, i] = dP'*cell.u̇
-	end
-	return res 
-end
-
 # ╔═╡ 2e3b9675-4b66-4623-b0c4-01acdf4e158c
-@bind n Slider(2:n_tsteps(sim_with_ad); show_value=true)
+@bind n Slider(1:n_tsteps(sim_with_ad); default = 2, show_value = true)
 
 # ╔═╡ f6147284-02ec-42dd-9c2f-a1a7534ae9fa
 pfield = map(pressure_field(sim_with_ad, n, DRY_AIR)) do val
-	isnothing(val) ? missing : val
+    isnothing(val) ? missing : val
 end;
 
 # ╔═╡ cc53f78e-62f5-4bf8-bcb3-5aa72c5fde99
@@ -163,36 +188,52 @@ pressure_tangent = dPdp(sim_with_ad, n);
 
 # ╔═╡ d5db89be-7526-4e6d-9dec-441f09606a04
 begin
-	pplot = heatmap(pfield', xlims=(0,300), ylims=(0,450), aspect_ratio=:equal, title=L"P")
-	cbar_limits = (:auto, (-2, 10), :auto)
-	titles = [L"\frac{\partial P}{\partial \rho_\inf}", L"\frac{\partial P}{\partial M_\inf}", L"\frac{\partial P}{\partial T_\inf}"]
-	dpplot = [
-		heatmap((@view(pressure_tangent[i, :, :]))', xlims=(0,300), ylims=(0,450), aspect_ratio=:equal, clims=cbar_limits[i], title=titles[i]) for i=1:3
-	]
-	plots = reshape(vcat(pplot, dpplot), (2,2))
-	xlabel!.(plots, L"i")
-	ylabel!.(plots, L"j")
-	plot(plots..., size=(800,800), dpi=1000)
+    pplot = heatmap(
+        pfield';
+        xlims = (0, 300),
+        ylims = (0, 450),
+        aspect_ratio = :equal,
+        title = L"P",
+    )
+    cbar_limits = (:auto, (-2, 10), :auto)
+    titles = [
+        L"\frac{\partial P}{\partial \rho_\inf}",
+        L"\frac{\partial P}{\partial M_\inf}",
+        L"\frac{\partial P}{\partial T_\inf}",
+    ]
+    dpplot = [
+        heatmap(
+            (@view(pressure_tangent[i, :, :]))';
+            xlims = (0, 300),
+            ylims = (0, 450),
+            aspect_ratio = :equal,
+            clims = cbar_limits[i],
+            title = titles[i],
+        ) for i = 1:3
+    ]
+    plots = reshape(vcat(pplot, dpplot), (2, 2))
+    xlabel!.(plots, L"i")
+    ylabel!.(plots, L"j")
+    plot(plots...; size = (800, 800), dpi = 1000)
 end
 
 # ╔═╡ 4e9fb962-cfaa-4650-b50e-2a6245d4bfb4
-@bind n2 confirm(Slider(1:n_tsteps(sim_with_ad), show_value=true))
+@bind n2 Slider(1:n_tsteps(sim_with_ad), default = 2, show_value = true)
 
 # ╔═╡ bcdd4862-ac68-4392-94e2-30b1456d411a
 let
-	dPdM = dPdp(sim_with_ad, n2)
-	title = L"\frac{\partial P}{\partial M_\inf}"
-	p = heatmap((@view(dPdM[2, :, :]))', xlims=(0,300), ylims=(0,450), aspect_ratio=:equal, clims=(-10, 10), title=title, size=(450, 600))
-	p
-end
-
-# ╔═╡ 7604c406-c0a3-45bb-9109-389c7a47b8b3
-let
-	n=268
-	dPdM = dPdp(sim_with_ad, n)
-	title = L"\frac{\partial P}{\partial \rho},\,n=%$(n)"
-	p = heatmap((@view(dPdM[1, :, :]))', xlims=(0,300), ylims=(0,450), aspect_ratio=:equal, title=title, size=(450, 500), dpi=1000)
-	p
+    dPdM = dPdp(sim_with_ad, n2)
+    title = L"\frac{\partial P}{\partial M_\inf}"
+    p = heatmap(
+        (@view(dPdM[2, :, :]))';
+        xlims = (0, 300),
+        ylims = (0, 450),
+        aspect_ratio = :equal,
+        clims = (-10, 10),
+        title = title,
+        size = (450, 600),
+    )
+    p
 end
 
 # ╔═╡ e2bdc923-53e6-4a7d-9621-4d3b356a6e41
@@ -297,10 +338,7 @@ function rh_error_lab_frame(cell_front, cell_behind, θ, gas)
     m1_norm = abs(m1 ⋅ n̂)
     m2_norm_rh = m1_norm * m_ratio
     m2_norm_sim = abs(m2 ⋅ n̂)
-    return (
-			abs(m2_norm_rh - m2_norm_sim) / m2_norm_sim, 
-			abs(m1_norm / m2_norm_sim - 1)
-		   )
+    return (abs(m2_norm_rh - m2_norm_sim) / m2_norm_sim, abs(m1_norm / m2_norm_sim - 1))
 end
 
 # ╔═╡ 351d4e18-4c95-428e-a008-5128f547c66d
@@ -314,7 +352,7 @@ function find_shock_in_timestep(
     # TODO really gotta figure out how to deal with nothings or missings in this matrix
     pfield = map(p -> isnothing(p) ? zero(T) : p, pressure_field(sim, t, gas))
     Gx, Gy = convolve_sobel(pfield)
-    dP2 = Gx.^2+Gy.^2
+    dP2 = Gx .^ 2 + Gy .^ 2
     edge_candidates = Array{Bool,2}(undef, size(dP2) .- 2)
     window_size = CartesianIndex(2, 2)
     for i ∈ eachindex(IndexCartesian(), edge_candidates)
@@ -328,9 +366,9 @@ function find_shock_in_timestep(
     Gx_overlay = @view(Gx[2:end-1, 2:end-1])
     Gy_overlay = @view(Gy[2:end-1, 2:end-1])
     id_overlay = @view(sim.cell_ids[3:end-2, 3:end-2])
-	num_except = 0
-	num_reject_too_smooth = 0
-	num_reject_rh_fail = 0
+    num_except = 0
+    num_reject_too_smooth = 0
+    num_reject_rh_fail = 0
     for j ∈ eachindex(IndexCartesian(), edge_candidates, Gx_overlay, Gy_overlay, id_overlay)
         i = j + CartesianIndex(2, 2)
         if id_overlay[j] > 0 && edge_candidates[j]
@@ -352,20 +390,20 @@ function find_shock_in_timestep(
                 rh_err, sim_err = rh_error_lab_frame(cell_front, cell_back, θ_disc, gas)
                 if rh_err > rh_rel_error_max
                     # discard edge candidate
-					num_reject_rh_fail += 1
+                    num_reject_rh_fail += 1
                     edge_candidates[j] = false
-				elseif sim_err < continuous_variation_thold
-					num_reject_too_smooth += 1
-					edge_candidates[j] = false
+                elseif sim_err < continuous_variation_thold
+                    num_reject_too_smooth += 1
+                    edge_candidates[j] = false
                 end
             catch de
-				if de isa DomainError
-                #@warn "Cell shock comparison caused error" typ=typeof(de) j θ_grid
-                edge_candidates[j] = false
-				num_except += 1
-				else
-					rethrow()
-				end
+                if de isa DomainError
+                    #@warn "Cell shock comparison caused error" typ=typeof(de) j θ_grid
+                    edge_candidates[j] = false
+                    num_except += 1
+                else
+                    rethrow()
+                end
             end
         else
             edge_candidates[j] = false
@@ -389,32 +427,50 @@ The implemented shock sensor has some issues (we need to set ``TOL=0.7``), but p
 """
 
 # ╔═╡ 747f0b67-546e-4222-abc8-2007daa3f658
-@bind rh_err Slider(0.0:0.01:2.5, show_value=true, default=0.7)
+@bind rh_err Slider(0.0:0.01:2.5, show_value = true, default = 0.7)
 
 # ╔═╡ 2cb33e16-d735-4e60-82a5-aa22da0288fb
-@bind smoothness_err Slider(0.000:0.005:0.2, show_value=true, default=0.1)
+@bind smoothness_err Slider(0.000:0.005:0.2, show_value = true, default = 0.1)
 
 # ╔═╡ 4b036b02-1089-4fa8-bd3a-95659c9293cd
 # ╠═╡ show_logs = false
-sf = find_shock_in_timestep(sim_with_ad, 268, DRY_AIR; rh_rel_error_max=rh_err, continuous_variation_thold=smoothness_err);
+sf = find_shock_in_timestep(
+    sim_with_ad,
+    2,
+    DRY_AIR;
+    rh_rel_error_max = rh_err,
+    continuous_variation_thold = smoothness_err,
+);
 
 # ╔═╡ 24da34ca-04cd-40ae-ac12-c342824fa26e
 let
-	data = map(sf, @view sim_with_ad.cell_ids[3:end-2, 3:end-2]) do v1, v2
-		if v2 == 0
-			missing
-		else
-			v1
-		end
-	end
-	p = heatmap(cell_centers(sim_with_ad, 1)[3:end-2], cell_centers(sim_with_ad, 2)[3:end-2], data', cbar=false, aspect_ratio=:equal, xlims=(-2, 0), ylims=(-1.5, 1.5), xlabel=L"x", ylabel=L"y", size=(350, 500),dpi=1000)
-	savefig(p, "../gfx/shock_sensor_07_01.pdf")
-	p
+    data = map(sf, @view sim_with_ad.cell_ids[3:end-2, 3:end-2]) do v1, v2
+        if v2 == 0
+            missing
+        else
+            v1
+        end
+    end
+    p = heatmap(
+        cell_centers(sim_with_ad, 1)[3:end-2],
+        cell_centers(sim_with_ad, 2)[3:end-2],
+        data';
+        cbar = false,
+        aspect_ratio = :equal,
+        xlims = (-2, 0),
+        ylims = (-1.5, 1.5),
+        xlabel = L"x",
+        ylabel = L"y",
+        size = (350, 500),
+        dpi = 1000,
+    )
+    savefig(p, "../gfx/shock_sensor_07_01.pdf")
+    p
 end
 
 # ╔═╡ 92044a9f-2078-48d1-8181-34be87b03c4c
 md"""
-### Deriving ``\xi``
+## Drawing a New Mesh
 
 We are primarily interested in what happens when we vary any of the parameters in the ambient flow change. 
 
@@ -432,26 +488,40 @@ md"""
 """
 
 # ╔═╡ 4d202323-e1a9-4b24-b98e-7d17a6cc144f
-struct CoarseQuadCell{T, NS, NTAN}
-	id::Int
-	pts::SClosedPolygon{4, T}
-	u::SVector{4, T}
-	u̇::SMatrix{4, NS, T, NTAN}
+struct CoarseQuadCell{T,NS,NTAN}
+    id::Int
+    pts::SVector{8,T}
+    u::SVector{4,T}
+    u̇::SMatrix{4,NS,T,NTAN}
+    du_dpts::SMatrix{4,8,T,32}
+end
+
+# ╔═╡ b34a8bfd-5aba-459e-bf05-47d0225b7075
+struct DynFVMCell{T,NS,NTAN}
+    id::Int
+    poly::ClosedPolygon{T}
+    u::SVector{4,T}
+    u̇::SMatrix{4,NS,T,NTAN}
 end
 
 # ╔═╡ 95947312-342f-44b3-90ca-bd8ad8204e18
 begin
-	function cell_boundary_polygon(cell::Euler2D.QuadCell)
-		c = cell.center
-		dx, dy = cell.extent/2
-		return SClosedPolygon(c + SVector(dx, -dy), 
-				 		c + SVector(-dx, -dy),
-				 		c + SVector(-dx, dy),
-						c + SVector(dx, dy))
-	end
-	function cell_boundary_polygon(cell::CoarseQuadCell)
-		return cell.pts
-	end
+    function cell_boundary_polygon(cell::Euler2D.QuadCell)
+        c = cell.center
+        dx, dy = cell.extent / 2
+        return SClosedPolygon(
+            c + SVector(dx, -dy),
+            c + SVector(-dx, -dy),
+            c + SVector(-dx, dy),
+            c + SVector(dx, dy),
+        )
+    end
+    function cell_boundary_polygon(cell::CoarseQuadCell)
+        return cell.pts
+    end
+    function cell_boundary_polygon(cell::DynFVMCell)
+        return cell.poly
+    end
 end
 
 # ╔═╡ eb5a2dc6-9c7e-4099-a564-15f1cec11caa
@@ -461,30 +531,36 @@ md"""
 
 # ╔═╡ 9c601619-aaf1-4f3f-b2e2-10422d8ac640
 function shock_cells(sim, n, shock_field)
-	sort(reduce(vcat, filter(!isnothing, map(enumerate(eachcol(shock_field))) do (j, col)
-		i = findfirst(col)
-		isnothing(i) && return nothing
-		id = @view(sim.cell_ids[2:end-1, 2:end-1])[i, j]
-		return sim.cells[n][id]
-	end)); lt=(a, b) -> a.center[2] < b.center[2])
+    sort(
+        reduce(
+            vcat,
+            filter(!isnothing, map(enumerate(eachcol(shock_field))) do (j, col)
+                i = findfirst(col)
+                isnothing(i) && return nothing
+                id = @view(sim.cell_ids[2:end-1, 2:end-1])[i, j]
+                return sim.cells[n][id]
+            end),
+        );
+        lt = (a, b) -> a.center[2] < b.center[2],
+    )
 end
 
 # ╔═╡ e0a934d6-3962-46d5-b172-fb970a537cc0
-function shock_points(sim::CellBasedEulerSim{T, C}, n, shock_field) where {T, C}
-	sp = shock_cells(sim, n, shock_field)
-	res = Matrix{T}(undef, (length(sp), 2))
-	for i ∈ eachindex(sp)
-		res[i, :] = sp[i].center
-	end
-	#sort!(sp; lt=(a, b) -> a[2] < b[2])
-	return res
+function shock_points(sim::CellBasedEulerSim{T,C}, n, shock_field) where {T,C}
+    sp = shock_cells(sim, n, shock_field)
+    res = Matrix{T}(undef, (length(sp), 2))
+    for i ∈ eachindex(sp)
+        res[i, :] = sp[i].center
+    end
+    #sort!(sp; lt=(a, b) -> a[2] < b[2])
+    return res
 end
 
 # ╔═╡ 62ebd91b-8980-4dc5-b61b-ba6a21ac357d
-all_shock_points = shock_points(sim_with_ad, 267, sf);
+all_shock_points = shock_points(sim_with_ad, 2, sf);
 
 # ╔═╡ be8ba02d-0d31-4720-9e39-595b549814cc
-sp_interp = linear_interpolation(all_shock_points[:, 2], all_shock_points[:,1]);
+sp_interp = linear_interpolation(all_shock_points[:, 2], all_shock_points[:, 1]);
 
 # ╔═╡ a1dc855f-0b24-4373-ba00-946719d38d95
 md"""
@@ -502,205 +578,402 @@ We can construct cells from these points and apply the conservation law again to
 """
 
 # ╔═╡ 7468fbf2-aa57-4505-934c-baa4dcb646fc
-const cell_width_at_shock = 0.04
+const cell_width_at_shock = 0.0375
+
+# ╔═╡ 50a46d6d-deb7-4ad0-867a-4429bf55632f
+md"""
+This should be ``8k``...
+"""
+
+# ╔═╡ 766b440b-0001-4037-8959-c0b7f04d999e
+const num_coarse_cells_pos_y = 32
+
+# ╔═╡ d44322b1-c67f-4ee8-b168-abac75fb42a1
+begin
+    ypts2 = begin
+        yr = range(; start = 0.0, stop = 1.2, length = num_coarse_cells_pos_y + 1)
+        s = step(yr)
+        y = collect(-2*s:s:1.2)
+        y
+    end
+    const num_coarse_cells = num_coarse_cells_pos_y + 2
+end;
 
 # ╔═╡ 2f088a0c-165e-47f9-aaeb-6e4ab31c9d26
 begin
-	slope_above = (all_shock_points[end, 2] - all_shock_points[end-2, 2])/(all_shock_points[end, 1]-all_shock_points[end-2, 1])
-	
-	slope_below = (all_shock_points[3, 2] - all_shock_points[1, 2])/(all_shock_points[3, 1]-all_shock_points[1, 1])
-	
-	function x_shock(y)
-		if all_shock_points[1, 2] < y < all_shock_points[end, 2]
-			return sp_interp(y)
-		elseif all_shock_points[1, 2] ≥ y
-			return (y-all_shock_points[1,2])/slope_below+all_shock_points[1,1]
-		else
-			return (y-all_shock_points[end,2])/slope_above+all_shock_points[end,1]
-		end	
-	end
+    slope_above =
+        (all_shock_points[end, 2] - all_shock_points[end-2, 2]) /
+        (all_shock_points[end, 1] - all_shock_points[end-2, 1])
+
+    slope_below =
+        (all_shock_points[3, 2] - all_shock_points[1, 2]) /
+        (all_shock_points[3, 1] - all_shock_points[1, 1])
+
+    function x_shock(y)
+        if all_shock_points[1, 2] < y < all_shock_points[end, 2]
+            return sp_interp(y)
+        elseif all_shock_points[1, 2] ≥ y
+            return (y - all_shock_points[1, 2]) / slope_below + all_shock_points[1, 1]
+        else
+            return (y - all_shock_points[end, 2]) / slope_above + all_shock_points[end, 1]
+        end
+    end
 end
 
 # ╔═╡ 24fa22e6-1cd0-4bcb-bd6d-5244037e58e2
 x_midleft(y) = x_shock(y) - cell_width_at_shock
 
 # ╔═╡ cd312803-3819-4451-887b-ce2b53bb6e1b
-x_between(y) = x_shock(y) + cell_width_at_shock
+x_right(y) = x_shock(y) + cell_width_at_shock
+
+# ╔═╡ 7c8cde49-b9c6-4889-a328-bf46b6f82a01
+x_midright(y) = x_shock(y) + 2 * cell_width_at_shock
 
 # ╔═╡ ac412980-1013-450f-bb23-0dc7c2b3f199
 function x_body(y)
-	if y > 0.75 || y < -0.75
-		return 0.0
-	else
-		return -sqrt(0.75^2 - y^2)
-	end
+    if y > 0.75 || y < -0.75
+        return 0.0
+    else
+        return -sqrt(0.75^2 - y^2)
+    end
 end
 
-# ╔═╡ d44322b1-c67f-4ee8-b168-abac75fb42a1
-ypts2 = 0.0:0.0375:1.20;
+# ╔═╡ 0d6ae7cf-edae-48f6-a257-6223563b7c76
+function points_row(y)
+    return vcat(
+        x_midleft(y),
+        range(x_shock(y), x_body(y); step = cell_width_at_shock),
+        x_body(y),
+    )
+end
 
-# ╔═╡ 2ae618e1-89a8-45ac-ae60-77ab24ec3b56
-polys_farleft = [SClosedPolygon(SVector(
-	Point(x_midleft(y1), y1), 
-	Point(-2.0, y1), 
-	Point(-2.0, y2), 
-	Point(x_midleft(y2), y2))) 
-for (y1, y2) ∈ zip(ypts2[1:end-1], ypts2[2:end])]
+# ╔═╡ 2041d463-5382-4c38-bf52-23d22820ac59
+function make_polys(y1, y2, xs1, xs2)
+    L1 = length(xs1)
+    L2 = length(xs2)
+    L = min(L1, L2)
+    polys = [
+        SClosedPolygon(
+            Point(xs1[i+1], y1),
+            Point(xs1[i], y1),
+            Point(xs2[i], y2),
+            Point(xs2[i+1], y2),
+        ) for i ∈ 1:(L-1)
+    ]
+    if L1 > L2
+        # more points below
+        @reset polys[end].pts[1][1] = xs1[end]
+    elseif L2 > L1
+        # more points above
+        @reset polys[end].pts[4][1] = xs2[end]
+    end
+    return polys
+end
 
-# ╔═╡ 6f034bbe-bd04-4be4-af53-b53b3ec17942
-polys_midleft = [SClosedPolygon(SVector(
-	Point(x_shock(y1), y1), 
-	Point(x_midleft(y1), y1), 
-	Point(x_midleft(y2), y2), 
-	Point(x_shock(y2), y2))) 
-for (y1, y2) ∈ zip(ypts2[1:end-1], ypts2[2:end])]
+# ╔═╡ bfe8cb7d-8e5e-4dda-88cb-356b34017335
+md"""
+---
+"""
 
-# ╔═╡ 63edc638-b7aa-4a63-8c93-e860dd4d58f5
-polys_between = [SClosedPolygon(
-	Point(x_between(y1), y1), 
-	Point(x_shock(y1), y1), 
-	Point(x_shock(y2), y2), 
-	Point(x_between(y2), y2))
-for (y1, y2) ∈ zip(ypts2[1:end-1], ypts2[2:end])]
+# ╔═╡ dea032e2-bf23-42da-8dac-d3368c2bdec6
+let
+    xc = body.center[1] .+ body.radius .* cos.(0:0.01:2π)
+    yc = body.center[2] .+ body.radius .* sin.(0:0.01:2π)
+    p = plot(
+        xc,
+        yc;
+        aspect_ratio = :equal,
+        xlims = (-2.05, 0.05),
+        ylims = (-0.2, 1.7),
+        label = "Blunt Body",
+        fill = true,
+        dpi = 1000,
+        size = (1000, 1000),
+        ls = :dash,
+        lw = 4,
+        fillalpha = 0.5,
+    )
+    pts = [Point(x, y) for y ∈ ypts2 for x ∈ points_row(y)]
+    scatter!(p, [pt[1] for pt ∈ pts], [pt[2] for pt ∈ pts]; marker = :x)
 
-# ╔═╡ 7c394fb3-a75a-4bfd-a781-f31845569693
-polys_body = [SClosedPolygon(
-	Point(x_body(y1), y1), 
-	Point(x_between(y1), y1), 
-	Point(x_between(y2), y2), 
-	Point(x_body(y2), y2)) 
-for (y1, y2) ∈ zip(ypts2[1:end-1], ypts2[2:end])]
+    for i = 1:num_coarse_cells
+        x1 = points_row(ypts2[i])
+        x2 = points_row(ypts2[i+1])
+        polys = make_polys(ypts2[i], ypts2[i+1], x1, x2)
+        for poly ∈ polys
+            pl = reduce(hcat, edge_starts(poly))
+            plot!(
+                p,
+                @view(pl[1, :]),
+                @view(pl[2, :]);
+                lw = 0.5,
+                fill = true,
+                fillalpha = 0.5,
+                label = false,
+                color = :red,
+                seriestype = :shape,
+            )
+        end
+    end
+
+    p
+end
+
+# ╔═╡ fc646016-a30e-4c60-a895-2dde771f79cb
+md"""
+---
+
+We can draw a new set of quadrilaterals:
+- Some in front of the shock
+- Some immediately behind the shock
+- Some further away from the shock
+
+We'll use these to solve the conservation law again. The index `1` is reserved as a placeholder for all cells with ``u=u_\infty`` and ``\dot u = \dot u_\infty``. 
+"""
+
+# ╔═╡ 54ed2abb-81bb-416c-b7be-1125e41622f5
+all_polys = mapreduce(vcat, 1:num_coarse_cells) do i
+    x1 = points_row(ypts2[i])
+    x2 = points_row(ypts2[i+1])
+    polys = make_polys(ypts2[i], ypts2[i+1], x1, x2)
+    return polys
+end
+
+# ╔═╡ 435887e7-1870-4677-a09d-020be5761039
+md"""
+
+We'll need lots of helper functions to deal with the new mesh.
+
+---
+"""
 
 # ╔═╡ 729ebc48-bba1-4858-8369-fcee9f133ee0
-function is_cell_contained_by(
-	cell::Union{Euler2D.QuadCell, CoarseQuadCell}, closed_poly::ClockwiseOrientedPolygon
-)
-	return all(edge_starts(cell_boundary_polygon(cell))) do p
-		PlanePolygons.point_inside(closed_poly, p)
-	end
+function is_cell_contained_by(cell::Union{Euler2D.QuadCell,CoarseQuadCell}, closed_poly)
+    return all(edge_starts(cell_boundary_polygon(cell))) do p
+        PlanePolygons.point_inside(closed_poly, p)
+    end
 end
 
 # ╔═╡ 5cffaaf5-9a5e-4839-a056-30e238308c51
-function is_cell_overlapping(
-	cell::Union{Euler2D.QuadCell, CoarseQuadCell}, closed_poly::ClockwiseOrientedPolygon
-)
-	contained = is_cell_contained_by(cell, closed_poly)
-	return (
-		!contained && 
-		are_polygons_intersecting(cell_boundary_polygon(cell), closed_poly)
-	)
+function is_cell_overlapping(cell::Union{Euler2D.QuadCell,CoarseQuadCell}, closed_poly)
+    contained = is_cell_contained_by(cell, closed_poly)
+    return (
+        !contained && are_polygons_intersecting(cell_boundary_polygon(cell), closed_poly)
+    )
 end
 
 # ╔═╡ f252b8d0-f067-468b-beb3-ff6ecaeca722
-function all_cells_contained_by(poly, sim)
-	_, cells = nth_step(sim, 1)
-	return filter(sim.cell_ids) do id
-		id == 0 && return false
-		return is_cell_contained_by(cells[id], poly)
-	end
+function all_cells_contained_by(poly, sim::CellBasedEulerSim)
+    _, cells = nth_step(sim, 1)
+    return filter(sim.cell_ids) do id
+        id == 0 && return false
+        return is_cell_contained_by(cells[id], poly)
+    end
 end
 
 # ╔═╡ 571b1ee7-bb07-4b30-9870-fbd18349a2ef
-function all_cells_overlapping(poly, sim)
-	_, cells = nth_step(sim, 1)
-	return filter(sim.cell_ids) do id
-		id == 0 && return false
-		return is_cell_overlapping(cells[id], poly)
-	end
+function all_cells_overlapping(poly, sim::CellBasedEulerSim)
+    _, cells = nth_step(sim, 1)
+    return filter(sim.cell_ids) do id
+        id == 0 && return false
+        return is_cell_overlapping(cells[id], poly)
+    end
 end
 
 # ╔═╡ 80cde447-282a-41e5-812f-8eac044b0c15
 function overlapping_cell_area(cell1, cell2)
-	isect = poly_intersection(cell_boundary_polygon(cell1), cell_boundary_polygon(cell2))
-	return poly_area(isect)
+    isect = poly_intersection(cell_boundary_polygon(cell1), cell_boundary_polygon(cell2))
+    return poly_area(isect)
+end
+
+# ╔═╡ 48a2b845-c466-4bbc-aa16-46a95ed7be35
+md"""
+---
+
+Then, we'll want to compute the coarse mesh geometry.
+"""
+
+# ╔═╡ f30619a3-5344-4e81-a4b5-6a11100cd056
+empty_coarse = Dict([
+    (id + 1) => CoarseQuadCell(
+        id,
+        PlanePolygons._flatten(poly),
+        zero(SVector{4,Float64}),
+        zero(SMatrix{4,3,Float64,12}),
+        zero(SMatrix{4,8,Float64,32}),
+    ) for (id, poly) ∈ enumerate(all_polys)
+])
+
+# ╔═╡ 6c2b1a68-dd43-4449-9dc7-4b7849081cc3
+md"""
+Followed by the cell values in the new mesh, for which we'll need an AD tool:
+"""
+
+# ╔═╡ 37eb63be-507a-475f-a6f6-8606917b8561
+# grab AD via Mooncake.jl
+# I think it works well.
+begin
+    diff_backend = AutoMooncake(; config = nothing)
+    fdiff_backend = AutoForwardDiff()
+    poly_area_prep = prepare_gradient(poly_area, diff_backend, empty_coarse[2].pts)
+end;
+
+# ╔═╡ d87e0bb8-317e-4d48-8008-a7071c74ab31
+# gets the jacobian of the intersection area w.r.t. the first argument
+function intersection_area_jacobian(flat_poly1, poly2)
+    eps = 1.0e-10
+    grad1 = zero(flat_poly1)
+    for i in eachindex(flat_poly1)
+        in1 = @set flat_poly1[i] += eps
+        in2 = @set flat_poly1[i] -= eps
+        out1 = poly_area(poly_intersection(in1, poly2))
+        out2 = poly_area(poly_intersection(in2, poly2))
+        @reset grad1[i] = (out1 - out2) / (2 * eps)
+    end
+    return grad1
 end
 
 # ╔═╡ 5d9e020f-e35b-4325-8cc1-e2a2b3c246c9
-function compute_coarse_cell_contents(coarse_cell::CoarseQuadCell{T, NS, NTAN}, sim::CellBasedEulerSim{T, TangentQuadCell{T, NS, NTAN}}, n) where {T, NS, NTAN}
-	contained = all_cells_contained_by(coarse_cell.pts, sim)
-	overlapped = all_cells_overlapping(coarse_cell.pts, sim)
-	u_a = mapreduce(+, contained) do id
-		_, cs = nth_step(sim, n)
-		return Euler2D.cell_volume(cs[id]) * cs[id].u
-	end
-	u_b = mapreduce(+, overlapped) do id
-		_, cs = nth_step(sim, n)
-		A = overlapping_cell_area(cs[id], coarse_cell)
-		return A*cs[id].u
-	end
-	u̇_a = mapreduce(+, contained) do id
-		_, cs = nth_step(sim, n)
-		return Euler2D.cell_volume(cs[id]) * cs[id].u̇
-	end
-	u̇_b = mapreduce(+, overlapped) do id
-		_, cs = nth_step(sim, n)
-		A = overlapping_cell_area(cs[id], coarse_cell)
-		return A*cs[id].u̇
-	end
-	return (u_a+u_b , u̇_a + u̇_b) ./ poly_area(cell_boundary_polygon(coarse_cell))
+function compute_coarse_cell_contents(
+    coarse_cell::CoarseQuadCell{T,NS,NTAN},
+    sim::CellBasedEulerSim{T,TangentQuadCell{T,NS,NTAN}},
+    n,
+) where {T,NS,NTAN}
+    p = cell_boundary_polygon(coarse_cell)
+    contained = all_cells_contained_by(p, sim)
+    overlapped = all_cells_overlapping(p, sim)
+    T1 = SVector{4,T}
+    T2 = SMatrix{4,NS,T,NTAN}
+    T3 = SMatrix{4,8,T,32}
+    M =
+        sum(contained; init = zero(T1)) do id
+            _, cs = nth_step(sim, n)
+            return Euler2D.cell_volume(cs[id]) * cs[id].u
+        end + sum(overlapped; init = zero(T1)) do id
+            _, cs = nth_step(sim, n)
+            A = overlapping_cell_area(cs[id], coarse_cell)
+            return A * cs[id].u
+        end
+    dM_dp = sum(overlapped; init = zero(T3)) do id
+        _, cs = nth_step(sim, n)
+        p2 = cell_boundary_polygon(cs[id])
+        A = overlapping_cell_area(cs[id], coarse_cell)
+        dAdP = intersection_area_jacobian(p, p2)
+        return cs[id].u * dAdP'
+    end
+    Ṁ =
+        sum(contained; init = zero(T2)) do id
+            _, cs = nth_step(sim, n)
+            return Euler2D.cell_volume(cs[id]) * cs[id].u̇
+        end + sum(overlapped; init = zero(T2)) do id
+            _, cs = nth_step(sim, n)
+            A = overlapping_cell_area(cs[id], coarse_cell)
+            return A * cs[id].u̇
+        end
+    A, A_tangent = DifferentiationInterface.value_and_gradient(
+        poly_area,
+        poly_area_prep,
+        diff_backend,
+        p,
+    )
+    # unpack from mooncake
+    dA = SVector(A_tangent.fields.data...)
+    du_dp = (A * dM_dp - M * dA') / (A * A)
+    u, u̇ = (M, Ṁ) ./ A
+    return u, u̇, du_dp
 end
-
-# ╔═╡ f30619a3-5344-4e81-a4b5-6a11100cd056
-empty_coarse = Dict([id=>CoarseQuadCell(id, poly, zero(SVector{4, Float64}), zero(SMatrix{4, 3, Float64, 12})) for (id, poly)∈enumerate(vcat(polys_farleft, polys_midleft,polys_between,polys_body))]);
 
 # ╔═╡ 5d77d782-2def-4b3a-ab3a-118bf8e96b6b
-coarse_cells = let 
-	d=copy(empty_coarse)
-	for c∈keys(d)
-		v1, v2 = compute_coarse_cell_contents(d[c], sim_with_ad, 267)
-		@reset d[c].u = v1
-		@reset d[c].u̇ = v2
-	end
-	d
-end
-
-# ╔═╡ 0e0a049b-e2c3-4fe9-8fb8-186cdeb60485
-function are_coarse_neighbors(c1, c2)
-	if c1.id == c2.id
-		return (false, (0.0, Vec(0.0, 0.0)))
-	end
-	e1 = cell_boundary_polygon(c1)
-	e2 = cell_boundary_polygon(c2)
-
-	#clockwise around c1
-	for (p1, p2, n) ∈ zip(edge_starts(e1), edge_ends(e1), outward_edge_normals(e1))
-		# clockwise but reversed around c2
-		for (q1, q2) ∈ zip(edge_ends(e2), edge_starts(e2))
-			if (
-				is_in_neighborhood(p1, q1) && 
-				is_in_neighborhood(p2, q2)
-			)
-				return (true, (norm(p2-p1), n))
-			end
-		end
-	end
-	return (false, (0.0, Vec(0.0, 0.0)))
+coarse_cells = let
+    d = copy(empty_coarse)
+    for c ∈ keys(d)
+        v1, v2, v3 = compute_coarse_cell_contents(d[c], sim_with_ad, 2)
+        @reset d[c].u = v1
+        @reset d[c].u̇ = v2
+        @reset d[c].du_dpts = v3
+    end
+    d
 end
 
 # ╔═╡ c6e3873e-7fef-4c38-bf3f-de71f866057f
 let
-	xc = body.center[1] .+ body.radius .* cos.(0:0.01:2π)
-	yc = body.center[2] .+ body.radius .* sin.(0:0.01:2π)
-	spys = range(-1.5, 1.5; length=50)
-	spxs = x_shock.(spys)
-	p = plot(spxs, spys, label="Strong Shock Front (with extension)", lw=4, legend=:topright)
-	id = 0
-	maxdensity = maximum(coarse_cells) do (_, c)
-		c.u[1]
-	end
-	for (id, cell) ∈ coarse_cells
-		poly = cell.pts
-		pl = reduce(hcat, edge_starts(poly))
-		plot!(p, @view(pl[1, :]), @view(pl[2, :]) , lw=0.5, fill=true, fillalpha=(cell.u[1]/maxdensity), label=false, color=:red, seriestype=:shape)
-		v = sum(eachcol(pl))/4
-		annotate!(p,v..., Plots.text(L"P_{%$id}", 8))
-	end
-	plot!(p, xc, yc, aspect_ratio=:equal, xlims=(-2.05, 0.05), ylims=(-0.05, 1.5), label="Blunt Body", fill=true, dpi=1000, size=(1000, 800), ls=:dash, lw=4, fillalpha=0.5)
-	plot!(p, [-2.0, -0.75], [0., 0.], color=:black, label="Symmetry Boundary", lw=6, ls=:dash)
-	plot!(p, [-2.0, -2.0], [0., 1.05], color=:green, label="Inflow Boundary", lw=6, ls=:dot)
-	plot!(p, [-2.0, 0.0, 0.0], [1.05, 1.05, 0.75], label="v.N. Boundary", lw=6, ls=:dashdot, legendfontsize=14, color=:orange)
-	#savefig(p, "../gfx/silly_rectangles.pdf")
-	p
+    xc = body.center[1] .+ body.radius .* cos.(0:0.01:2π)
+    yc = body.center[2] .+ body.radius .* sin.(0:0.01:2π)
+    spys = range(-1.5, 1.5; length = 50)
+    spxs = x_shock.(spys)
+    p = plot(
+        spxs,
+        spys;
+        label = "Strong Shock Front (with extension)",
+        lw = 4,
+        legend = :outertopleft,
+    )
+    id = 0
+    maxdensity = maximum(coarse_cells) do (_, c)
+        c.u[1]
+    end
+    for (id, cell) ∈ coarse_cells
+        poly = cell.pts
+        pl = reduce(hcat, edge_starts(poly))
+        plot!(
+            p,
+            @view(pl[1, :]),
+            @view(pl[2, :]);
+            lw = 0.5,
+            fill = true,
+            fillalpha = (cell.u[1] / maxdensity),
+            label = false,
+            color = :red,
+            seriestype = :shape,
+        )
+        v = sum(eachcol(pl)) / 4
+        annotate!(p, v..., Plots.text(L"P_{%$id}", 8))
+    end
+    plot!(
+        p,
+        xc,
+        yc;
+        aspect_ratio = :equal,
+        xlims = (-2.05, 0.05),
+        ylims = (-0.2, 1.7),
+        label = "Blunt Body",
+        fill = true,
+        dpi = 1000,
+        size = (1760, 990),
+        ls = :dash,
+        lw = 4,
+        fillalpha = 0.5,
+    )
+    plot!(
+        p,
+        [-2.0, -0.75],
+        [0.0, 0.0];
+        color = :black,
+        label = "Symmetry Boundary",
+        lw = 2,
+        ls = :dash,
+    )
+    plot!(
+        p,
+        [-2.0, -2.0],
+        [0.0, 1.2];
+        color = :green,
+        label = "Inflow Boundary",
+        lw = 6,
+        ls = :dot,
+    )
+    plot!(
+        p,
+        [-2.0, 0.0, 0.0],
+        [1.2, 1.2, 0.75];
+        label = "v.N. Boundary",
+        lw = 6,
+        ls = :dashdot,
+        legendfontsize = 14,
+        color = :orange,
+    )
+    #savefig(p, "../gfx/silly_rectangles.pdf")
+    p
 end
 
 # ╔═╡ 60b9cd61-ed84-4f76-8bc8-a50672b83186
@@ -708,11 +981,131 @@ md"""
 One might want to know if the coarse cells that match the free-stream conditions actually do so:
 """
 
-# ╔═╡ f01eeab6-4e7a-469e-92f6-d0e992e3220e
-nondimensionalize(ambient, sim_scale) ≈ coarse_cells[1].u
-
 # ╔═╡ 7b512325-5b2e-492b-9194-fa2dea3af333
-ambient_u̇ ≈ coarse_cells[1].u̇
+ambient_u̇ ≈ coarse_cells[2].u̇
+
+# ╔═╡ 008aaf79-dd82-4559-b1a6-dd49c0985975
+md"""
+And perhaps the relative error:
+"""
+
+# ╔═╡ f01eeab6-4e7a-469e-92f6-d0e992e3220e
+abs.(nondimensionalize(ambient, sim_scale) .- coarse_cells[2].u) ./
+nondimensionalize(ambient, sim_scale)
+
+# ╔═╡ 6aaf12a0-c2d9-48ab-9e13-94039cf95258
+md"""
+However, numerical viscosity or numerical dissipation may have affected things more strongly than we would like. Brief inspection reveals that the relative error in _front_ of the shock is around 10%.
+
+A reasonable correction here is to fix the cell values in front of the shock to the free-stream values. We can evaluate the quality of this fix later.
+"""
+
+# ╔═╡ 5c2db847-a2ec-4d36-bdf7-7ad2393f67f3
+md"""
+We can store the dual graph of the mesh in a graph data structure to aid in lookup of neighbor relationships and cell data.
+"""
+
+# ╔═╡ d19fff76-e645-4d9d-9989-50019b6356ad
+function _point_collinear_between(p, p0, p1)
+    ell = Line(p0, p1 - p0)
+    return (
+        is_other_point_on_line(ell, p) && 0 ≤ PlanePolygons.projected_component(ell, p) ≤ 1
+    )
+end
+
+# ╔═╡ 0e0a049b-e2c3-4fe9-8fb8-186cdeb60485
+function are_coarse_neighbors(c1, c2)
+    if c1.id == c2.id
+        return (false, nothing)
+    end
+    e1 = cell_boundary_polygon(c1)
+    e2 = cell_boundary_polygon(c2)
+    # hardcoded in this order (I think)
+    dirs = (:south, :west, :north, :east)
+    #clockwise around c1
+    for (dir, p1, p2) ∈ zip(dirs, edge_starts(e1), edge_ends(e1))
+        for (q1, q2) ∈ zip(edge_ends(e2), edge_starts(e2))
+            if (
+                (
+                    _point_collinear_between(q1, p1, p2) &&
+                    _point_collinear_between(q2, p1, p2)
+                ) || (
+                    _point_collinear_between(p1, q1, q2) &&
+                    _point_collinear_between(p2, q1, q2)
+                )
+            )
+                return (true, (dir, p1, p2))
+            end
+        end
+    end
+    return (false, nothing)
+end
+
+# ╔═╡ fd9b689f-275c-4c91-9b6c-4e63c68d6ab2
+struct DualNodeKind{K} end
+
+# ╔═╡ ead8c1a5-9f4e-4d92-b4ca-1650ad34bdca
+const DUAL_NODE_TYPE = Tuple{
+    DualNodeKind{S},
+    Union{Nothing,SVector{4,Float64},CoarseQuadCell{Float64,3,12}},
+} where {S}
+
+# ╔═╡ 7e9ac0e4-37d7-41d0-98a7-7284634cb404
+coarse_dual = let
+    g = MetaGraph(DiGraph(), Int, DUAL_NODE_TYPE, Tuple{Symbol,Point{Float64},Point{Float64}})
+    g[1] = (DualNodeKind{:boundary_ambient}(), ambient_u)
+    for (k, v) ∈ coarse_cells
+        g[k] = (DualNodeKind{:cell}(), v)
+    end
+    phantom_idx = 1000 * nv(g) + 1
+    for (k1, v1) ∈ coarse_cells
+        for (k2, v2) ∈ coarse_cells
+            flag, val = are_coarse_neighbors(v1, v2)
+            if flag
+                g[k1, k2] = val
+            end
+        end
+
+        poly = cell_boundary_polygon(v1)
+        symy = PlanePolygons.Line(Point(-2.0, 0.0), Vec(1.0, 0.0))
+        inflow = PlanePolygons.Line(Point(-2.0, 0.0), Vec(0.0, 1.0))
+        vN1 = PlanePolygons.Line(Point(-2.0, 1.2), Vec(1.0, 0.0))
+        vN2 = PlanePolygons.Line(Point(0.0, 0.0), Vec(0.0, 1.0))
+
+        dirs = (:south, :west, :north, :east)
+        for (p1, p2, dir, t, n) ∈ zip(
+            edge_starts(poly),
+            edge_ends(poly),
+            dirs,
+            edge_tangents(poly),
+            outward_edge_normals(poly),
+        )
+            #if is_other_point_on_line(symy, p1) && is_other_point_on_line(symy, p2)
+            #	g[phantom_idx] = (DualNodeKind{:boundary_sym}(), nothing)
+            #	g[k1, phantom_idx] = (dir, p1, p2)
+            #	phantom_idx += 1
+            #else
+            if (p1[1] ≈ x_midleft(p1[2]) && p2[1] ≈ x_midleft(p2[2]))
+                g[k1, 1] = (dir, p1, p2)
+            elseif (
+                is_other_point_on_line(vN1, p1) && is_other_point_on_line(vN1, p2) ||
+                is_other_point_on_line(vN2, p1) && is_other_point_on_line(vN2, p2)
+            )
+                g[phantom_idx] = (DualNodeKind{:boundary_vN}(), nothing)
+                g[k1, phantom_idx] = (dir, p1, p2)
+                phantom_idx += 1
+            elseif (norm(p1) ≈ body.radius && norm(p2) ≈ body.radius)
+                g[phantom_idx] = (DualNodeKind{:boundary_body}(), nothing)
+                g[k1, phantom_idx] = (dir, p1, p2)
+                phantom_idx += 1
+            end
+        end
+    end
+    g
+end
+
+# ╔═╡ 1e40e0ee-341c-4e2d-ba79-a724b784db95
+neighbor_labels(coarse_dual, 19) |> collect
 
 # ╔═╡ 3a8cd7e2-fae9-4e70-8c92-004b17352506
 md"""
@@ -720,160 +1113,447 @@ md"""
 
 Each of the points on the shock can be used to define new cells ``P_i``. For each of the original cells, as well as the new cells, we know that:
 ```math
-\oint_{\partial P_i} \left(F_{in}(\bar{u}_i)-F_{out}(\bar{u}_i)\right)\;\hat n\,ds = 0
+\oint_{\partial P_i} \tilde F(\bar u_i)\cdot\hat n\,ds = 0
 ```
 
-This defines a system of equations, where only the ``x``-coordinate of the points on the shock is free. ``P_{N, S, E, W}`` is the neighbor cell to the north, south, east , or west respectively.
+We can write a system of equations for the $(num_coarse_cells) cells directly in front of the shock and their counterparts directly behind. For these $(2*num_coarse_cells) cells, we know the following:
+- Its cell-average value ``\bar u`` and its tangent ``\dot{\bar u}``
+- Its bounding polygon, made up of points ``p_k``
+- ``\partial_{p_k}\bar u``
 
+Which will yield ``i`` instances of the following equation:
 ```math
-	\left(F(\bar u_i) - F(\bar u_S)\right)\hat n_{i,S}L_{i, S} + F(\bar u_i)\hat n_{i,E}L_{i, E} + F(\bar u_i)\hat n_{i,N}L_{i, N} + F(\bar u_i)\hat n_{i,W}L_{i, W} = 0
+	\tilde F(\bar u_i)\hat n_{i,S}L_{i, S} + \tilde F(\bar u_i)\hat n_{i,E}L_{i, E} + \tilde F(\bar u_i)\hat n_{i,N}L_{i, N} + \tilde F(\bar u_i)\hat n_{i,W}L_{i, W} = 0
 ```
 
-We can stack all of these equations into ``\mathcal G``, and then use the implicit function theorem:
+We can stack these ``i`` equations into ``\mathcal G``, and then use the implicit function theorem to compute :
 ```math
 \begin{aligned}
-0 &= \mathcal {G}(\bar u, x)\\
-0 &= \nabla_u\mathcal{G}(\bar u, x)\dot u + \nabla_x\mathcal{G}(\bar u, x)\dot x\\
--\nabla_x\mathcal{G}(\bar u, x)\dot x &= \nabla_u\mathcal{G}(\bar u, x)\dot u
+0 &= \mathcal {G}(x_s, \bar u)\\
+g(x_s) &= \bar u \\
+\frac{\partial g_j(x_s)}{\partial x_k} &= \left[\frac{\partial G_i(x_s, \bar u)}{\partial u_j}\right]^{-1}\frac{\partial G_i(x_s, \bar u)}{\partial x_k}\\
+\frac{\partial x_k}{\partial u_j} &= \left[\frac{\partial g_j(x_s)}{\partial x_k}\right]^{+}
 \end{aligned}
 ```
 
-``\bar u``, ``x``, and ``\dot u`` are known, so we _should_ be able to solve this system of equations.
+Since ``\bar u``, ``x_s``, and ``\dot u`` are known, we can compute the dependence of the shock position on the initial parameters via:
+```math
+\dot x = \frac{\partial x_i}{\partial u_j}\dot u
+```
 """
 
-# ╔═╡ 7e9ac0e4-37d7-41d0-98a7-7284634cb404
-coarse_dual = let
-	g = MetaGraph(
-		Graph(),
-		Int,
-		Tuple{
-			SVector{4, Float64},
-			SMatrix{4, 3, Float64, 12}
-		},
-		Tuple{Float64, Vec{Float64}},
-	)
-	for (k, v) ∈ coarse_cells
-		g[k] = (v.u, v.u̇)
-	end
-	phantom_idx = 1000*nv(g)+1
-	for (k1, v1) ∈ coarse_cells
-		for (k2, v2) ∈ coarse_cells
-			flag, val = are_coarse_neighbors(v1, v2)
-			if flag
-				g[k1, k2] = val
-			end
-		end
-		
-		poly = cell_boundary_polygon(v1)
-		symy = PlanePolygons.Line(Point(-2.0, 0.0), Vec(1.0, 0.0))
-		inflow = PlanePolygons.Line(Point(-2.0, 0.0), Vec(0.0, 1.0))
-		vN1 = PlanePolygons.Line(Point(-2.0, 1.05), Vec(1.0, 0.0))
-		vN2 = PlanePolygons.Line(Point(0.0,0.0), Vec(0.0, 1.0))
-		# create phantoms
-		u = v1.u
-		u̇ = v1.u̇
-		for (p1, p2, t, n) ∈ zip(
-			edge_starts(poly), 
-			edge_ends(poly), 
-			edge_tangents(poly),
-			outward_edge_normals(poly)
-		)
-			L = norm(p2 - p1)
-			if point_on_line(symy, p1) && point_on_line(symy, p2)
-				g[phantom_idx] = (
-					Euler2D.flip_velocity(u, 2), 
-					Euler2D.flip_velocity(u̇, 2)
-				)
-				g[k1, phantom_idx] = (L, n)
-				phantom_idx += 1
-			end
-			if point_on_line(inflow, p1) && point_on_line(inflow, p2)
-				g[phantom_idx] = (
-					nondimensionalize(ambient, sim_scale),
-					ambient_u̇
-				)
-				g[k1, phantom_idx] = (L, n)
-				phantom_idx += 1
-			end
-			if (
-				point_on_line(vN1, p1) && point_on_line(vN1, p2) ||
-				point_on_line(vN2, p1) && point_on_line(vN2, p2)
-			)
-				g[phantom_idx] = (u, u̇)
-				g[k1, phantom_idx] = (L, n)
-				phantom_idx += 1
-			end
-			if norm(p1) ≈ 0.75 && norm(p2) ≈ 0.75
-				ρv = Euler2D.select_middle(u)
-				ρvt_phantom = (ρv ⋅ t) * t
-				ρvn_phantom = -(ρv ⋅ n) * n
-				ρv_phantom = ρvt_phantom + ρvn_phantom
-				u_phantom = SVector(u[1], ρv_phantom..., u[4])
-				u̇_phantom = mapreduce(hcat, eachcol(u̇)) do u̇
-					ρv̇ = Euler2D.select_middle(u̇)
-					ρv̇t_phantom = (ρv̇ ⋅ t) * t
-					ρv̇n_phantom = -(ρv̇ ⋅ n) * n
-					ρv̇_phantom = ρv̇t_phantom + ρv̇n_phantom
-					return SVector(u̇[1], ρv̇_phantom..., u̇[4])
-				end
-				g[phantom_idx] = (u_phantom, u̇_phantom)
-				g[k1, phantom_idx] = (L, n)
-				phantom_idx += 1
-			end
-		end
-	end
-	g
+# ╔═╡ b88373c7-fe33-4373-b4ea-036688c0114c
+md"""
+
+Computing the shock shift using the IFT on ``\mathcal G(x, \bar{u})`` is impossible, since ``\mathcal G`` is not invertible. We might have a few horrible numerical hacks to get around this.
+
+### Implicit Selection Theorem?
+One coarse cell immediately to the right of the shock has 4 neighbors: the cell with value ``u_\infty`` on the left and its north, south, and east neighbors. The value ``u(p)`` is known in each of these cells, as is ``\partial_{p}u``.
+
+This system can be transformed into Cartesian coordinates, since we only care about the length of the north and south edges. In fact, for the coarse cell at the symmetry boundary, we know the shock shift should be identical to the shock shift in its mirror neighbor. Since ``d\mathcal{G}(u, x)`` isn't invertible anyway, why not "zoom out" and take the local cell boundary integral ``\mathcal{F}(p, L):\mathbb{R}^{n_p\times n_L}\mapsto\mathbb{R}^4`` and try the Implicit Selection Theorem?
+ - ``p`` is the vector of free-stream parameters
+ - ``L`` is the vector of cell widths to the right of the shock
+"""
+
+# ╔═╡ 9877d4e8-3d8e-401e-adb1-6ccb47863466
+
+
+# ╔═╡ 0a3a069c-e72c-4a47-9a11-00f049dc137c
+const _dirs_scale = map(b -> b ? -1 : 1, Euler2D._dirs_bc_is_reversed)
+
+# ╔═╡ 8a76792c-6189-4d39-9147-5a7ea9b074f9
+begin
+    project_to_basis(vec, w1, w2) = inv(hcat(w1, w2)) * vec
+    function project_to_orthonormal_basis(vec, ŵ1)
+        ŵ2 = SVector(-ŵ1[2], ŵ1[1])
+        return project_to_basis(vec, ŵ1, ŵ2)
+    end
+    function project_state_to_basis(u, w1, w2)
+        return SVector(u[1], project_to_basis(select_middle(u), w1, w2)..., u[4])
+    end
+    function project_state_to_orthonormal_basis(u, v̂_1)
+        v̂_2 = SVector(-v̂_1[2], v̂_1[1])
+        return project_state_to_basis(u, v̂_1, v̂_2)
+    end
 end
 
-# ╔═╡ 0458a5a2-f22e-410d-adc3-39057643021a
-function bint(dual, id)
-	(u1, _) = dual[id]
-	res = zeros(typeof(u1))
-	F_out = F_euler(u1, DRY_AIR)
-	for nbr ∈ neighbor_labels(dual, id)
-		(L, n) = dual[id, nbr]
-		(u2, _) = dual[nbr]
-		F_in = F_euler(u2, DRY_AIR)
-		res = res + (F_in - F_out) * n
-	end
-	return res
+# ╔═╡ fd73e7b8-5887-4fee-9d8c-c8df45e54d11
+# we need this to match the syntax for ϕ_hll
+# but we might want to choose other flux functions later...
+begin
+    ϕ = Euler2D.ϕ_hll
 end
 
-# ╔═╡ ce2a39d7-dbc2-4508-8abb-daae1016a1a0
-t3 = bint(coarse_dual, 1)
+# ╔═╡ caa666e2-73fe-435e-a136-dc7fdcff03eb
+begin
+    # make this stuff diffpro-friendly 🔫
+    _edge_length(edge_data) = 0
+end
 
-# ╔═╡ 1e84fb77-03cd-4d07-abe8-56e583272f10
-neighbor_labels(coarse_dual, 1) |> collect
+# ╔═╡ 63c1d6d9-ad64-4074-83c4-40b5df0e0b1f
+## compute L, n, t and e for a given pair of edge endpoints
+function _edge_basis(edge_data)
+    (_, p1, p2) = edge_data
+    L = norm(p2 - p1)
+    t̂ = (p2 - p1) / L
+    n̂ = SVector(-t̂[2], t̂[1])
+    ê1 = project_to_orthonormal_basis(SVector(1.0, 0.0), n̂)
+    return L, n̂, t̂, ê1
+end
+
+# ╔═╡ aa059fd7-857c-4c51-af80-aaf1b95fd810
+
+
+# ╔═╡ 268fb334-afe6-438f-b420-7e3277390690
+
+
+# ╔═╡ cec776ee-f81d-4457-8555-24eaf80e4cca
+begin
+    function _compute_ϕ(
+        cell_kind::DualNodeKind{:cell},
+        cell_data,
+        other_kind::DualNodeKind{:cell},
+        other_data,
+        edge_data,
+    )
+        (L, n̂, t̂, ê1) = _edge_basis(edge_data)
+        u_L = project_state_to_orthonormal_basis(cell_data.u, n̂)
+        u_R = project_state_to_orthonormal_basis(other_data.u, n̂)
+        ϕ_n = ϕ(u_L, u_R, 1, DRY_AIR)
+        return L * project_state_to_orthonormal_basis(ϕ_n, ê1)
+    end
+
+    function _compute_ϕ(
+        cell_kind::DualNodeKind{:cell},
+        cell_data,
+        other_kind::DualNodeKind{:boundary_vN},
+        ::Nothing,
+        edge_data,
+    )
+        (L, n̂, t̂, ê1) = _edge_basis(edge_data)
+        u_L = project_state_to_orthonormal_basis(cell_data.u, n̂)
+        u_R = project_state_to_orthonormal_basis(cell_data.u, n̂)
+        ϕ_n = ϕ(u_L, u_R, 1, DRY_AIR)
+        return L * project_state_to_orthonormal_basis(ϕ_n, ê1)
+    end
+
+    function _compute_ϕ(
+        cell_kind::DualNodeKind{:cell},
+        cell_data,
+        other_kind::DualNodeKind{:boundary_ambient},
+        other_data,
+        edge_data,
+    )
+        (L, n̂, t̂, ê1) = _edge_basis(edge_data)
+        u_L = project_state_to_orthonormal_basis(cell_data.u, n̂)
+        u_R = project_state_to_orthonormal_basis(other_data, n̂)
+        ϕ_n = ϕ(u_L, u_R, 1, DRY_AIR)
+        return L * project_state_to_orthonormal_basis(ϕ_n, ê1)
+    end
+
+    function _compute_ϕ(
+        cell_kind::DualNodeKind{:cell},
+        cell_data,
+        other_kind::Union{DualNodeKind{:boundary_sym},DualNodeKind{:boundary_body}},
+        ::Nothing,
+        edge_data,
+    )
+        (L, n̂, t̂, ê1) = _edge_basis(edge_data)
+        u_L = project_state_to_orthonormal_basis(cell_data.u, n̂)
+        ρv = select_middle(cell_data.u)
+        ρv_reflected = -(ρv ⋅ n̂) * n̂ + (ρv ⋅ t̂) * t̂
+        other_u = SVector(cell_data.u[1], ρv_reflected..., cell_data.u[4])
+        u_R = project_state_to_orthonormal_basis(other_u, n̂)
+        ϕ_n = ϕ(u_L, u_R, 1, DRY_AIR)
+        return L * project_state_to_orthonormal_basis(ϕ_n, ê1)
+    end
+end
+
+# ╔═╡ df5a5737-41e7-447d-ad5f-ebdbf07996ca
+begin
+    # compute the "index" for the coarse dual component "nbr"
+    # because the values in nbr may actually be computed directly from u
+    # or from "ambient" (idx is 1)
+    _u_idx(::DualNodeKind{:boundary_sym}, id, nbr) = id
+    _u_idx(::DualNodeKind{:boundary_vN}, id, nbr) = id
+    _u_idx(::DualNodeKind{:boundary_body}, id, nbr) = id
+    _u_idx(::DualNodeKind{:cell}, id, nbr) = nbr
+    _u_idx(::DualNodeKind{:boundary_ambient}, id, nbr) = 1
+end
+
+# ╔═╡ 3c835380-3580-4881-a0ad-e466eb99fcb8
+begin
+    function _compute_grad_ϕ_u(
+        cell_kind::DualNodeKind{:cell},
+        cell_data,
+        other_kind::DualNodeKind{:cell},
+        other_data,
+        edge_data,
+    )
+        (L, n̂, t̂, ê1) = _edge_basis(edge_data)
+        dϕ_dcell = jacobian(fdiff_backend, cell_data.u) do u
+            u_L = project_state_to_orthonormal_basis(u, n̂)
+            u_R = project_state_to_orthonormal_basis(other_data.u, n̂)
+            ϕ_n = ϕ(u_L, u_R, 1, DRY_AIR)
+            return L * project_state_to_orthonormal_basis(ϕ_n, ê1)
+        end
+
+        dϕ_dother = jacobian(fdiff_backend, other_data.u) do u
+            u_L = project_state_to_orthonormal_basis(cell_data.u, n̂)
+            u_R = project_state_to_orthonormal_basis(u, n̂)
+            ϕ_n = ϕ(u_L, u_R, 1, DRY_AIR)
+            return L * project_state_to_orthonormal_basis(ϕ_n, ê1)
+        end
+
+        return dϕ_dcell, dϕ_dother
+    end
+
+    function _compute_grad_ϕ_u(
+        cell_kind::DualNodeKind{:cell},
+        cell_data,
+        other_kind::DualNodeKind{:boundary_ambient},
+        other_data,
+        edge_data,
+    )
+        (L, n̂, t̂, ê1) = _edge_basis(edge_data)
+        dϕ_dcell = jacobian(fdiff_backend, cell_data.u) do u
+            u_L = project_state_to_orthonormal_basis(u, n̂)
+            u_R = project_state_to_orthonormal_basis(other_data, n̂)
+            ϕ_n = ϕ(u_L, u_R, 1, DRY_AIR)
+            return L * project_state_to_orthonormal_basis(ϕ_n, ê1)
+        end
+
+        dϕ_dother = jacobian(fdiff_backend, other_data) do u
+            u_L = project_state_to_orthonormal_basis(cell_data.u, n̂)
+            u_R = project_state_to_orthonormal_basis(u, n̂)
+            ϕ_n = ϕ(u_L, u_R, 1, DRY_AIR)
+            return L * project_state_to_orthonormal_basis(ϕ_n, ê1)
+        end
+
+        return dϕ_dcell, dϕ_dother
+    end
+
+    function _compute_grad_ϕ_u(
+        cell_kind::DualNodeKind{:cell},
+        cell_data,
+        other_kind::Union{DualNodeKind{:boundary_sym},DualNodeKind{:boundary_body}},
+        ::Nothing,
+        edge_data,
+    )
+        (L, n̂, t̂, ê1) = _edge_basis(edge_data)
+        dϕ_dcell = jacobian(fdiff_backend, cell_data.u) do u
+            u_L = project_state_to_orthonormal_basis(u, n̂)
+            ρv = select_middle(u)
+            ρv_reflected = -(ρv ⋅ n̂) * n̂ + (ρv ⋅ t̂) * t̂
+            other_u = SVector(u[1], ρv_reflected..., u[4])
+            u_R = project_state_to_orthonormal_basis(other_u, n̂)
+            ϕ_n = ϕ(u_L, u_R, 1, DRY_AIR)
+            return L * project_state_to_orthonormal_basis(ϕ_n, ê1)
+        end
+        return dϕ_dcell, zero(dϕ_dcell)
+    end
+
+    function _compute_grad_ϕ_u(
+        cell_kind::DualNodeKind{:cell},
+        cell_data,
+        other_kind::DualNodeKind{:boundary_vN},
+        ::Nothing,
+        edge_data,
+    )
+        (L, n̂, t̂, ê1) = _edge_basis(edge_data)
+        dϕ_dcell = jacobian(fdiff_backend, cell_data.u) do u
+            u_L = project_state_to_orthonormal_basis(u, n̂)
+            u_R = project_state_to_orthonormal_basis(u, n̂)
+            ϕ_n = ϕ(u_L, u_R, 1, DRY_AIR)
+            return L * project_state_to_orthonormal_basis(ϕ_n, ê1)
+        end
+        return dϕ_dcell, zero(dϕ_dcell)
+    end
+end
+
+# ╔═╡ f3209f08-0d0c-4810-bf9b-86f2323799b4
+begin
+    function _compute_grad_ϕ_pts(
+        cell_kind::DualNodeKind{:cell},
+        cell_data,
+        other_kind::DualNodeKind{:cell},
+        other_data,
+        edge_data,
+    )
+        return 0
+    end
+end
+
+# ╔═╡ 6212612b-9486-4e3d-a325-7b862078b63c
+
+
+# ╔═╡ 282e04e2-e96e-482e-95a9-8df913bc592a
+_compute_grad_ϕ_pts(coarse_dual[17]..., coarse_dual[18]..., coarse_dual[17, 18])
+
+# ╔═╡ 4f79b51b-459a-46e1-a6d0-257ce08b029e
+function boundary_integral(dual, id)
+    nbrs = neighbor_labels(dual, id)
+    return sum(nbrs) do nbr
+        return _compute_ϕ(dual[id]..., dual[nbr]..., dual[id, nbr])
+    end
+end
+
+# ╔═╡ 03f640b6-851c-4c57-9ff8-5549415b558b
+function boundary_integral_ddu(dual, id)
+    return map(neighbor_labels(dual, id)) do nbr
+        cell_kind, cell_data = dual[id]
+        nbr_kind, nbr_data = dual[nbr]
+        dϕ_did, dϕ_dnbr =
+            _compute_grad_ϕ_u(cell_kind, cell_data, nbr_kind, nbr_data, dual[id, nbr])
+        other_idx = _u_idx(nbr_kind, id, nbr)
+        return (id, other_idx, dϕ_did, dϕ_dnbr)
+    end
+end
+
+# ╔═╡ 0db3efc3-94c1-43a3-b3b9-4fa2b9000c6b
+neighbor_labels(coarse_dual, 17)
+
+# ╔═╡ 7090f3d7-2db2-4e74-ae8b-b8ca1d0e2d5c
+x_select = hcat(
+    SVector(0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+    SVector(0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0),
+)
+
+# ╔═╡ 3ba4fd9d-822a-4a33-9116-10533a4e7281
+coarse_dual[177][2].du_dpts * x_select
+
+# ╔═╡ e76d6a56-e88e-42c8-9148-d7d827dd58b9
+boundary_integral(coarse_dual, 17) + boundary_integral(coarse_dual, 31)
+
+# ╔═╡ 44de7771-70d7-4b69-b1ec-cb5cd71071da
+boundary_integral(coarse_dual, 31) + boundary_integral(coarse_dual, 45)
+
+# ╔═╡ aa61b88c-417d-4598-96bb-3a1cb92fdb18
+function boundary_integral_ddparams(dual, id)
+    ddu = boundary_integral_ddu(dual, id)
+    return sum(ddu) do (i, j, dϕ_dui, dϕ_duj)
+        return dϕ_dui * coarse_dual[i][2].u̇ + dϕ_duj * coarse_dual[j][2].u̇
+    end
+end
+
+# ╔═╡ 5dd97bd2-dbd9-4aff-96a3-581f0ea9a94e
+A = boundary_integral_ddparams(coarse_dual, 17) # dG(x_s, p)/dp
+
+# ╔═╡ 5383d7d3-b89e-4990-93d3-5548f3675738
+rank(A)
+
+# ╔═╡ 6906c857-88ba-4914-8554-c721ad7e87fe
+function boundary_integral_ddL(dual, id) 
+	ddu = boundary_integral_ddu(dual, id)
+    return sum(ddu) do (i, j, dϕ_dui, dϕ_duj)
+        return (dϕ_dui * coarse_dual[i][2].du_dpts + dϕ_duj * coarse_dual[j][2].du_dpts) * x_select
+    end
+end
+
+# ╔═╡ ce7cb133-f7ce-496f-84c3-1a1974ea820e
+B = boundary_integral_ddL(coarse_dual, 17) # dG(x_s, p)/ dx_s
+
+# ╔═╡ 5194d358-b195-462b-b34b-5ccd95c9d0de
+(pinv(A) * B)
+
+# ╔═╡ 888b0fb7-2eb4-4201-8c24-e29bd98479eb
+(pinv(A) * B)' * [0.0, 0.01, 0.0]
+
+# ╔═╡ d32ec517-bff1-4f07-9a92-b447f1313d91
+(pinv(A) * B)' * [0.01, 0.0, 0.0]
+
+# ╔═╡ 654863a5-9fc5-461a-b5ee-a2ffb2379888
+edge_lengths(poly) = (norm(a - b) for (a, b) ∈ zip(edge_ends(poly), edge_starts(poly)))
+
+# ╔═╡ d03539c5-b80d-4d43-adcd-134147468052
+coarse_dual[3][2].u
+
+# ╔═╡ 3b8e7b5f-c262-4820-aaba-4f2d763fc5c1
+s1 = ShockwaveProperties.state_behind(
+    ambient,
+    SVector(-1.0, 0.0),
+    SVector(0.0, 1.0),
+    DRY_AIR,
+)
+
+# ╔═╡ 6822601e-f40a-4fa1-a0f8-a8bb09809549
+# computes ∇_x u using a right-facing stencil in x and centered stencil in y
+# if we switch the solver to MUSCL2D, then we won't need this.
+# this is just a proof-of-concept
+function grad_x_u_at(sim, n, x, y)
+    _, cells = nth_step(sim, n)
+    bx, by = cell_boundaries(sim)
+    i = findfirst(>=(x), bx) - 1
+    j = findfirst(>=(y), by) - 1
+    cx1 = cells[sim.cell_ids[i, j]]
+    @assert PlanePolygons.point_inside(cell_boundary_polygon(cx1), Point(x, y))
+    cx2 = cells[sim.cell_ids[i+1, j]]
+    dudx = (cx2.u - cx1.u) / (cx1.extent[1] / 2 + cx2.extent[1] / 2)
+    cy1 = cells[sim.cell_ids[i, j-1]]
+    cy2 = cells[sim.cell_ids[i, j+1]]
+    dudy = (cy2.u - cy1.u) / (cy1.extent[2] / 2 + cx1.extent[2] + cy2.extent[2] / 2)
+    return hcat(dudx, dudy)
+end
 
 # ╔═╡ 1f174634-812d-4704-8e82-36935e8f0cb5
 md"""
-## Debug Gfx and Information
+## Debug GFX and Information
 """
+
+# ╔═╡ 48148c30-486b-4952-9c5f-aea722ff74cf
+@bind n_cell Slider(2:80)
 
 # ╔═╡ 8f36cc9d-c2c5-4bea-9dc7-e5412a2960f9
 let
-	poly = cell_boundary_polygon(empty_coarse[1])
-	pts = mapreduce(pt->pt', vcat, edge_starts(poly))
-	# pts = vcat(pts, first(edge_starts(poly))')
-	p = plot(pts[:,1], pts[:,2], lw=0.5, fill=true, ylims=(-0.05, 0.1), xlims=(-2.1, -1.25), dpi=1000, fillalpha=0.5, seriestype=:shape)
-	foreach(all_cells_overlapping(empty_coarse[1].pts, tangent)) do id
-		_, c = nth_step(tangent, 267)
-		data = mapreduce(pt->pt', vcat, edge_starts(cell_boundary_polygon(c[id])))
-		plot!(p, data[:,1], data[:,2], lw=0.5, fill=true, fillcolor=:red, fillalpha=0.5, seriestype=:shape, label=false)
-	end
-	for ell ∈ edge_lines(poly)
-		x1 = ell.p[1] - 10*ell.dir[1]
-		x2 = ell.p[1] + 10*ell.dir[1]
-		y1 = ell.p[2] - 10*ell.dir[2]
-		y2 = ell.p[2] + 10*ell.dir[2]
-		plot!(p, [x1, x2], [y1,y2], color=:black, label=false, ls=:dash)
-	end
-	data = mapreduce(vcat, all_cells_contained_by(empty_coarse[1].pts, tangent)) do id
-		_, c = nth_step(tangent, 267)
-		return Vector(c[id].center)'
-	end
-	scatter!(p, data[:, 1], data[:,2], marker = :x, ms=2, label=false)
-	p
+    n = n_cell
+    poly = cell_boundary_polygon(empty_coarse[n])
+    pts = mapreduce(pt -> pt', vcat, edge_starts(poly))
+    xlims = extrema(pts[:, 1]) .+ (-0.05, 0.05)
+    ylims = extrema(pts[:, 2]) .+ (-0.05, 0.05)
+    # pts = vcat(pts, first(edge_starts(poly))')
+    p = plot(
+        pts[:, 1],
+        pts[:, 2];
+        lw = 0.5,
+        fill = true,
+        ylims = ylims,
+        xlims = xlims,
+        dpi = 1000,
+        fillalpha = 0.5,
+        seriestype = :shape,
+        label = "Cell $n",
+    )
+    foreach(all_cells_overlapping(empty_coarse[n].pts, sim_with_ad)) do id
+        _, c = nth_step(sim_with_ad, 2)
+        data = mapreduce(pt -> pt', vcat, edge_starts(cell_boundary_polygon(c[id])))
+        plot!(
+            p,
+            data[:, 1],
+            data[:, 2];
+            lw = 0.5,
+            fill = true,
+            fillcolor = :red,
+            fillalpha = 0.5,
+            seriestype = :shape,
+            label = false,
+        )
+    end
+    for ell ∈ edge_lines(poly)
+        x1 = point_on(ell)[1] - 10 * direction_of(ell)[1]
+        x2 = point_on(ell)[1] + 10 * direction_of(ell)[1]
+        y1 = point_on(ell)[2] - 10 * direction_of(ell)[2]
+        y2 = point_on(ell)[2] + 10 * direction_of(ell)[2]
+        plot!(p, [x1, x2], [y1, y2]; color = :black, label = false, ls = :dash)
+    end
+    xc = body.center[1] .+ body.radius .* cos.(0:0.01:2π)
+    yc = body.center[2] .+ body.radius .* sin.(0:0.01:2π)
+    plot!(p, xc, yc; color = :black)
+    data = mapreduce(vcat, all_cells_contained_by(empty_coarse[n].pts, sim_with_ad)) do id
+        _, c = nth_step(sim_with_ad, 2)
+        return Vector(c[id].center)'
+    end
+    scatter!(p, data[:, 1], data[:, 2]; marker = :x, ms = 2, label = false)
+    p
 end
 
 # ╔═╡ 5b7a3783-ef40-468f-93ac-91cb46929bd6
@@ -882,10 +1562,94 @@ ne(coarse_dual)
 # ╔═╡ 74525445-19f6-471f-878e-a60f07ba9f01
 nv(coarse_dual)
 
+# ╔═╡ 2c0133c2-35d5-4cfd-b19d-dfb08712479f
+@bind poly_skewx Slider(range(0, 0.125; length = 101), show_value = true)
+
+# ╔═╡ 0ef2267a-2116-469c-9b50-9b85be4ccc45
+@bind poly_skewy Slider(range(0, 0.125; length = 101), show_value = true)
+
+# ╔═╡ 3750e0d5-5ca3-447a-bbf5-add15a4a4e9b
+@bind test_cx Slider(range(0.1, 0.9; length = 101), show_value = true)
+
+# ╔═╡ a1d7888c-34a2-425b-a8e4-2329b6400901
+@bind test_cy Slider(range(0.1, 0.9; length = 101), show_value = true)
+
+# ╔═╡ 68650137-22f6-4c1a-814b-f9b9c81e20ca
+let
+    pgram = SClosedPolygon(
+        Point(0.25 + poly_skewx, 0.25 - poly_skewy),
+        Point(0.25 - poly_skewx, 0.75 - poly_skewy),
+        Point(0.75 - poly_skewx, 0.75 + poly_skewy),
+        Point(0.75 + poly_skewx, 0.25 + poly_skewy),
+    )
+    testq = SClosedPolygon(
+        Point(test_cx - 0.05, test_cy - 0.05),
+        Point(test_cx - 0.05, test_cy + 0.05),
+        Point(test_cx + 0.05, test_cy + 0.05),
+        Point(test_cx + 0.05, test_cy - 0.05),
+    )
+    data = reduce(hcat, edge_starts(pgram))
+    p = plot(
+        data[1, :],
+        data[2, :];
+        seriestype = :shape,
+        legend = false,
+        xlims = (-0.5, 1.5),
+        ylims = (-0.5, 1.5),
+        aspect_ratio = :equal,
+    )
+    test_color = are_polygons_intersecting(pgram, testq) ? :red : :green
+    data = reduce(hcat, edge_starts(testq))
+    plot!(
+        p,
+        data[1, :],
+        data[2, :];
+        seriestype = :shape,
+        legend = false,
+        color = test_color,
+        fillalpha = 0.5,
+    )
+    ns = outward_edge_normals(testq)
+    lines = [SVector(test_cx * one(eltype(n)), test_cy * one(eltype(n)), n...) for n in ns]
+    imgs = [_poly_image(ell, pgram) for ell in lines]
+    for (a, b) in zip(lines, imgs)
+        pt1 = point_on(a) + direction_of(a) * b[1]
+        pt2 = point_on(a) + direction_of(a) * b[2]
+        c = hcat(pt1, pt2)
+        plot!(p, c[1, :], c[2, :]; color = :black, lw = 2)
+    end
+    imgs = [_poly_image(ell, testq) for ell in lines]
+    for (a, b) in zip(lines, imgs)
+        pt1 = point_on(a) + direction_of(a) * b[1]
+        pt2 = point_on(a) + direction_of(a) * b[2]
+        c = hcat(pt1, pt2)
+        plot!(p, c[1, :], c[2, :]; color = :red, lw = 1, ls = :dash)
+    end
+
+    ns = outward_edge_normals(pgram)
+    lines = [SVector(0.5 * one(eltype(n)), 0.5 * one(eltype(n)), n...) for n in ns]
+    imgs = [_poly_image(ell, testq) for ell in lines]
+    for (a, b) in zip(lines, imgs)
+        pt1 = point_on(a) + direction_of(a) * b[1]
+        pt2 = point_on(a) + direction_of(a) * b[2]
+        c = hcat(pt1, pt2)
+        plot!(p, c[1, :], c[2, :]; color = :purple, lw = 2)
+    end
+    imgs = [_poly_image(ell, pgram) for ell in lines]
+    for (a, b) in zip(lines, imgs)
+        pt1 = point_on(a) + direction_of(a) * b[1]
+        pt2 = point_on(a) + direction_of(a) * b[2]
+        c = hcat(pt1, pt2)
+        plot!(p, c[1, :], c[2, :]; color = :green, lw = 1, ls = :dash)
+    end
+    p
+end
+
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
 [deps]
 Accessors = "7d9f7c33-5ae7-4f3b-8dc6-eff91059b697"
+DifferentiationInterface = "a0c0ee7d-e4b9-4e03-894e-1c5f64a51d63"
 Euler2D = "c24a2923-03cb-4692-957a-ccd31f2ad327"
 ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
 Graphs = "86223c79-3864-5bf0-83f7-82e725a168b6"
@@ -903,34 +1667,35 @@ StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 Unitful = "1986cc42-f94f-5a68-af5c-568840ba703d"
 
 [compat]
-Accessors = "~0.1.41"
-Euler2D = "~0.5.1"
+Accessors = "~0.1.42"
+DifferentiationInterface = "~0.7.0"
+Euler2D = "~0.5.2"
 ForwardDiff = "~0.10.38"
-Graphs = "~1.12.0"
+Graphs = "~1.12.1"
 Interpolations = "~0.15.1"
 LaTeXStrings = "~1.4.0"
-MetaGraphsNext = "~0.7.1"
-Mooncake = "~0.4.84"
-PlanePolygons = "~0.1.4"
-Plots = "~1.40.9"
-PlutoUI = "~0.7.61"
+MetaGraphsNext = "~0.7.3"
+Mooncake = "~0.4.118"
+PlanePolygons = "~0.1.12"
+Plots = "~1.40.13"
+PlutoUI = "~0.7.62"
 ShockwaveProperties = "~0.2.6"
-StaticArrays = "~1.9.11"
-Unitful = "~1.22.0"
+StaticArrays = "~1.9.13"
+Unitful = "~1.22.1"
 """
 
 # ╔═╡ 00000000-0000-0000-0000-000000000002
 PLUTO_MANIFEST_TOML_CONTENTS = """
 # This file is machine-generated - editing it directly is not advised
 
-julia_version = "1.11.3"
+julia_version = "1.11.5"
 manifest_format = "2.0"
-project_hash = "dba0ae6787323be2307dbcae478b872a2aa5ec8b"
+project_hash = "a675d8ed3f02da467ac1be2b238ff59de18edb18"
 
 [[deps.ADTypes]]
-git-tree-sha1 = "fb97701c117c8162e84dfcf80215caa904aef44f"
+git-tree-sha1 = "e2478490447631aedba0823d4d7a80b2cc8cdb32"
 uuid = "47edcb42-4c32-4615-8424-f2b9edc5f35b"
-version = "1.13.0"
+version = "1.14.0"
 
     [deps.ADTypes.extensions]
     ADTypesChainRulesCoreExt = "ChainRulesCore"
@@ -950,9 +1715,9 @@ version = "1.3.2"
 
 [[deps.Accessors]]
 deps = ["CompositionsBase", "ConstructionBase", "Dates", "InverseFunctions", "MacroTools"]
-git-tree-sha1 = "0ba8f4c1f06707985ffb4804fdad1bf97b233897"
+git-tree-sha1 = "3b86719127f50670efe356bc11073d84b4ed7a5d"
 uuid = "7d9f7c33-5ae7-4f3b-8dc6-eff91059b697"
-version = "0.1.41"
+version = "0.1.42"
 
     [deps.Accessors.extensions]
     AxisKeysExt = "AxisKeys"
@@ -967,7 +1732,6 @@ version = "0.1.41"
     AxisKeys = "94b1ba4f-4ee9-5380-92f1-94cde586c3c5"
     IntervalSets = "8197267c-284f-5f27-9208-e0e47529a953"
     LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
-    Requires = "ae029012-a4dd-5104-9daa-d747884805df"
     StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
     StructArrays = "09ab397b-f2b6-538f-b94a-2f83cf4a842a"
     Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
@@ -975,12 +1739,13 @@ version = "0.1.41"
 
 [[deps.Adapt]]
 deps = ["LinearAlgebra", "Requires"]
-git-tree-sha1 = "50c3c56a52972d78e8be9fd135bfb91c9574c140"
+git-tree-sha1 = "f7817e2e585aa6d924fd714df1e2a84be7896c60"
 uuid = "79e6a3ab-5dfb-504d-930d-738a2a938a0e"
-version = "4.1.1"
-weakdeps = ["StaticArrays"]
+version = "4.3.0"
+weakdeps = ["SparseArrays", "StaticArrays"]
 
     [deps.Adapt.extensions]
+    AdaptSparseArraysExt = "SparseArrays"
     AdaptStaticArraysExt = "StaticArrays"
 
 [[deps.AliasTables]]
@@ -1026,15 +1791,15 @@ version = "1.0.9+0"
 
 [[deps.Cairo_jll]]
 deps = ["Artifacts", "Bzip2_jll", "CompilerSupportLibraries_jll", "Fontconfig_jll", "FreeType2_jll", "Glib_jll", "JLLWrappers", "LZO_jll", "Libdl", "Pixman_jll", "Xorg_libXext_jll", "Xorg_libXrender_jll", "Zlib_jll", "libpng_jll"]
-git-tree-sha1 = "009060c9a6168704143100f36ab08f06c2af4642"
+git-tree-sha1 = "2ac646d71d0d24b44f3f8c84da8c9f4d70fb67df"
 uuid = "83423d85-b0ee-5818-9007-b63ccbeb887a"
-version = "1.18.2+1"
+version = "1.18.4+0"
 
 [[deps.ChainRules]]
 deps = ["Adapt", "ChainRulesCore", "Compat", "Distributed", "GPUArraysCore", "IrrationalConstants", "LinearAlgebra", "Random", "RealDot", "SparseArrays", "SparseInverseSubset", "Statistics", "StructArrays", "SuiteSparse"]
-git-tree-sha1 = "4312d7869590fab4a4f789e97bd82f0a04eaaa05"
+git-tree-sha1 = "a975ae558af61a2a48720a6271661bf2621e0f4e"
 uuid = "082447d4-558c-5d27-93f4-14fc19e9eca2"
-version = "1.72.2"
+version = "1.72.3"
 
 [[deps.ChainRulesCore]]
 deps = ["Compat", "LinearAlgebra"]
@@ -1048,15 +1813,15 @@ weakdeps = ["SparseArrays"]
 
 [[deps.CodecZlib]]
 deps = ["TranscodingStreams", "Zlib_jll"]
-git-tree-sha1 = "545a177179195e442472a1c4dc86982aa7a1bef0"
+git-tree-sha1 = "962834c22b66e32aa10f7611c08c8ca4e20749a9"
 uuid = "944b1d66-785c-5afd-91f1-9de20f533193"
-version = "0.7.7"
+version = "0.7.8"
 
 [[deps.ColorSchemes]]
 deps = ["ColorTypes", "ColorVectorSpace", "Colors", "FixedPointNumbers", "PrecompileTools", "Random"]
-git-tree-sha1 = "26ec26c98ae1453c692efded2b17e15125a5bea1"
+git-tree-sha1 = "403f2d8e209681fcbd9468a8514efff3ea08452e"
 uuid = "35d6a980-a343-548e-a6ea-1d62b119f2f4"
-version = "3.28.0"
+version = "3.29.0"
 
 [[deps.ColorTypes]]
 deps = ["FixedPointNumbers", "Random"]
@@ -1112,9 +1877,9 @@ weakdeps = ["InverseFunctions"]
 
 [[deps.ConcurrentUtilities]]
 deps = ["Serialization", "Sockets"]
-git-tree-sha1 = "f36e5e8fdffcb5646ea5da81495a5a7566005127"
+git-tree-sha1 = "d9d26935a0bcffc87d2613ce14c527c99fc543fd"
 uuid = "f0e56b4a-5159-44fe-b623-3e5288b988bb"
-version = "2.4.3"
+version = "2.5.0"
 
 [[deps.ConstructionBase]]
 git-tree-sha1 = "76219f1ed5771adbb096743bff43fb5fdd4c1157"
@@ -1142,10 +1907,10 @@ uuid = "9a962f9c-6df0-11e9-0e5d-c546b8b5ee8a"
 version = "1.16.0"
 
 [[deps.DataStructures]]
-deps = ["InteractiveUtils", "OrderedCollections"]
-git-tree-sha1 = "88d48e133e6d3dd68183309877eac74393daa7eb"
+deps = ["Compat", "InteractiveUtils", "OrderedCollections"]
+git-tree-sha1 = "4e1fe97fdaed23e9dc21d4d664bea76b65fc50a0"
 uuid = "864edb3b-99cc-5e75-8d2d-829cb0a9cfe8"
-version = "0.17.20"
+version = "0.18.22"
 
 [[deps.DataValueInterfaces]]
 git-tree-sha1 = "bfc1187b79289637fa0ef6d4436ebdfe6905cbd6"
@@ -1159,9 +1924,9 @@ version = "1.11.0"
 
 [[deps.Dbus_jll]]
 deps = ["Artifacts", "Expat_jll", "JLLWrappers", "Libdl"]
-git-tree-sha1 = "fc173b380865f70627d7dd1190dc2fce6cc105af"
+git-tree-sha1 = "473e9afc9cf30814eb67ffa5f2db7df82c3ad9fd"
 uuid = "ee1fde0b-3d02-5ea6-8484-8dfef6360eab"
-version = "1.14.10+0"
+version = "1.16.2+0"
 
 [[deps.DelimitedFiles]]
 deps = ["Mmap"]
@@ -1181,11 +1946,55 @@ git-tree-sha1 = "23163d55f885173722d1e4cf0f6110cdbaf7e272"
 uuid = "b552c78f-8df3-52c6-915a-8e097449b14b"
 version = "1.15.1"
 
-[[deps.DiffTests]]
-deps = ["LinearAlgebra", "SparseArrays", "Statistics"]
-git-tree-sha1 = "b92beb1933df01bf4915d3a05e54c2a0aad312c7"
-uuid = "de460e47-3fe3-5279-bb4a-814414816d5d"
-version = "0.1.2"
+[[deps.DifferentiationInterface]]
+deps = ["ADTypes", "LinearAlgebra"]
+git-tree-sha1 = "83881aca52d132932f1827e2571e7d703ab26aff"
+uuid = "a0c0ee7d-e4b9-4e03-894e-1c5f64a51d63"
+version = "0.7.0"
+
+    [deps.DifferentiationInterface.extensions]
+    DifferentiationInterfaceChainRulesCoreExt = "ChainRulesCore"
+    DifferentiationInterfaceDiffractorExt = "Diffractor"
+    DifferentiationInterfaceEnzymeExt = ["EnzymeCore", "Enzyme"]
+    DifferentiationInterfaceFastDifferentiationExt = "FastDifferentiation"
+    DifferentiationInterfaceFiniteDiffExt = "FiniteDiff"
+    DifferentiationInterfaceFiniteDifferencesExt = "FiniteDifferences"
+    DifferentiationInterfaceForwardDiffExt = ["ForwardDiff", "DiffResults"]
+    DifferentiationInterfaceGPUArraysCoreExt = "GPUArraysCore"
+    DifferentiationInterfaceGTPSAExt = "GTPSA"
+    DifferentiationInterfaceMooncakeExt = "Mooncake"
+    DifferentiationInterfacePolyesterForwardDiffExt = ["PolyesterForwardDiff", "ForwardDiff", "DiffResults"]
+    DifferentiationInterfaceReverseDiffExt = ["ReverseDiff", "DiffResults"]
+    DifferentiationInterfaceSparseArraysExt = "SparseArrays"
+    DifferentiationInterfaceSparseConnectivityTracerExt = "SparseConnectivityTracer"
+    DifferentiationInterfaceSparseMatrixColoringsExt = "SparseMatrixColorings"
+    DifferentiationInterfaceStaticArraysExt = "StaticArrays"
+    DifferentiationInterfaceSymbolicsExt = "Symbolics"
+    DifferentiationInterfaceTrackerExt = "Tracker"
+    DifferentiationInterfaceZygoteExt = ["Zygote", "ForwardDiff"]
+
+    [deps.DifferentiationInterface.weakdeps]
+    ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
+    DiffResults = "163ba53b-c6d8-5494-b064-1a9d43ac40c5"
+    Diffractor = "9f5e2b26-1114-432f-b630-d3fe2085c51c"
+    Enzyme = "7da242da-08ed-463a-9acd-ee780be4f1d9"
+    EnzymeCore = "f151be2c-9106-41f4-ab19-57ee4f262869"
+    FastDifferentiation = "eb9bf01b-bf85-4b60-bf87-ee5de06c00be"
+    FiniteDiff = "6a86dc24-6348-571c-b903-95158fe2bd41"
+    FiniteDifferences = "26cc04aa-876d-5657-8c51-4c34ba976000"
+    ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
+    GPUArraysCore = "46192b85-c4d5-4398-a991-12ede77f4527"
+    GTPSA = "b27dd330-f138-47c5-815b-40db9dd9b6e8"
+    Mooncake = "da2b9cff-9c12-43a0-ae48-6db2b0edb7d6"
+    PolyesterForwardDiff = "98d1487c-24ca-40b6-b7ab-df2af84e126b"
+    ReverseDiff = "37e2e3b7-166d-5795-8a7a-e32c996b4267"
+    SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
+    SparseConnectivityTracer = "9f842d2f-2579-4b1d-911e-f412cf18a3f5"
+    SparseMatrixColorings = "0a514795-09f3-496d-8182-132a7b665d35"
+    StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
+    Symbolics = "0c5d862f-8b57-4792-8d23-62f2024744c7"
+    Tracker = "9f7883ad-71c0-57eb-9f7f-b5c9e6d3789c"
+    Zygote = "e88e6eb3-aa80-5325-afca-941959d7151f"
 
 [[deps.Distributed]]
 deps = ["Random", "Serialization", "Sockets"]
@@ -1193,10 +2002,9 @@ uuid = "8ba89e20-285c-5b6f-9357-94700520ee1b"
 version = "1.11.0"
 
 [[deps.DocStringExtensions]]
-deps = ["LibGit2"]
-git-tree-sha1 = "2fb1e02f2b635d0845df5d7c167fec4dd739b00d"
+git-tree-sha1 = "e7b7e6f178525d17c720ab9c081e4ef04429f860"
 uuid = "ffbed154-4ef7-542d-bbb7-c09d3a79fcae"
-version = "0.9.3"
+version = "0.9.4"
 
 [[deps.Downloads]]
 deps = ["ArgTools", "FileWatching", "LibCURL", "NetworkOptions"]
@@ -1211,9 +2019,9 @@ version = "0.0.20230411+1"
 
 [[deps.Euler2D]]
 deps = ["Accessors", "Dates", "ForwardDiff", "LinearAlgebra", "ShockwaveProperties", "StaticArrays", "Tullio", "Unitful", "UnitfulChainRules"]
-git-tree-sha1 = "9694e00dd557fb937a5070fd2cf65668f617bad7"
+git-tree-sha1 = "589f7a68799b5db135f349b7c85f41adde25420b"
 uuid = "c24a2923-03cb-4692-957a-ccd31f2ad327"
-version = "0.5.1"
+version = "0.5.2"
 
 [[deps.ExceptionUnwrapping]]
 deps = ["Test"]
@@ -1246,9 +2054,9 @@ version = "4.4.4+1"
 
 [[deps.FileIO]]
 deps = ["Pkg", "Requires", "UUIDs"]
-git-tree-sha1 = "2dd20384bf8c6d411b5c7370865b1e9b26cb2ea3"
+git-tree-sha1 = "b66970a70db13f45b7e57fbda1736e1cf72174ea"
 uuid = "5789e2e9-d7fb-5bc7-8068-2c6fae9b9549"
-version = "1.16.6"
+version = "1.17.0"
 weakdeps = ["HTTP"]
 
     [deps.FileIO.extensions]
@@ -1266,9 +2074,9 @@ version = "0.8.5"
 
 [[deps.Fontconfig_jll]]
 deps = ["Artifacts", "Bzip2_jll", "Expat_jll", "FreeType2_jll", "JLLWrappers", "Libdl", "Libuuid_jll", "Zlib_jll"]
-git-tree-sha1 = "21fac3c77d7b5a9fc03b0ec503aa1a6392c34d2b"
+git-tree-sha1 = "301b5d5d731a0654825f1f2e906990f7141a106b"
 uuid = "a3f928ae-7b40-5064-980b-68af3947d34b"
-version = "2.15.0+0"
+version = "2.16.0+0"
 
 [[deps.Format]]
 git-tree-sha1 = "9c68794ef81b08086aeb32eeaf33531668d5f5fc"
@@ -1287,25 +2095,20 @@ weakdeps = ["StaticArrays"]
 
 [[deps.FreeType2_jll]]
 deps = ["Artifacts", "Bzip2_jll", "JLLWrappers", "Libdl", "Zlib_jll"]
-git-tree-sha1 = "786e968a8d2fb167f2e4880baba62e0e26bd8e4e"
+git-tree-sha1 = "2c5512e11c791d1baed2049c5652441b28fc6a31"
 uuid = "d7e528f0-a631-5988-bf34-fe36492bcfd7"
-version = "2.13.3+1"
+version = "2.13.4+0"
 
 [[deps.FriBidi_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl"]
-git-tree-sha1 = "846f7026a9decf3679419122b49f8a1fdb48d2d5"
+git-tree-sha1 = "7a214fdac5ed5f59a22c2d9a885a16da1c74bbc7"
 uuid = "559328eb-81f9-559d-9380-de523a88c83c"
-version = "1.0.16+0"
+version = "1.0.17+0"
 
 [[deps.FunctionWrappers]]
 git-tree-sha1 = "d62485945ce5ae9c0c48f124a84998d755bae00e"
 uuid = "069b7b12-0de2-55c6-9aab-29f3d0a68a2e"
 version = "1.1.3"
-
-[[deps.Future]]
-deps = ["Random"]
-uuid = "9fa8497b-333b-5362-9e8d-4d0656e87820"
-version = "1.11.0"
 
 [[deps.GLFW_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Libglvnd_jll", "Xorg_libXcursor_jll", "Xorg_libXi_jll", "Xorg_libXinerama_jll", "Xorg_libXrandr_jll", "libdecor_jll", "xkbcommon_jll"]
@@ -1321,15 +2124,15 @@ version = "0.2.0"
 
 [[deps.GR]]
 deps = ["Artifacts", "Base64", "DelimitedFiles", "Downloads", "GR_jll", "HTTP", "JSON", "Libdl", "LinearAlgebra", "Preferences", "Printf", "Qt6Wayland_jll", "Random", "Serialization", "Sockets", "TOML", "Tar", "Test", "p7zip_jll"]
-git-tree-sha1 = "9bf00ba4c45867c86251a7fd4cb646dcbeb41bf0"
+git-tree-sha1 = "7ffa4049937aeba2e5e1242274dc052b0362157a"
 uuid = "28b8d3ca-fb5f-59d9-8090-bfdbd6d07a71"
-version = "0.73.12"
+version = "0.73.14"
 
 [[deps.GR_jll]]
 deps = ["Artifacts", "Bzip2_jll", "Cairo_jll", "FFMPEG_jll", "Fontconfig_jll", "FreeType2_jll", "GLFW_jll", "JLLWrappers", "JpegTurbo_jll", "Libdl", "Libtiff_jll", "Pixman_jll", "Qt6Base_jll", "Zlib_jll", "libpng_jll"]
-git-tree-sha1 = "36d5430819123553bf31dfdceb3653ca7d9e62d7"
+git-tree-sha1 = "98fc192b4e4b938775ecd276ce88f539bcec358e"
 uuid = "d2c73de3-f751-5644-a686-071e5b155ba9"
-version = "0.73.12+0"
+version = "0.73.14+0"
 
 [[deps.Gettext_jll]]
 deps = ["Artifacts", "CompilerSupportLibraries_jll", "JLLWrappers", "Libdl", "Libiconv_jll", "Pkg", "XML2_jll"]
@@ -1344,16 +2147,16 @@ uuid = "7746bdde-850d-59dc-9ae8-88ece973131d"
 version = "2.82.4+0"
 
 [[deps.Graphite2_jll]]
-deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
-git-tree-sha1 = "01979f9b37367603e2848ea225918a3b3861b606"
+deps = ["Artifacts", "JLLWrappers", "Libdl"]
+git-tree-sha1 = "8a6dbda1fd736d60cc477d99f2e7a042acfa46e8"
 uuid = "3b182d85-2403-5c21-9c21-1e1f0cc25472"
-version = "1.3.14+1"
+version = "1.3.15+0"
 
 [[deps.Graphs]]
 deps = ["ArnoldiMethod", "Compat", "DataStructures", "Distributed", "Inflate", "LinearAlgebra", "Random", "SharedArrays", "SimpleTraits", "SparseArrays", "Statistics"]
-git-tree-sha1 = "1dc470db8b1131cfc7fb4c115de89fe391b9e780"
+git-tree-sha1 = "3169fd3440a02f35e549728b0890904cfd4ae58a"
 uuid = "86223c79-3864-5bf0-83f7-82e725a168b6"
-version = "1.12.0"
+version = "1.12.1"
 
 [[deps.Grisu]]
 git-tree-sha1 = "53bb909d1151e57e2484c3d1b53e19552b887fb2"
@@ -1362,9 +2165,9 @@ version = "1.0.2"
 
 [[deps.HTTP]]
 deps = ["Base64", "CodecZlib", "ConcurrentUtilities", "Dates", "ExceptionUnwrapping", "Logging", "LoggingExtras", "MbedTLS", "NetworkOptions", "OpenSSL", "PrecompileTools", "Random", "SimpleBufferStream", "Sockets", "URIs", "UUIDs"]
-git-tree-sha1 = "c67b33b085f6e2faf8bf79a61962e7339a81129c"
+git-tree-sha1 = "f93655dc73d7a0b4a368e3c0bce296ae035ad76e"
 uuid = "cd3eb016-35fb-5094-929b-558a96fad6f3"
-version = "1.10.15"
+version = "1.10.16"
 
 [[deps.HarfBuzz_jll]]
 deps = ["Artifacts", "Cairo_jll", "Fontconfig_jll", "FreeType2_jll", "Glib_jll", "Graphite2_jll", "JLLWrappers", "Libdl", "Libffi_jll"]
@@ -1431,16 +2234,22 @@ uuid = "82899510-4779-5014-852e-03e436cf321d"
 version = "1.0.0"
 
 [[deps.JLD2]]
-deps = ["FileIO", "MacroTools", "Mmap", "OrderedCollections", "PrecompileTools", "Requires", "TranscodingStreams"]
-git-tree-sha1 = "91d501cb908df6f134352ad73cde5efc50138279"
+deps = ["FileIO", "MacroTools", "Mmap", "OrderedCollections", "PrecompileTools", "TranscodingStreams"]
+git-tree-sha1 = "8e071648610caa2d3a5351aba03a936a0c37ec61"
 uuid = "033835bb-8acc-5ee8-8aae-3f567f8a3819"
-version = "0.5.11"
+version = "0.5.13"
+
+    [deps.JLD2.extensions]
+    UnPackExt = "UnPack"
+
+    [deps.JLD2.weakdeps]
+    UnPack = "3a884ed6-31ef-47d7-9d2a-63182c4928ed"
 
 [[deps.JLFzf]]
-deps = ["Pipe", "REPL", "Random", "fzf_jll"]
-git-tree-sha1 = "71b48d857e86bf7a1838c4736545699974ce79a2"
+deps = ["REPL", "Random", "fzf_jll"]
+git-tree-sha1 = "82f7acdc599b65e0f8ccd270ffa1467c21cb647b"
 uuid = "1019f520-868f-41f5-a6de-eb00f4b6a39c"
-version = "0.1.9"
+version = "0.1.11"
 
 [[deps.JLLWrappers]]
 deps = ["Artifacts", "Preferences"]
@@ -1474,9 +2283,9 @@ version = "4.0.1+0"
 
 [[deps.LLVMOpenMP_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl"]
-git-tree-sha1 = "78211fb6cbc872f77cad3fc0b6cf647d923f4929"
+git-tree-sha1 = "eb62a3deb62fc6d8822c0c4bef73e4412419c5d8"
 uuid = "1d63c593-3942-5779-bab2-d838dc0a180e"
-version = "18.1.7+0"
+version = "18.1.8+0"
 
 [[deps.LZO_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl"]
@@ -1491,9 +2300,9 @@ version = "1.4.0"
 
 [[deps.Latexify]]
 deps = ["Format", "InteractiveUtils", "LaTeXStrings", "MacroTools", "Markdown", "OrderedCollections", "Requires"]
-git-tree-sha1 = "cd714447457c660382fe634710fb56eb255ee42e"
+git-tree-sha1 = "cd10d2cc78d34c0e2a3a36420ab607b611debfbb"
 uuid = "23fbe1c1-3f47-55db-b15f-69d7ec21a316"
-version = "0.16.6"
+version = "0.16.7"
 
     [deps.Latexify.extensions]
     DataFramesExt = "DataFrames"
@@ -1540,23 +2349,11 @@ git-tree-sha1 = "27ecae93dd25ee0909666e6835051dd684cc035e"
 uuid = "e9f186c6-92d2-5b65-8a66-fee21dc1b490"
 version = "3.2.2+2"
 
-[[deps.Libgcrypt_jll]]
-deps = ["Artifacts", "JLLWrappers", "Libdl", "Libgpg_error_jll"]
-git-tree-sha1 = "8be878062e0ffa2c3f67bb58a595375eda5de80b"
-uuid = "d4300ac3-e22c-5743-9152-c294e39db1e4"
-version = "1.11.0+0"
-
 [[deps.Libglvnd_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Xorg_libX11_jll", "Xorg_libXext_jll"]
-git-tree-sha1 = "ff3b4b9d35de638936a525ecd36e86a8bb919d11"
+git-tree-sha1 = "d36c21b9e7c172a44a10484125024495e2625ac0"
 uuid = "7e76a0d4-f3c7-5321-8279-8d96eeed0f29"
-version = "1.7.0+0"
-
-[[deps.Libgpg_error_jll]]
-deps = ["Artifacts", "JLLWrappers", "Libdl"]
-git-tree-sha1 = "df37206100d39f79b3376afb6b9cee4970041c61"
-uuid = "7add5ba3-2f88-524e-9cd5-f83b8a55f7b8"
-version = "1.51.1+0"
+version = "1.7.1+1"
 
 [[deps.Libiconv_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl"]
@@ -1566,9 +2363,9 @@ version = "1.18.0+0"
 
 [[deps.Libmount_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl"]
-git-tree-sha1 = "89211ea35d9df5831fca5d33552c02bd33878419"
+git-tree-sha1 = "a31572773ac1b745e0343fe5e2c8ddda7a37e997"
 uuid = "4b2f31a3-9ecc-558c-b454-b3730dcb73e9"
-version = "2.40.3+0"
+version = "2.41.0+0"
 
 [[deps.Libtiff_jll]]
 deps = ["Artifacts", "JLLWrappers", "JpegTurbo_jll", "LERC_jll", "Libdl", "XZ_jll", "Zlib_jll", "Zstd_jll"]
@@ -1578,9 +2375,9 @@ version = "4.7.1+0"
 
 [[deps.Libuuid_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl"]
-git-tree-sha1 = "e888ad02ce716b319e6bdb985d2ef300e7089889"
+git-tree-sha1 = "321ccef73a96ba828cd51f2ab5b9f917fa73945a"
 uuid = "38a345b3-de98-5d2b-a5d3-14cd9215e700"
-version = "2.40.3+0"
+version = "2.41.0+0"
 
 [[deps.LinearAlgebra]]
 deps = ["Libdl", "OpenBLAS_jll", "libblastrampoline_jll"]
@@ -1614,14 +2411,14 @@ uuid = "e6f89c97-d47a-5376-807f-9c37f3926c36"
 version = "1.1.0"
 
 [[deps.MIMEs]]
-git-tree-sha1 = "1833212fd6f580c20d4291da9c1b4e8a655b128e"
+git-tree-sha1 = "c64d943587f7187e751162b3b84445bbbd79f691"
 uuid = "6c6e2e6c-3030-632d-7369-2d6c69616d65"
-version = "1.0.0"
+version = "1.1.0"
 
 [[deps.MacroTools]]
-git-tree-sha1 = "72aebe0b5051e5143a079a4685a46da330a40472"
+git-tree-sha1 = "1e0228a030642014fe5cfe68c2c0a818f9e3f522"
 uuid = "1914dd2f-81c6-5fcd-8719-6d5c9610ff09"
-version = "0.5.15"
+version = "0.5.16"
 
 [[deps.Markdown]]
 deps = ["Base64"]
@@ -1646,9 +2443,9 @@ version = "0.3.2"
 
 [[deps.MetaGraphsNext]]
 deps = ["Graphs", "JLD2", "SimpleTraits"]
-git-tree-sha1 = "d2ecf4a20f4ac694987dd08ac489b7f7ff805f35"
+git-tree-sha1 = "1e3b196ecbbf221d4d3696ea9de4288bea4c39f9"
 uuid = "fa8bd995-216d-47f1-8a91-f3b68fbeb377"
-version = "0.7.1"
+version = "0.7.3"
 
 [[deps.Missings]]
 deps = ["DataAPI"]
@@ -1666,14 +2463,15 @@ uuid = "a63ad114-7e13-5084-954f-fe012c677804"
 version = "1.11.0"
 
 [[deps.Mooncake]]
-deps = ["ADTypes", "ChainRules", "ChainRulesCore", "DiffRules", "DiffTests", "ExprTools", "FunctionWrappers", "GPUArraysCore", "Graphs", "InteractiveUtils", "LinearAlgebra", "MistyClosures", "Random", "Setfield", "Test"]
-git-tree-sha1 = "73929ecc5477ae7701b87a5a103d6e6cba276a1a"
+deps = ["ADTypes", "ChainRules", "ChainRulesCore", "DiffRules", "ExprTools", "FunctionWrappers", "GPUArraysCore", "Graphs", "InteractiveUtils", "LinearAlgebra", "MistyClosures", "Random", "Test"]
+git-tree-sha1 = "a9122d7a195f712ed56d9e0d399e29547c075c69"
 uuid = "da2b9cff-9c12-43a0-ae48-6db2b0edb7d6"
-version = "0.4.84"
+version = "0.4.118"
 
     [deps.Mooncake.extensions]
     MooncakeAllocCheckExt = "AllocCheck"
     MooncakeCUDAExt = "CUDA"
+    MooncakeFluxExt = "Flux"
     MooncakeJETExt = "JET"
     MooncakeLuxLibExt = "LuxLib"
     MooncakeLuxLibSLEEFPiratesExtension = ["LuxLib", "SLEEFPirates"]
@@ -1683,6 +2481,7 @@ version = "0.4.84"
     [deps.Mooncake.weakdeps]
     AllocCheck = "9b6a8646-10ed-4001-bbdc-1d2f46dfbb1a"
     CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+    Flux = "587475ba-b771-5e3f-ad9e-33799f191a9c"
     JET = "c3a54625-cd67-489e-a8e7-0a5a0ff4e31b"
     LuxLib = "82251201-b29d-42c6-8e01-566dec8acb11"
     NNlib = "872c559c-99b0-510c-b3b7-b6c96a88d5cd"
@@ -1695,18 +2494,18 @@ version = "2023.12.12"
 
 [[deps.NaNMath]]
 deps = ["OpenLibm_jll"]
-git-tree-sha1 = "cc0a5deefdb12ab3a096f00a6d42133af4560d71"
+git-tree-sha1 = "9b8215b1ee9e78a293f99797cd31375471b2bcae"
 uuid = "77ba4419-2d1f-58cd-9bb1-8ffee604a2e3"
-version = "1.1.2"
+version = "1.1.3"
 
 [[deps.NetworkOptions]]
 uuid = "ca575930-c2e3-43a9-ace4-1e988b2c1908"
 version = "1.2.0"
 
 [[deps.OffsetArrays]]
-git-tree-sha1 = "5e1897147d1ff8d98883cda2be2187dcf57d8f0c"
+git-tree-sha1 = "117432e406b5c023f665fa73dc26e79ec3630151"
 uuid = "6fe1bfb0-de20-5000-8ca7-80f57d26f881"
-version = "1.15.0"
+version = "1.17.0"
 weakdeps = ["Adapt"]
 
     [deps.OffsetArrays.extensions]
@@ -1726,7 +2525,7 @@ version = "0.3.27+1"
 [[deps.OpenLibm_jll]]
 deps = ["Artifacts", "Libdl"]
 uuid = "05823500-19ac-5b8b-9628-191a04bc5112"
-version = "0.8.1+2"
+version = "0.8.5+0"
 
 [[deps.OpenSSL]]
 deps = ["BitFlags", "Dates", "MozillaCACerts_jll", "OpenSSL_jll", "Sockets"]
@@ -1736,9 +2535,9 @@ version = "1.4.3"
 
 [[deps.OpenSSL_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl"]
-git-tree-sha1 = "7493f61f55a6cce7325f197443aa80d32554ba10"
+git-tree-sha1 = "9216a80ff3682833ac4b733caa8c00390620ba5d"
 uuid = "458c3c95-2e84-50aa-8efc-19380b2a3a95"
-version = "3.0.15+3"
+version = "3.5.0+0"
 
 [[deps.OpenSpecFun_jll]]
 deps = ["Artifacts", "CompilerSupportLibraries_jll", "JLLWrappers", "Libdl"]
@@ -1764,26 +2563,21 @@ version = "10.42.0+1"
 
 [[deps.Pango_jll]]
 deps = ["Artifacts", "Cairo_jll", "Fontconfig_jll", "FreeType2_jll", "FriBidi_jll", "Glib_jll", "HarfBuzz_jll", "JLLWrappers", "Libdl"]
-git-tree-sha1 = "ed6834e95bd326c52d5675b4181386dfbe885afb"
+git-tree-sha1 = "3b31172c032a1def20c98dae3f2cdc9d10e3b561"
 uuid = "36c8627f-9965-5494-a995-c6b170f724f3"
-version = "1.55.5+0"
+version = "1.56.1+0"
 
 [[deps.Parsers]]
 deps = ["Dates", "PrecompileTools", "UUIDs"]
-git-tree-sha1 = "8489905bcdbcfac64d1daa51ca07c0d8f0283821"
+git-tree-sha1 = "7d2f8f21da5db6a806faf7b9b292296da42b2810"
 uuid = "69de0a69-1ddd-5017-9359-2bf0b02dc9f0"
-version = "2.8.1"
-
-[[deps.Pipe]]
-git-tree-sha1 = "6842804e7867b115ca9de748a0cf6b364523c16d"
-uuid = "b98c9c47-44ae-5843-9183-064241ee97a0"
-version = "1.3.0"
+version = "2.8.3"
 
 [[deps.Pixman_jll]]
 deps = ["Artifacts", "CompilerSupportLibraries_jll", "JLLWrappers", "LLVMOpenMP_jll", "Libdl"]
-git-tree-sha1 = "35621f10a7531bc8fa58f74610b1bfb70a3cfc6b"
+git-tree-sha1 = "db76b1ecd5e9715f3d043cec13b2ec93ce015d53"
 uuid = "30392449-352a-5448-841d-b1acce4e97dc"
-version = "0.43.4+0"
+version = "0.44.2+0"
 
 [[deps.Pkg]]
 deps = ["Artifacts", "Dates", "Downloads", "FileWatching", "LibGit2", "Libdl", "Logging", "Markdown", "Printf", "Random", "SHA", "TOML", "Tar", "UUIDs", "p7zip_jll"]
@@ -1796,9 +2590,13 @@ weakdeps = ["REPL"]
 
 [[deps.PlanePolygons]]
 deps = ["LinearAlgebra", "StaticArrays"]
-git-tree-sha1 = "e9878600fe1816869230827073dd25eb0793f9a0"
+git-tree-sha1 = "943170aca816b869b0f965e494ab346bad3e3631"
 uuid = "f937978b-597e-4162-b50e-ad07b6cf7ab2"
-version = "0.1.4"
+version = "0.1.12"
+weakdeps = ["Mooncake"]
+
+    [deps.PlanePolygons.extensions]
+    MooncakeExt = "Mooncake"
 
 [[deps.PlotThemes]]
 deps = ["PlotUtils", "Statistics"]
@@ -1814,9 +2612,9 @@ version = "1.4.3"
 
 [[deps.Plots]]
 deps = ["Base64", "Contour", "Dates", "Downloads", "FFMPEG", "FixedPointNumbers", "GR", "JLFzf", "JSON", "LaTeXStrings", "Latexify", "LinearAlgebra", "Measures", "NaNMath", "Pkg", "PlotThemes", "PlotUtils", "PrecompileTools", "Printf", "REPL", "Random", "RecipesBase", "RecipesPipeline", "Reexport", "RelocatableFolders", "Requires", "Scratch", "Showoff", "SparseArrays", "Statistics", "StatsBase", "TOML", "UUIDs", "UnicodeFun", "UnitfulLatexify", "Unzip"]
-git-tree-sha1 = "dae01f8c2e069a683d3a6e17bbae5070ab94786f"
+git-tree-sha1 = "809ba625a00c605f8d00cd2a9ae19ce34fc24d68"
 uuid = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
-version = "1.40.9"
+version = "1.40.13"
 
     [deps.Plots.extensions]
     FileIOExt = "FileIO"
@@ -1834,9 +2632,9 @@ version = "1.40.9"
 
 [[deps.PlutoUI]]
 deps = ["AbstractPlutoDingetjes", "Base64", "ColorTypes", "Dates", "FixedPointNumbers", "Hyperscript", "HypertextLiteral", "IOCapture", "InteractiveUtils", "JSON", "Logging", "MIMEs", "Markdown", "Random", "Reexport", "URIs", "UUIDs"]
-git-tree-sha1 = "7e71a55b87222942f0f9337be62e26b1f103d3e4"
+git-tree-sha1 = "d3de2694b52a01ce61a036f18ea9c0f61c4a9230"
 uuid = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
-version = "0.7.61"
+version = "0.7.62"
 
 [[deps.PrecompileTools]]
 deps = ["Preferences"]
@@ -1935,9 +2733,9 @@ version = "1.0.1"
 
 [[deps.Requires]]
 deps = ["UUIDs"]
-git-tree-sha1 = "838a3a4188e2ded87a4f9f184b4b0d78a1e91cb7"
+git-tree-sha1 = "62389eeff14780bfe55195b7204c0d8738436d64"
 uuid = "ae029012-a4dd-5104-9daa-d747884805df"
-version = "1.3.0"
+version = "1.3.1"
 
 [[deps.SHA]]
 uuid = "ea8e919c-243c-51af-8825-aaa63cd721ce"
@@ -1952,12 +2750,6 @@ version = "1.2.1"
 [[deps.Serialization]]
 uuid = "9e88b42a-f829-5b0c-bbe9-9e923198166b"
 version = "1.11.0"
-
-[[deps.Setfield]]
-deps = ["ConstructionBase", "Future", "MacroTools", "StaticArraysCore"]
-git-tree-sha1 = "e2cc6d8c88613c05e1defb55170bf5ff211fbeac"
-uuid = "efcf1570-3423-57d1-acb7-fd33fddbac46"
-version = "1.1.1"
 
 [[deps.SharedArrays]]
 deps = ["Distributed", "Mmap", "Random", "Serialization"]
@@ -2010,9 +2802,9 @@ version = "0.1.2"
 
 [[deps.SpecialFunctions]]
 deps = ["IrrationalConstants", "LogExpFunctions", "OpenLibm_jll", "OpenSpecFun_jll"]
-git-tree-sha1 = "64cca0c26b4f31ba18f13f6c12af7c85f478cfde"
+git-tree-sha1 = "41852b8679f78c8d8961eeadc8f62cef861a52e3"
 uuid = "276daf66-3868-5448-9aa4-cd146d93841b"
-version = "2.5.0"
+version = "2.5.1"
 weakdeps = ["ChainRulesCore"]
 
     [deps.SpecialFunctions.extensions]
@@ -2020,15 +2812,15 @@ weakdeps = ["ChainRulesCore"]
 
 [[deps.StableRNGs]]
 deps = ["Random"]
-git-tree-sha1 = "83e6cce8324d49dfaf9ef059227f91ed4441a8e5"
+git-tree-sha1 = "95af145932c2ed859b63329952ce8d633719f091"
 uuid = "860ef19b-820b-49d6-a774-d7a799459cd3"
-version = "1.0.2"
+version = "1.0.3"
 
 [[deps.StaticArrays]]
 deps = ["LinearAlgebra", "PrecompileTools", "Random", "StaticArraysCore"]
-git-tree-sha1 = "02c8bd479d26dbeff8a7eb1d77edfc10dacabc01"
+git-tree-sha1 = "0feb6b9031bd5c51f9072393eb5ab3efd31bf9e4"
 uuid = "90137ffa-7385-5640-81b9-e52037218182"
-version = "1.9.11"
+version = "1.9.13"
 weakdeps = ["ChainRulesCore", "Statistics"]
 
     [deps.StaticArrays.extensions]
@@ -2058,15 +2850,15 @@ version = "1.7.0"
 
 [[deps.StatsBase]]
 deps = ["AliasTables", "DataAPI", "DataStructures", "LinearAlgebra", "LogExpFunctions", "Missings", "Printf", "Random", "SortingAlgorithms", "SparseArrays", "Statistics", "StatsAPI"]
-git-tree-sha1 = "29321314c920c26684834965ec2ce0dacc9cf8e5"
+git-tree-sha1 = "b81c5035922cc89c2d9523afc6c54be512411466"
 uuid = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
-version = "0.34.4"
+version = "0.34.5"
 
 [[deps.StructArrays]]
 deps = ["ConstructionBase", "DataAPI", "Tables"]
-git-tree-sha1 = "5a3a31c41e15a1e042d60f2f4942adccba05d3c9"
+git-tree-sha1 = "8ad2e38cbb812e29348719cc63580ec1dfeb9de4"
 uuid = "09ab397b-f2b6-538f-b94a-2f83cf4a842a"
-version = "0.7.0"
+version = "0.7.1"
 
     [deps.StructArrays.extensions]
     StructArraysAdaptExt = "Adapt"
@@ -2158,9 +2950,9 @@ version = "0.3.8"
     Tracker = "9f7883ad-71c0-57eb-9f7f-b5c9e6d3789c"
 
 [[deps.URIs]]
-git-tree-sha1 = "67db6cc7b3821e19ebe75791a9dd19c9b1188f2b"
+git-tree-sha1 = "cbbebadbcc76c5ca1cc4b4f3b0614b3e603b5000"
 uuid = "5c2747f8-b7ea-4ff2-ba2e-563bfd36b1d4"
-version = "1.5.1"
+version = "1.5.2"
 
 [[deps.UUIDs]]
 deps = ["Random", "SHA"]
@@ -2179,9 +2971,9 @@ version = "0.4.1"
 
 [[deps.Unitful]]
 deps = ["Dates", "LinearAlgebra", "Random"]
-git-tree-sha1 = "c0667a8e676c53d390a09dc6870b3d8d6650e2bf"
+git-tree-sha1 = "d62610ec45e4efeabf7032d67de2ffdea8344bed"
 uuid = "1986cc42-f94f-5a68-af5c-568840ba703d"
-version = "1.22.0"
+version = "1.22.1"
 weakdeps = ["ConstructionBase", "InverseFunctions"]
 
     [deps.Unitful.extensions]
@@ -2231,111 +3023,99 @@ version = "1.0.0"
 
 [[deps.XML2_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Libiconv_jll", "Zlib_jll"]
-git-tree-sha1 = "a2fccc6559132927d4c5dc183e3e01048c6dcbd6"
+git-tree-sha1 = "b8b243e47228b4a3877f1dd6aee0c5d56db7fcf4"
 uuid = "02c8fc9c-b97f-50b9-bbe4-9be30ff0a78a"
-version = "2.13.5+0"
-
-[[deps.XSLT_jll]]
-deps = ["Artifacts", "JLLWrappers", "Libdl", "Libgcrypt_jll", "Libgpg_error_jll", "Libiconv_jll", "XML2_jll", "Zlib_jll"]
-git-tree-sha1 = "7d1671acbe47ac88e981868a078bd6b4e27c5191"
-uuid = "aed1982a-8fda-507f-9586-7b0439959a61"
-version = "1.1.42+0"
+version = "2.13.6+1"
 
 [[deps.XZ_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl"]
-git-tree-sha1 = "56c6604ec8b2d82cc4cfe01aa03b00426aac7e1f"
+git-tree-sha1 = "fee71455b0aaa3440dfdd54a9a36ccef829be7d4"
 uuid = "ffd25f8a-64ca-5728-b0f7-c24cf3aae800"
-version = "5.6.4+1"
+version = "5.8.1+0"
 
 [[deps.Xorg_libICE_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl"]
-git-tree-sha1 = "326b4fea307b0b39892b3e85fa451692eda8d46c"
+git-tree-sha1 = "a3ea76ee3f4facd7a64684f9af25310825ee3668"
 uuid = "f67eecfb-183a-506d-b269-f58e52b52d7c"
-version = "1.1.1+0"
+version = "1.1.2+0"
 
 [[deps.Xorg_libSM_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Xorg_libICE_jll"]
-git-tree-sha1 = "3796722887072218eabafb494a13c963209754ce"
+git-tree-sha1 = "9c7ad99c629a44f81e7799eb05ec2746abb5d588"
 uuid = "c834827a-8449-5923-a945-d239c165b7dd"
-version = "1.2.4+0"
+version = "1.2.6+0"
 
 [[deps.Xorg_libX11_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Xorg_libxcb_jll", "Xorg_xtrans_jll"]
-git-tree-sha1 = "9dafcee1d24c4f024e7edc92603cedba72118283"
+git-tree-sha1 = "b5899b25d17bf1889d25906fb9deed5da0c15b3b"
 uuid = "4f6342f7-b3d2-589e-9d20-edeb45f2b2bc"
-version = "1.8.6+3"
+version = "1.8.12+0"
 
 [[deps.Xorg_libXau_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl"]
-git-tree-sha1 = "e9216fdcd8514b7072b43653874fd688e4c6c003"
+git-tree-sha1 = "aa1261ebbac3ccc8d16558ae6799524c450ed16b"
 uuid = "0c0b7dd1-d40b-584c-a123-a41640f87eec"
-version = "1.0.12+0"
+version = "1.0.13+0"
 
 [[deps.Xorg_libXcursor_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Xorg_libXfixes_jll", "Xorg_libXrender_jll"]
-git-tree-sha1 = "807c226eaf3651e7b2c468f687ac788291f9a89b"
+git-tree-sha1 = "6c74ca84bbabc18c4547014765d194ff0b4dc9da"
 uuid = "935fb764-8cf2-53bf-bb30-45bb1f8bf724"
-version = "1.2.3+0"
+version = "1.2.4+0"
 
 [[deps.Xorg_libXdmcp_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl"]
-git-tree-sha1 = "89799ae67c17caa5b3b5a19b8469eeee474377db"
+git-tree-sha1 = "52858d64353db33a56e13c341d7bf44cd0d7b309"
 uuid = "a3789734-cfe1-5b06-b2d0-1dd0d9d62d05"
-version = "1.1.5+0"
+version = "1.1.6+0"
 
 [[deps.Xorg_libXext_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Xorg_libX11_jll"]
-git-tree-sha1 = "d7155fea91a4123ef59f42c4afb5ab3b4ca95058"
+git-tree-sha1 = "a4c0ee07ad36bf8bbce1c3bb52d21fb1e0b987fb"
 uuid = "1082639a-0dae-5f34-9b06-72781eeb8cb3"
-version = "1.3.6+3"
+version = "1.3.7+0"
 
 [[deps.Xorg_libXfixes_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Xorg_libX11_jll"]
-git-tree-sha1 = "6fcc21d5aea1a0b7cce6cab3e62246abd1949b86"
+git-tree-sha1 = "9caba99d38404b285db8801d5c45ef4f4f425a6d"
 uuid = "d091e8ba-531a-589c-9de9-94069b037ed8"
-version = "6.0.0+0"
+version = "6.0.1+0"
 
 [[deps.Xorg_libXi_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Xorg_libXext_jll", "Xorg_libXfixes_jll"]
-git-tree-sha1 = "984b313b049c89739075b8e2a94407076de17449"
+git-tree-sha1 = "a376af5c7ae60d29825164db40787f15c80c7c54"
 uuid = "a51aa0fd-4e3c-5386-b890-e753decda492"
-version = "1.8.2+0"
+version = "1.8.3+0"
 
 [[deps.Xorg_libXinerama_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Xorg_libXext_jll"]
-git-tree-sha1 = "a1a7eaf6c3b5b05cb903e35e8372049b107ac729"
+git-tree-sha1 = "a5bc75478d323358a90dc36766f3c99ba7feb024"
 uuid = "d1454406-59df-5ea1-beac-c340f2130bc3"
-version = "1.1.5+0"
+version = "1.1.6+0"
 
 [[deps.Xorg_libXrandr_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Xorg_libXext_jll", "Xorg_libXrender_jll"]
-git-tree-sha1 = "b6f664b7b2f6a39689d822a6300b14df4668f0f4"
+git-tree-sha1 = "aff463c82a773cb86061bce8d53a0d976854923e"
 uuid = "ec84b674-ba8e-5d96-8ba1-2a689ba10484"
-version = "1.5.4+0"
+version = "1.5.5+0"
 
 [[deps.Xorg_libXrender_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Xorg_libX11_jll"]
-git-tree-sha1 = "a490c6212a0e90d2d55111ac956f7c4fa9c277a6"
+git-tree-sha1 = "7ed9347888fac59a618302ee38216dd0379c480d"
 uuid = "ea2f1a96-1ddc-540d-b46f-429655e07cfa"
-version = "0.9.11+1"
-
-[[deps.Xorg_libpthread_stubs_jll]]
-deps = ["Artifacts", "JLLWrappers", "Libdl"]
-git-tree-sha1 = "c57201109a9e4c0585b208bb408bc41d205ac4e9"
-uuid = "14d82f49-176c-5ed1-bb49-ad3f5cbd8c74"
-version = "0.1.2+0"
+version = "0.9.12+0"
 
 [[deps.Xorg_libxcb_jll]]
-deps = ["Artifacts", "JLLWrappers", "Libdl", "XSLT_jll", "Xorg_libXau_jll", "Xorg_libXdmcp_jll", "Xorg_libpthread_stubs_jll"]
-git-tree-sha1 = "1a74296303b6524a0472a8cb12d3d87a78eb3612"
+deps = ["Artifacts", "JLLWrappers", "Libdl", "Xorg_libXau_jll", "Xorg_libXdmcp_jll"]
+git-tree-sha1 = "bfcaf7ec088eaba362093393fe11aa141fa15422"
 uuid = "c7cfdc94-dc32-55de-ac96-5a1b8d977c5b"
-version = "1.17.0+3"
+version = "1.17.1+0"
 
 [[deps.Xorg_libxkbfile_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Xorg_libX11_jll"]
-git-tree-sha1 = "dbc53e4cf7701c6c7047c51e17d6e64df55dca94"
+git-tree-sha1 = "e3150c7400c41e207012b41659591f083f3ef795"
 uuid = "cc61e674-0454-545c-8b26-ed2c68acab7a"
-version = "1.1.2+1"
+version = "1.1.3+0"
 
 [[deps.Xorg_xcb_util_cursor_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Xorg_xcb_util_image_jll", "Xorg_xcb_util_jll", "Xorg_xcb_util_renderutil_jll"]
@@ -2375,21 +3155,21 @@ version = "0.4.1+1"
 
 [[deps.Xorg_xkbcomp_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Xorg_libxkbfile_jll"]
-git-tree-sha1 = "ab2221d309eda71020cdda67a973aa582aa85d69"
+git-tree-sha1 = "801a858fc9fb90c11ffddee1801bb06a738bda9b"
 uuid = "35661453-b289-5fab-8a00-3d9160c6a3a4"
-version = "1.4.6+1"
+version = "1.4.7+0"
 
 [[deps.Xorg_xkeyboard_config_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Xorg_xkbcomp_jll"]
-git-tree-sha1 = "691634e5453ad362044e2ad653e79f3ee3bb98c3"
+git-tree-sha1 = "00af7ebdc563c9217ecc67776d1bbf037dbcebf4"
 uuid = "33bec58e-1273-512f-9401-5d533626f822"
-version = "2.39.0+0"
+version = "2.44.0+0"
 
 [[deps.Xorg_xtrans_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl"]
-git-tree-sha1 = "6dba04dbfb72ae3ebe5418ba33d087ba8aa8cb00"
+git-tree-sha1 = "a63799ff68005991f9d9491b6e95bd3478d783cb"
 uuid = "c5fb5394-a638-5e4d-96e5-b29de1b5cf10"
-version = "1.5.1+0"
+version = "1.6.0+0"
 
 [[deps.Zlib_jll]]
 deps = ["Libdl"]
@@ -2398,9 +3178,9 @@ version = "1.2.13+1"
 
 [[deps.Zstd_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl"]
-git-tree-sha1 = "622cf78670d067c738667aaa96c553430b65e269"
+git-tree-sha1 = "446b23e73536f84e8037f5dce465e92275f6a308"
 uuid = "3161d3a3-bdf6-5164-811a-617609db77b4"
-version = "1.5.7+0"
+version = "1.5.7+1"
 
 [[deps.eudev_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg", "gperf_jll"]
@@ -2410,9 +3190,9 @@ version = "3.2.9+0"
 
 [[deps.fzf_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl"]
-git-tree-sha1 = "6e50f145003024df4f5cb96c7fce79466741d601"
+git-tree-sha1 = "b6a34e0e0960190ac2a4363a1bd003504772d631"
 uuid = "214eeab7-80f7-51ab-84ad-2988db7cef09"
-version = "0.56.3+0"
+version = "0.61.1+0"
 
 [[deps.gperf_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
@@ -2463,9 +3243,9 @@ version = "1.18.0+0"
 
 [[deps.libpng_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Zlib_jll"]
-git-tree-sha1 = "055a96774f383318750a1a5e10fd4151f04c29c5"
+git-tree-sha1 = "002748401f7b520273e2b506f61cab95d4701ccf"
 uuid = "b53b4c65-9356-5827-b1ea-8c7a1a84506f"
-version = "1.6.46+0"
+version = "1.6.48+0"
 
 [[deps.libvorbis_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Ogg_jll", "Pkg"]
@@ -2502,21 +3282,25 @@ uuid = "dfaa095f-4041-5dcd-9319-2fabd8486b76"
 version = "3.5.0+0"
 
 [[deps.xkbcommon_jll]]
-deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg", "Wayland_jll", "Wayland_protocols_jll", "Xorg_libxcb_jll", "Xorg_xkeyboard_config_jll"]
-git-tree-sha1 = "63406453ed9b33a0df95d570816d5366c92b7809"
+deps = ["Artifacts", "JLLWrappers", "Libdl", "Wayland_jll", "Wayland_protocols_jll", "Xorg_libxcb_jll", "Xorg_xkeyboard_config_jll"]
+git-tree-sha1 = "c950ae0a3577aec97bfccf3381f66666bc416729"
 uuid = "d8fb68d0-12a3-5cfd-a85a-d49703b185fd"
-version = "1.4.1+2"
+version = "1.8.1+0"
 """
 
 # ╔═╡ Cell order:
 # ╠═6f1542ea-a747-11ef-2466-fd7f67d1ef2c
+# ╠═2e9dafda-a95c-4277-9a7c-bc80d97792f0
 # ╠═f5fd0c28-99a8-4c44-a5e4-d7b24e43482c
 # ╟─e7001548-a4b4-4709-b10c-0633a11bd624
 # ╟─c87b546e-8796-44bf-868c-b2d3ad340aa1
 # ╠═4267b459-7eb7-4678-8f06-7b9deab1f830
+# ╟─2716b9b5-07fd-4175-a83e-22be3810e4b3
 # ╠═afc11d27-1958-49ba-adfa-237ba7bbd186
+# ╟─100a1f91-120b-43a4-8486-8f9e64b8b71e
 # ╟─3fe1be0d-148a-43f2-b0a5-bb177d1c041d
 # ╠═0df888bd-003e-4b49-9c2a-c28a7ccc33d2
+# ╟─136ab703-ae33-4e46-a883-0ed159360361
 # ╟─a9d31e2d-fc4b-4fa5-9015-eb2ac2a3df5d
 # ╟─c1a81ef6-5e0f-4ad5-8e73-e9e7f09cefa6
 # ╟─e55363f4-5d1d-4837-a30f-80b0b9ae7a8e
@@ -2525,15 +3309,14 @@ version = "1.4.1+2"
 # ╟─33e635b3-7c63-4b91-a1f2-49da93307f29
 # ╠═4dc7eebf-48cc-4474-aef0-0cabf1d8eda5
 # ╟─8bd1c644-1690-46cf-ac80-60654fc6d8c0
+# ╟─893ec2c8-88e8-4d72-aab7-88a1efa30b47
 # ╠═f6147284-02ec-42dd-9c2f-a1a7534ae9fa
 # ╟─d14c3b81-0f19-4207-8e67-13c09fd7636a
-# ╟─893ec2c8-88e8-4d72-aab7-88a1efa30b47
 # ╠═cc53f78e-62f5-4bf8-bcb3-5aa72c5fde99
 # ╠═2e3b9675-4b66-4623-b0c4-01acdf4e158c
 # ╟─d5db89be-7526-4e6d-9dec-441f09606a04
-# ╟─4e9fb962-cfaa-4650-b50e-2a6245d4bfb4
+# ╠═4e9fb962-cfaa-4650-b50e-2a6245d4bfb4
 # ╠═bcdd4862-ac68-4392-94e2-30b1456d411a
-# ╟─7604c406-c0a3-45bb-9109-389c7a47b8b3
 # ╟─e2bdc923-53e6-4a7d-9621-4d3b356a6e41
 # ╟─44ff921b-09d0-42a4-8852-e911212924f9
 # ╟─4f8b4b5d-58de-4197-a676-4090912225a1
@@ -2556,7 +3339,8 @@ version = "1.4.1+2"
 # ╟─e98df040-ac22-4184-95dd-a8635ab72af6
 # ╠═31009964-3f32-4f97-8e4a-2b95be0f0037
 # ╠═4d202323-e1a9-4b24-b98e-7d17a6cc144f
-# ╟─95947312-342f-44b3-90ca-bd8ad8204e18
+# ╠═b34a8bfd-5aba-459e-bf05-47d0225b7075
+# ╠═95947312-342f-44b3-90ca-bd8ad8204e18
 # ╟─eb5a2dc6-9c7e-4099-a564-15f1cec11caa
 # ╟─9c601619-aaf1-4f3f-b2e2-10422d8ac640
 # ╟─e0a934d6-3962-46d5-b172-fb970a537cc0
@@ -2564,39 +3348,94 @@ version = "1.4.1+2"
 # ╠═be8ba02d-0d31-4720-9e39-595b549814cc
 # ╟─a1dc855f-0b24-4373-ba00-946719d38d95
 # ╟─93043797-66d1-44c3-b8bb-e17deac70cfa
-# ╟─7468fbf2-aa57-4505-934c-baa4dcb646fc
+# ╠═7468fbf2-aa57-4505-934c-baa4dcb646fc
+# ╟─50a46d6d-deb7-4ad0-867a-4429bf55632f
+# ╟─766b440b-0001-4037-8959-c0b7f04d999e
+# ╟─d44322b1-c67f-4ee8-b168-abac75fb42a1
 # ╟─2f088a0c-165e-47f9-aaeb-6e4ab31c9d26
 # ╟─24fa22e6-1cd0-4bcb-bd6d-5244037e58e2
 # ╟─cd312803-3819-4451-887b-ce2b53bb6e1b
-# ╟─ac412980-1013-450f-bb23-0dc7c2b3f199
-# ╠═d44322b1-c67f-4ee8-b168-abac75fb42a1
-# ╟─2ae618e1-89a8-45ac-ae60-77ab24ec3b56
-# ╟─6f034bbe-bd04-4be4-af53-b53b3ec17942
-# ╟─63edc638-b7aa-4a63-8c93-e860dd4d58f5
-# ╟─7c394fb3-a75a-4bfd-a781-f31845569693
-# ╠═729ebc48-bba1-4858-8369-fcee9f133ee0
-# ╠═5cffaaf5-9a5e-4839-a056-30e238308c51
-# ╠═f252b8d0-f067-468b-beb3-ff6ecaeca722
-# ╠═571b1ee7-bb07-4b30-9870-fbd18349a2ef
-# ╠═80cde447-282a-41e5-812f-8eac044b0c15
-# ╠═b7b83ec1-2a14-44cf-8f37-ec7272cc0807
-# ╠═5d9e020f-e35b-4325-8cc1-e2a2b3c246c9
-# ╠═f30619a3-5344-4e81-a4b5-6a11100cd056
-# ╠═5d77d782-2def-4b3a-ab3a-118bf8e96b6b
-# ╟─0e0a049b-e2c3-4fe9-8fb8-186cdeb60485
+# ╟─7c8cde49-b9c6-4889-a328-bf46b6f82a01
+# ╠═ac412980-1013-450f-bb23-0dc7c2b3f199
+# ╟─0d6ae7cf-edae-48f6-a257-6223563b7c76
+# ╟─2041d463-5382-4c38-bf52-23d22820ac59
+# ╟─bfe8cb7d-8e5e-4dda-88cb-356b34017335
+# ╟─dea032e2-bf23-42da-8dac-d3368c2bdec6
+# ╟─fc646016-a30e-4c60-a895-2dde771f79cb
+# ╟─54ed2abb-81bb-416c-b7be-1125e41622f5
 # ╟─c6e3873e-7fef-4c38-bf3f-de71f866057f
+# ╟─435887e7-1870-4677-a09d-020be5761039
+# ╟─729ebc48-bba1-4858-8369-fcee9f133ee0
+# ╟─5cffaaf5-9a5e-4839-a056-30e238308c51
+# ╟─f252b8d0-f067-468b-beb3-ff6ecaeca722
+# ╟─571b1ee7-bb07-4b30-9870-fbd18349a2ef
+# ╟─80cde447-282a-41e5-812f-8eac044b0c15
+# ╟─48a2b845-c466-4bbc-aa16-46a95ed7be35
+# ╟─f30619a3-5344-4e81-a4b5-6a11100cd056
+# ╟─6c2b1a68-dd43-4449-9dc7-4b7849081cc3
+# ╠═37eb63be-507a-475f-a6f6-8606917b8561
+# ╟─5d9e020f-e35b-4325-8cc1-e2a2b3c246c9
+# ╟─d87e0bb8-317e-4d48-8008-a7071c74ab31
+# ╟─5d77d782-2def-4b3a-ab3a-118bf8e96b6b
 # ╟─60b9cd61-ed84-4f76-8bc8-a50672b83186
+# ╟─7b512325-5b2e-492b-9194-fa2dea3af333
+# ╟─008aaf79-dd82-4559-b1a6-dd49c0985975
 # ╠═f01eeab6-4e7a-469e-92f6-d0e992e3220e
-# ╠═7b512325-5b2e-492b-9194-fa2dea3af333
-# ╟─3a8cd7e2-fae9-4e70-8c92-004b17352506
+# ╟─6aaf12a0-c2d9-48ab-9e13-94039cf95258
+# ╟─5c2db847-a2ec-4d36-bdf7-7ad2393f67f3
 # ╠═0679a676-57fa-45ee-846d-0a8961562db3
+# ╟─d19fff76-e645-4d9d-9989-50019b6356ad
+# ╟─0e0a049b-e2c3-4fe9-8fb8-186cdeb60485
+# ╠═fd9b689f-275c-4c91-9b6c-4e63c68d6ab2
+# ╠═ead8c1a5-9f4e-4d92-b4ca-1650ad34bdca
 # ╟─7e9ac0e4-37d7-41d0-98a7-7284634cb404
-# ╠═0458a5a2-f22e-410d-adc3-39057643021a
-# ╠═ce2a39d7-dbc2-4508-8abb-daae1016a1a0
-# ╠═1e84fb77-03cd-4d07-abe8-56e583272f10
+# ╠═1e40e0ee-341c-4e2d-ba79-a724b784db95
+# ╟─3a8cd7e2-fae9-4e70-8c92-004b17352506
+# ╟─b88373c7-fe33-4373-b4ea-036688c0114c
+# ╠═9877d4e8-3d8e-401e-adb1-6ccb47863466
+# ╠═e4b54bd3-5fa9-4291-b2a4-6b10c494ce34
+# ╠═0a3a069c-e72c-4a47-9a11-00f049dc137c
+# ╠═8a76792c-6189-4d39-9147-5a7ea9b074f9
+# ╠═fd73e7b8-5887-4fee-9d8c-c8df45e54d11
+# ╠═caa666e2-73fe-435e-a136-dc7fdcff03eb
+# ╠═63c1d6d9-ad64-4074-83c4-40b5df0e0b1f
+# ╠═aa059fd7-857c-4c51-af80-aaf1b95fd810
+# ╠═268fb334-afe6-438f-b420-7e3277390690
+# ╟─cec776ee-f81d-4457-8555-24eaf80e4cca
+# ╟─df5a5737-41e7-447d-ad5f-ebdbf07996ca
+# ╠═3c835380-3580-4881-a0ad-e466eb99fcb8
+# ╠═f3209f08-0d0c-4810-bf9b-86f2323799b4
+# ╠═6212612b-9486-4e3d-a325-7b862078b63c
+# ╠═282e04e2-e96e-482e-95a9-8df913bc592a
+# ╠═4f79b51b-459a-46e1-a6d0-257ce08b029e
+# ╠═03f640b6-851c-4c57-9ff8-5549415b558b
+# ╠═0db3efc3-94c1-43a3-b3b9-4fa2b9000c6b
+# ╠═7090f3d7-2db2-4e74-ae8b-b8ca1d0e2d5c
+# ╠═3ba4fd9d-822a-4a33-9116-10533a4e7281
+# ╠═e76d6a56-e88e-42c8-9148-d7d827dd58b9
+# ╠═44de7771-70d7-4b69-b1ec-cb5cd71071da
+# ╠═5dd97bd2-dbd9-4aff-96a3-581f0ea9a94e
+# ╠═5383d7d3-b89e-4990-93d3-5548f3675738
+# ╠═ce7cb133-f7ce-496f-84c3-1a1974ea820e
+# ╠═5194d358-b195-462b-b34b-5ccd95c9d0de
+# ╠═888b0fb7-2eb4-4201-8c24-e29bd98479eb
+# ╠═d32ec517-bff1-4f07-9a92-b447f1313d91
+# ╠═aa61b88c-417d-4598-96bb-3a1cb92fdb18
+# ╠═6906c857-88ba-4914-8554-c721ad7e87fe
+# ╠═654863a5-9fc5-461a-b5ee-a2ffb2379888
+# ╠═d03539c5-b80d-4d43-adcd-134147468052
+# ╠═3b8e7b5f-c262-4820-aaba-4f2d763fc5c1
+# ╠═6822601e-f40a-4fa1-a0f8-a8bb09809549
 # ╟─1f174634-812d-4704-8e82-36935e8f0cb5
 # ╟─8f36cc9d-c2c5-4bea-9dc7-e5412a2960f9
+# ╠═48148c30-486b-4952-9c5f-aea722ff74cf
 # ╠═5b7a3783-ef40-468f-93ac-91cb46929bd6
 # ╠═74525445-19f6-471f-878e-a60f07ba9f01
+# ╠═d8bfb40f-f304-41b0-9543-a4b10e95d182
+# ╠═2c0133c2-35d5-4cfd-b19d-dfb08712479f
+# ╠═0ef2267a-2116-469c-9b50-9b85be4ccc45
+# ╠═3750e0d5-5ca3-447a-bbf5-add15a4a4e9b
+# ╠═a1d7888c-34a2-425b-a8e4-2329b6400901
+# ╟─68650137-22f6-4c1a-814b-f9b9c81e20ca
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002
