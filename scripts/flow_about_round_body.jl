@@ -21,7 +21,9 @@ x0 = 1.0u"m"
 a0 = speed_of_sound(ambient, DRY_AIR)
 ρ0 = density(ambient)
 scale = EulerEqnsScaling(x0, ρ0, a0)
-@show scale
+
+@info "Current nondimensionalization scale is:" x_0 = length_scale(scale) v_0 =
+    velocity_scale(scale) ρ_0 = density_scale(scale)
 
 bcs = (
     ExtrapolateToPhantom(), # north 
@@ -30,42 +32,18 @@ bcs = (
     ExtrapolateToPhantom(), # west
     StrongWall(), # walls
 )
-bounds = ((-1.5, 0.5), (0.0, 2.0))
 
-just_circle = [CircularObstacle((0.0, 0.0), 0.75)]
+bounds = ((-1.5, 0.5), (0.0, 2.0))
 probe = [
     CircularObstacle((0.0, 0.0), 0.75),
     RectangularObstacle(SVector(1.0, 0.0), SVector(2.0, 1.5)),
 ]
-ncells = (300, 450)
-
-##
-
-# Euler2D.simulate_euler_equations_cells(
-#     u0,
-#     starting_parameters,
-#     1.0,
-#     bcs,
-#     just_circle,
-#     bounds,
-#     ncells;
-#     mode = Euler2D.PRIMAL,
-#     gas = DRY_AIR,
-#     scale = scale,
-#     info_frequency = 20,
-#     write_frequency = 10,
-#     max_tsteps = 1000,
-#     output_tag = "circular_obstacle_primal",
-#     output_channel_size = 2,
-#     tasks_per_axis = 2,
-# );
-
-##
+ncells = (500, 500)
 
 Euler2D.simulate_euler_equations_cells(
     u0,
     starting_parameters,
-    1.0,
+    20.0,
     bcs,
     probe,
     bounds,
@@ -74,14 +52,9 @@ Euler2D.simulate_euler_equations_cells(
     gas = DRY_AIR,
     scale = scale,
     info_frequency = 10,
-    write_frequency = 10,
+    write_frequency = 20,
     max_tsteps = 1000,
-    output_tag = "circular_obstacle_tangent",
+    output_tag = "probe_obstacle_tangent_very_long_time",
     output_channel_size = 2,
     tasks_per_axis = 2,
 );
-
-##
-
-# primal = load_cell_sim("data/circular_obstacle_primal.celltape");
-# tangent = load_cell_sim("data/circular_obstacle_tangent.celltape");
