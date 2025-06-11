@@ -9,14 +9,15 @@ end Euler2D
 # what do we want out of Base?
 using Base.Threads: nthreads, @spawn
 
-using Accessors
+using Accessors: @set, @reset
 using Dates
 using ForwardDiff
 using LinearAlgebra
-using Tullio
+using OhMyThreads: tforeach, tmap
 using ShockwaveProperties
 using ShockwaveProperties: MomentumDensity, EnergyDensity
 using StaticArrays
+using Tullio
 using Unitful
 using Unitful: 𝐋, 𝐓, 𝐌, 𝚯, 𝐍
 using Unitful: @derived_dimension, Density, Pressure, Velocity
@@ -26,7 +27,7 @@ include("nondimensionalization.jl")
 include("transport.jl")
 include("boundary_conditions.jl")
 include("riemann_solver/approximate_riemann_solver.jl")
-include("riemann_solver/exact_riemann_solver.jl")
+#include("riemann_solver/exact_riemann_solver.jl")
 include("array_simulations/fvm.jl")
 include("array_simulations/array_simulations.jl")
 include("cell_simulations/obstacle.jl")
@@ -64,7 +65,7 @@ export load_euler_sim
 
 # CellSim methods
 export CellBasedEulerSim, PrimalQuadCell
-export inward_normals, outward_normals, cprops_dtype
+export inward_normals, outward_normals
 export Obstacle, TriangularObstacle, RectangularObstacle, CircularObstacle
 export point_inside
 export load_cell_sim
