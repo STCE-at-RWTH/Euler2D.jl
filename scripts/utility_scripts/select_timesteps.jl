@@ -1,3 +1,4 @@
+#! /usr/bin/env julia
 # requires Julia 1.11
 
 using Euler2D
