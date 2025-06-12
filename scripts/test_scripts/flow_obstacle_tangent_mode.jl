@@ -22,7 +22,7 @@ bounds = ((-2.0, 0.0), (-1.5, 1.5))
 just_circle = [CircularObstacle((0.0, 0.0), 0.75)]
 ncells = (50, 75)
 
-starting_parameters = SVector(0.662, 4.0, 220.0)
+starting_parameters = SVector(0.662, 4.0, 220.0, 0.75)
 
 function u0(x, p)
     pp = PrimitiveProps(p[1], SVector(p[2], 0.0), p[3])

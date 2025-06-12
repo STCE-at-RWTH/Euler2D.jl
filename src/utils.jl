@@ -28,6 +28,11 @@ function boundary_velocity_scaling(T, dim, rev)
     end)
 end
 
+"""
+  split_svector(v)
+
+Splits the SVector `v` of length `N` into two SVectors `v[1:N÷2]` and `v[(N÷2)+1:N]`.
+"""
 function split_svector(v)
     N = length(v) ÷ 2
     M = length(v)
@@ -57,8 +62,8 @@ function flip_velocity(u::SVector{N,T}, dim) where {N,T}
     return u .* scaling
 end
 
-function flip_velocity(u::SMatrix{M, N, T, L}, dim) where {M, N, T, L}
-    scaling = SDiagonal(ntuple(i->i==1+dim ? -one(T) : one(T), M))
+function flip_velocity(u::SMatrix{M,N,T,L}, dim) where {M,N,T,L}
+    scaling = SDiagonal(ntuple(i -> i == 1 + dim ? -one(T) : one(T), M))
     return scaling * u
 end
 
@@ -102,7 +107,5 @@ function edge_points(center, extent, θ_n)
 
     # HOW DO I DO THIS
     # HOW
-    
-
 
 end

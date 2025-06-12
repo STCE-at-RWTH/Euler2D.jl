@@ -22,7 +22,7 @@ struct ConservedPropsTransport{
     F_ρE::SVector{N,U3}
 end
 
-n_space_dims(F_e::ConservedPropsTransport{N,T,U1,U2,U3}) where {N,T,U1,U2,U3} = N
+n_space_dims(::ConservedPropsTransport{N,T,U1,U2,U3}) where {N,T,U1,U2,U3} = N
 
 function transport_to_matrix(s::ConservedPropsTransport)
     return vcat(s.F_ρ', s.F_ρv, s.F_ρE')

@@ -85,12 +85,7 @@ function phantom_cell(
     return phantom
 end
 
-function phantom_cell(
-    ::StrongWall,
-    u,
-    dim,
-    gas::CaloricallyPerfectGas,
-)
+function phantom_cell(::StrongWall, u, dim, gas::CaloricallyPerfectGas)
     return flip_velocity(u, dim)
 end
 
@@ -147,7 +142,7 @@ function phantom_cell(bc::ExtrapolateToPhantom, u, dim, gas::CaloricallyPerfectG
 end
 
 function phantom_cell(
-    bc::ExtrapolateToPhantom,
+    ::ExtrapolateToPhantom,
     u::ConservedProps,
     dim,
     gas::CaloricallyPerfectGas,
