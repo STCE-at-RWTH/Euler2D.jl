@@ -6,9 +6,6 @@ module Euler2D
     read(path, String)
 end Euler2D
 
-# what do we want out of Base?
-using Base.Threads: nthreads, @spawn
-
 using Accessors: @set, @reset
 using Dates
 using ForwardDiff
@@ -23,7 +20,6 @@ using Unitful: 𝐋, 𝐓, 𝐌, 𝚯, 𝐍
 using Unitful: @derived_dimension, Density, Pressure, Velocity
 
 include("utils.jl")
-include("geometry/Geometry.jl")
 include("transport.jl")
 include("boundary_conditions.jl")
 include("riemann_solver/approximate_riemann_solver.jl")

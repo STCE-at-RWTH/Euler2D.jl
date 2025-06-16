@@ -6,26 +6,27 @@
 _diff_op(T) = SVector{3,T}(one(T), zero(T), -one(T))
 _avg_op(T) = SVector{3,T}(one(T), 2 * one(T), one(T))
 
+_sobol_X(T) = _diff_op(T) * _avg_op(T)'
+_sobol_Y(T) = _avg_op(T) * _diff_op(T)'
+
 """
     convolve_sobel(field::Matrix{T})
 
 Computes the convolution of the Sobel gradient kernel ``G_x`` and ``G_y`` with the given field.
 """
 function convolve_sobel(matrix::AbstractMatrix{T}) where {T}
-    Gy = _avg_op(T) * _diff_op(T)'
-    Gx = _diff_op(T) * _avg_op(T)'
     new_size = size(matrix) .- 2
     outX = similar(matrix, new_size)
     outY = similar(matrix, new_size)
     for i ∈ eachindex(IndexCartesian(), outX, outY)
         view_range = i:(i+CartesianIndex(2, 2))
-        outX[i] = Gx ⋅ @view(matrix[view_range])
-        outY[i] = Gy ⋅ @view(matrix[view_range])
+        outX[i] = _sobol_X(T) ⋅ @view(matrix[view_range])
+        outY[i] = _sobol_Y(T) ⋅ @view(matrix[view_range])
     end
     return outX, outY
 end
 
-gradient_direction(Gx, Gy) = atan(Gy ./ Gx)
+gradient_direction(Gx, Gy) = atan(Gy / Gx)
 
 function discretize_gradient_direction(θ)
     if -π / 8 ≤ θ < π / 8
@@ -49,7 +50,7 @@ function discretize_gradient_direction(θ)
     end
 end
 
-function gradient_grid_direction(θ)uu
+function gradient_grid_direction(θ)
     if -π / 8 ≤ θ < π / 8
         return CartesianIndex(1, 0)
     elseif π / 8 ≤ θ < 3 * π / 8
@@ -77,7 +78,7 @@ end
 Checks if the center value of `dP2_view` is a maximum in direction `θ`.
 """
 function is_edge_candidate(dP2_view, θ)
-    @assert size(dP2_view) = (3, 3)
+    @assert size(dP2_view) == (3, 3)
     grid_theta = gradient_grid_direction(θ)
     idx = CartesianIndex(2, 2)
     return dP2_view[idx+grid_theta] < dP2_view[idx] &&
