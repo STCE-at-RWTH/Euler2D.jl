@@ -480,15 +480,48 @@ function simulate_euler_equations_cells(
 end
 
 """
+  _load_tsteps_from_file
+
+Load the time steps `k ∈ tstep_range` into the provided dict and vector of times `t`.
+"""
+function _load_tsteps_from_file!(
+    cell_vals::Vector{Dict{Int,CellType}},
+    ts::Vector{T},
+    stream,
+    tstep_range,
+    n_active;
+    show_info = true,
+) where {CellType,T}
+    step_size_bytes = sizeof(T) + n_active * sizeof(CellType)
+    skip_size = vcat(0, diff(tstep_range) .- 1)
+    temp = Vector{CellType}(undef, n_active)
+    for i ∈ eachindex(tstep_range)
+        if skip_size[i] > 0
+            skip(stream, skip_size[i] * step_size_bytes)
+        end
+        ts[i] = read(stream, T)
+        if show_info
+            #@info "Reading time step at " t = ts[i] skipped = skip_size[i]
+        end
+        read!(stream, temp)
+        cell_vals[i] = Dict{Int,CellType}()
+        sizehint!(cell_vals[i], n_active)
+        for cell ∈ temp
+            cell_vals[i][cell.id] = cell
+        end
+    end
+    return nothing
+end
+
+"""
     load_cell_sim(path; T=Float64, show_info=true)
 
 Load a cell-based simulation from path, computed with data type `T`.
 Other kwargs include:
-- `density_unit = ShockwaveProperties._units_ρ`
-- `momentum_density_unit = ShockwaveProperties._units_ρv`
-- `internal_energy_density_unit = ShockwaveProperties._units_ρE`
+- `steps = :all` or `steps = ` some iterable of values
+- `show_info=true`: show metadata via `@info`
 """
-function load_cell_sim(path; T = Float64, show_info = true)
+function load_cell_sim(path; steps = :all, T = Float64, show_info = true)
     return open(path, "r") do f
         n_tsteps = read(f, Int)
         mode = read(f, EulerSimulationMode)
@@ -507,24 +540,34 @@ function load_cell_sim(path; T = Float64, show_info = true)
         end
         active_cell_ids = Array{Int,2}(undef, ncells...)
         read!(f, active_cell_ids)
-        time_steps = Vector{T}(undef, n_tsteps)
+
+        (time_steps_to_read, n_tsteps) = if steps == :all
+            1:n_tsteps, n_tsteps
+        else
+            steps, length(steps)
+        end
+
         CellDType = if mode == PRIMAL
             PrimalQuadCell{T}
         else
             TangentQuadCell{T,n_seeds,4 * n_seeds}
         end
-        cell_vals = Vector{Dict{Int,CellDType}}(undef, n_tsteps)
-        temp_cell_vals = Vector{CellDType}(undef, n_active)
-        for k = 1:n_tsteps
-            time_steps[k] = read(f, T)
-            #@info "Reading..." k t_k = time_steps[k] n_active
-            read!(f, temp_cell_vals)
-            cell_vals[k] = Dict{Int,CellDType}()
-            sizehint!(cell_vals[k], n_active)
-            for cell ∈ temp_cell_vals
-                cell_vals[k][cell.id] = cell
-            end
+
+        if show_info
+            @info "Preparing to load from file:" DType = CellDType steps =
+                time_steps_to_read
         end
+
+        time_steps = Vector{T}(undef, n_tsteps)
+        cell_vals = Vector{Dict{Int,CellDType}}(undef, n_tsteps)
+        _load_tsteps_from_file!(
+            cell_vals,
+            time_steps,
+            f,
+            time_steps_to_read,
+            n_active;
+            show_info = show_info,
+        )
 
         return CellBasedEulerSim(
             ncells,
