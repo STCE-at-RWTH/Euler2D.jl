@@ -20,6 +20,7 @@ using Unitful: 𝐋, 𝐓, 𝐌, 𝚯, 𝐍
 using Unitful: @derived_dimension, Density, Pressure, Velocity
 
 include("utils.jl")
+include("nondimensionalization.jl")
 include("transport.jl")
 include("boundary_conditions.jl")
 include("riemann_solver/approximate_riemann_solver.jl")
@@ -29,7 +30,8 @@ include("array_simulations/array_simulations.jl")
 include("cell_simulations/obstacle.jl")
 include("cell_simulations/grid.jl")
 include("cell_simulations/simulations.jl")
-include("canny_rh_filter.jl")
+include("postprocessing/finite_diffs.jl")
+include("postprocessing/canny_rh_filter.jl")
 
 const _SI_DEFAULT_SCALE = EulerEqnsScaling(1.0u"m", 1.0u"kg/m^3", 1.0u"m/s")
 

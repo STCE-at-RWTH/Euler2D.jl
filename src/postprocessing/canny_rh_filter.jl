@@ -3,7 +3,7 @@
 # Takeshi R. Fujimoto ∗, Taro Kawasaki 1, Keiichi Kitamura
 # Journal of Computational Physics, 396, pp. 264 - 279
 
-_diff_op(T) = SVector{3,T}(one(T), zero(T), -one(T))
+_diff_op(T) = SVector{3,T}(-one(T), zero(T), one(T))
 _avg_op(T) = SVector{3,T}(one(T), 2 * one(T), one(T))
 
 _sobol_X(T) = _diff_op(T) * _avg_op(T)'
@@ -14,14 +14,14 @@ _sobol_Y(T) = _avg_op(T) * _diff_op(T)'
 
 Computes the convolution of the Sobel gradient kernel ``G_x`` and ``G_y`` with the given field.
 """
-function convolve_sobel(matrix::AbstractMatrix{T}) where {T}
+function convolve_sobel(matrix)
     new_size = size(matrix) .- 2
     outX = similar(matrix, new_size)
     outY = similar(matrix, new_size)
     for i ∈ eachindex(IndexCartesian(), outX, outY)
         view_range = i:(i+CartesianIndex(2, 2))
-        outX[i] = _sobol_X(T) ⋅ @view(matrix[view_range])
-        outY[i] = _sobol_Y(T) ⋅ @view(matrix[view_range])
+        outX[i] = _sobol_X(eltype(matrix)) ⋅ @view(matrix[view_range])
+        outY[i] = _sobol_Y(eltype(matrix)) ⋅ @view(matrix[view_range])
     end
     return outX, outY
 end
@@ -80,7 +80,7 @@ Checks if the center value of `dP2_view` is a maximum in direction `θ`.
 function is_edge_candidate(dP2_view, θ)
     @assert size(dP2_view) == (3, 3)
     grid_theta = gradient_grid_direction(θ)
-    idx = CartesianIndex(2, 2)
+    const idx = CartesianIndex(2, 2)
     return dP2_view[idx+grid_theta] < dP2_view[idx] &&
            dP2_view[idx-grid_theta] < dP2_view[idx]
 end
@@ -154,7 +154,11 @@ function find_shock_in_timestep(
     Gx_overlay = @view(Gx[2:end-1, 2:end-1])
     Gy_overlay = @view(Gy[2:end-1, 2:end-1])
     id_overlay = @view(sim.cell_ids[3:end-2, 3:end-2])
-    for j ∈ eachindex(IndexCartesian(), edge_candidates, Gx_overlay, Gy_overlay, id_overlay)
+    @assert all(size(Gx_overlay) .== size(Gy_overlay)) &&
+            all(size(Gy_overlay) .== size(id_overlay)) &&
+            all(size(Gx_overlay) .== size(edge_candidates))
+    # loop over every cell and check if the candidates are shocks
+    for j ∈ eachindex(IndexCartesian(), edge_candidates)
         i = j + CartesianIndex(2, 2)
         if id_overlay[j] > 0 && edge_candidates[j]
             θ = atan(Gy_overlay[j], Gx_overlay[j])
