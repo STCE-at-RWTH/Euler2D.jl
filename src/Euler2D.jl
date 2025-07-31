@@ -64,7 +64,7 @@ export load_euler_sim
 
 # CellSim methods
 export CellBasedEulerSim, PrimalQuadCell
-export inward_normals, outward_normals, cprops_dtype
+export inward_normals, outward_normals
 export Obstacle, TriangularObstacle, RectangularObstacle, CircularObstacle
 export point_inside
 export load_cell_sim

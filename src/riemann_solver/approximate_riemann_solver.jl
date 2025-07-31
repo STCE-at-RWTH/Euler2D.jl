@@ -1,34 +1,3 @@
-# do we need the multiple eigenvalues in the middle? I do not know...
-"""
-    eigenvalues_∇F_euler(u, dims, gas)
-
-Computes the eigenvalues of the Jacobian of the Euler flux function in dimension `dim`.
-"""
-function eigenvalues_∇F_euler(u, dim, gas::CaloricallyPerfectGas)
-    ρv = select_middle(u)
-    v = ustrip.(ρv / u[1])
-    a = ustrip(speed_of_sound(u[1], ρv, u[end], gas))
-    return vcat_ρ_ρv_ρE_preserve_static(
-        v[dim] - a,
-        SVector(ntuple(Returns(v[dim]), length(v))),
-        v[dim] + a,
-    )
-end
-
-function eigenvalues_∇F_euler(
-    u::ConservedProps{N,T,Q1,Q2,Q3},
-    dim,
-    gas::CaloricallyPerfectGas,
-) where {N,T,Q1,Q2,Q3}
-    v = ustrip.(ShockwaveProperties._units_v, velocity(u))
-    a = ustrip(ShockwaveProperties._units_v, speed_of_sound(u, gas))
-    return vcat_ρ_ρv_ρE_preserve_static(
-        v[dim] - a,
-        SVector(ntuple(Returns(v[dim]), N)),
-        v[dim] + a,
-    )
-end
-
 """
     roe_parameter_vector(u, gas)
 

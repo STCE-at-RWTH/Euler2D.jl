@@ -11,6 +11,11 @@ vcat_ρ_ρv_ρE_preserve_static(u1, u2, u3) = vcat(u1, u2, u3)
 vcat_ρ_ρv_ρE_preserve_static(u1, u2::SVector{S,T}, u3) where {S,T} =
     SVector{S + 2}(u1, u2..., u3)
 
+"""
+  select_middle(u)
+
+Select the middle of a vector `u`, returning a copy of `u[2:end-1]` if `u` is an `SVector`, otherwise a view of `u[2:end-1]`.
+"""
 function select_middle(u::StaticVector{S,T}) where {S,T}
     idxs = SVector{S - 2}(ntuple(i -> i + 1, S - 2))
     return u[idxs]
