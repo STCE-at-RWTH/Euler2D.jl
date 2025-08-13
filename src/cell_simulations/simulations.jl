@@ -210,7 +210,7 @@ function pressure_field(
     for i ∈ eachindex(IndexCartesian(), csim.cell_ids)
         csim.cell_ids[i] == 0 && continue
         u = u_cells[csim.cell_ids[i]].u
-        P[i] = _pressure(u, gas)
+        P[i] = dimensionless_pressure(u, gas)
     end
     return P
 end

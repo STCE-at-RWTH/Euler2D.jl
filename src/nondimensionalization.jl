@@ -60,7 +60,7 @@ end
 """
     dimensionless_total_enthalpy_density(u_star, gas)
 
-Compute the dimensionless total enthalpy density `ρH_star` from the nondimesionalized state variable `u``
+Compute the dimensionless total enthalpy density `ρH_star` from the nondimesionalized state variable `u`.
 """
 function dimensionless_total_enthalpy_density(
     u_star::SVector{N,T},

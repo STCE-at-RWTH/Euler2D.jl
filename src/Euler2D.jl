@@ -38,6 +38,7 @@ const _SI_DEFAULT_SCALE = EulerEqnsScaling(1.0u"m", 1.0u"kg/m^3", 1.0u"m/s")
 # methods
 export F_euler
 export interface_signal_speeds, maximum_Δt
+export eigenvectors_∇F_euler, eigenvectors_∇G_euler
 export step_euler_hll!, simulate_euler_equations, simulate_euler_equations_cells
 
 # dimension stuff
