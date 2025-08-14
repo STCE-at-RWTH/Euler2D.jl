@@ -118,8 +118,8 @@ Computes the eigenvalues of the Jacobian of the Euler flux function in dimension
 """
 function eigenvalues_∇F_euler(u, dim, gas::CaloricallyPerfectGas)
     ρv = select_middle(u)
-    v = ustrip.(ρv / u[1])
-    a = ustrip(speed_of_sound(u[1], ρv, u[end], gas))
+    v = ρv / u[1]
+    a = dimensionless_speed_of_sound(u, gas) 
     return vcat_ρ_ρv_ρE_preserve_static(
         v[dim] - a,
         SVector(ntuple(Returns(v[dim]), length(v))),
