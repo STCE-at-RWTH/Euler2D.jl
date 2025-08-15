@@ -18,3 +18,7 @@ using Unitful
     @test u1_star[2]/u1_star[1] ≈ 2.0
     @test a1_star ≈ 1.0
 end
+
+@testset "Exact Riemann Solver" begin
+  
+end
