@@ -33,12 +33,11 @@ function roe_matrix_eigenvalues(uL, uR, dim, gas::CaloricallyPerfectGas)
     v̄ = select_middle(w̄) / w̄[1]
     H̄ = w̄[end] / w̄[1]
     a = sqrt((gas.γ - 1) * (H̄ - (v̄ ⋅ v̄) / 2))
-    # FIXME how to avoid a huge performance hit here?
-    return vcat_ρ_ρv_ρE_preserve_static(
-        v̄[dim] - a,
-        SVector(ntuple(Returns(v̄[dim]), length(v̄))),
-        v̄[dim] + a,
-    )
+    return if v̄ isa SVector
+        vcat(SVector(v̄[dim] - a), v̄[dim] * ones(typeof(v̄)), SVector(v̄[dim] + a))
+    else
+        vcat(v̄[dim] - a, fill(v̄[dim], length(v̄)), v̄[dim] + a)
+    end
 end
 
 """
