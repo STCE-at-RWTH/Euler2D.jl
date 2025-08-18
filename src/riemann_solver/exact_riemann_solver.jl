@@ -10,6 +10,7 @@
 module ExactRiemannSolverInternal
 
 using LinearAlgebra
+using SimpleNonlinearSolve
 using StaticArrays
 
 using Euler2D: dimensionless_pressure, dimensionless_speed_of_sound
@@ -100,13 +101,31 @@ function h_3(x, gas)
     return sqrt(f_1(x, gas)) * exp(x / 2) * h_1(x, gas)
 end
 
+# Defined below lemma 18.5
+
+function T_1(ρ, P, v, x, gas)
+    return (f_1(x, gas) * ρ, exp(-x) * P, v + sqrt(gas.γ * P / ρ) * h_1(x, gas))
+end
+
+function T_2(ρ, P, v, x, gas)
+    return (exp(x) * ρ, P, v)
+end
+
+function T_3(ρ, P, v, x, gas)
+    return (f_3(x, gas) * ρ, exp(x) * P, v + sqrt(gas.γ * P / ρ) * h_3(x, gas))
+end
+
 """
   test_1_wave_for_rarefaction(uL, uR, gas)
 
 Corallary 18.7 in Smoller. Test if the 1-wave in the solution to the Riemann problem between ``u_L`` and ``u_R`` is a rarefaction wave.
 """
 function test_1_wave_for_rarefaction(uL, uR, gas)
-    (A, B, C) = jump_ratios(uL, uR, gas)
+    return test_1_wave_for_rarefaction(jump_ratios(uL, uR, gas), gas)
+end
+
+function test_1_wave_for_rarefaction(jumps, gas)
+    (A, B, C) = jumps
     c1 = sqrt(B / A)
     lhs = c1 * h_1(log(B), gas)
     rhs = 2 / (gas.γ - 1) * (1 + c1)
@@ -119,7 +138,11 @@ end
 Corallary 18.7 in Smoller. Test if the 3-wave in the solution to the Riemann problem between ``u_L`` and ``u_R`` is a rarefaction wave.
 """
 function test_3_wave_for_rarefaction(uL, uR, gas)
-    (A, B, C) = jump_ratios(uL, uR, gas)
+    return test_3_wave_for_rarefaction(jump_ratios(uL, uR, gas), gas)
+end
+
+function test_3_wave_for_rarefaction(jumps, gas)
+    (A, B, C) = jumps
     c1 = sqrt(B / A)
     lhs = h_1(-log(B), gas)
     rhs = 2 / (gas.γ - 1) * (1 + c1)
@@ -130,22 +153,48 @@ end
   solve_for_jump_parameters(uL, uR, gas, n = 1)
 
 Solve for the jump parameters ``(x_1, x_2, x_3)`` as outlined in Smoller.
-
-Will warn and do nothing if the ExactRiemannExt is not loaded.
 """
-function solve_for_jump_parameters(args...)
-    @warn "NonlinearSolve not available or wrong arguments."
-    nothing
+function solve_for_jump_parameters(state_left, state_right, gas, n = 1)
+    uL = project_state_to_normal(state_left, n)
+    uR = project_state_to_normal(state_right, n)
+
+    p = SVector(jump_ratios(uL, uR, gas)...)
+    nonlinear_system = NonlinearProblem(ones(SVector{eltype(uL),3}), p) do x, params
+        # 18.62 stuff - A = 0
+        v1 = f_1(x[1], gas) * exp(x[2]) * f_3(x[3], gas) - params[1]
+        # 18.61: stuff - B = 0 
+        v2 = exp(x[3] - x[1]) - params[2]
+        # 18.63: stuff - C = 0
+        v3 = h_1(x[1], gas) + sqrt(p[2] / p[1]) * h_1(x[1] + log(p[2]), gas) - params[3]
+        return SVector(v1, v2, v3)
+    end
+    solution = solve(nonlinear_system)
+    return solution.u
+end
+
+function to_ρPv(u, gas)
+    return (u[1], dimensionless_pressure(u, gas), u[2] / u[1])
 end
 
 function solve_riemann_problem(ray, uL, uR, gas, n)
+    if test_for_vacuum_in_solution(uL, uR, gas)
+        throw(DomainError((uL, uR), "Vacuum state forms between uL and uR!"))
+    end
     x1, x2, x3 = solve_for_jump_parameters(uL, uR, gas, n)
+    uL_prim = to_ρPv(uL, gas)
+    u1_prim = T_1(uL_prim..., x1, gas)
+    u2_prim = T_2(u1_prim..., x2, gas)
+    u3_prim = T_3(u2_prim..., x3, gas)
+
+    #TODO u3_prim should be close to uR_prim... I think.
+    #TODO pick which state
+    #TODO add the off-dimension components back in
+    #TODO convert back to "real" co-ordinates
 end
 
 end
 
 function ϕ_exact(uL, uR, n, gas)
     u_riemann = ExactRiemannSolverInternal.solve_riemann_problem(0, uL, uR, n, gas)
-
     return F_euler(u_riemann, gas)
 end
