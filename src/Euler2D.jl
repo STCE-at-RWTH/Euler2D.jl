@@ -11,12 +11,13 @@ using Base.Threads: nthreads, @spawn
 
 using Accessors
 using Dates
-using ForwardDiff
+using DifferentiationInterface
+using ForwardDiff: ForwardDiff
 using LinearAlgebra
-using Tullio
 using ShockwaveProperties
 using ShockwaveProperties: MomentumDensity, EnergyDensity
 using StaticArrays
+using Tullio
 using Unitful
 using Unitful: 𝐋, 𝐓, 𝐌, 𝚯, 𝐍
 using Unitful: @derived_dimension, Density, Pressure, Velocity
@@ -34,6 +35,7 @@ include("cell_simulations/grid.jl")
 include("cell_simulations/simulations.jl")
 
 const _SI_DEFAULT_SCALE = EulerEqnsScaling(1.0u"m", 1.0u"kg/m^3", 1.0u"m/s")
+const fdiff_backend = AutoForwardDiff()
 
 # methods
 export F_euler

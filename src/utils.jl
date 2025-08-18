@@ -20,8 +20,16 @@ function select_middle(u::StaticVector{S,T}) where {S,T}
     idxs = SVector{S - 2}(ntuple(i -> i + 1, S - 2))
     return u[idxs]
 end
-
 select_middle(u::AbstractVector) = @view u[2:end-1]
+
+function project_state_to_normal(u::SVector{S,T}, n) where {S,T}
+    ρv_n = select_middle(u) ⋅ n
+    return SVector(u[1], ρv_n, zeros(SVector{S - 3,T})..., u[end])
+end
+
+function project_state_to_normal(u, n)
+    return vcat(u[1], select_middle(u) ⋅ n, zeros(eltype(u), length(u - 3)), u[end])
+end
 
 function free_space_dims(N, d)
     ((i + 1 for i ∈ 1:N if i ≠ d)...,)

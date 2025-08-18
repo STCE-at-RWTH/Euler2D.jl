@@ -13,12 +13,7 @@ using LinearAlgebra
 using StaticArrays
 
 using Euler2D: dimensionless_pressure, dimensionless_speed_of_sound
-using Euler2D: select_middle
-
-function project_state_to_normal(u, n)
-    ρv_n = select_middle(u) ⋅ n
-    return SVector(u[1], ρv_n, u[end])
-end
+using Euler2D: select_middle, project_state_to_normal
 
 """Pressure ratio ``P_r/P_l`` abbreviated pi"""
 function _π(uL, uR, gas)

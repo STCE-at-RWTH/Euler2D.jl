@@ -6,6 +6,7 @@ version = "0.5.2"
 [deps]
 Accessors = "7d9f7c33-5ae7-4f3b-8dc6-eff91059b697"
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
+DifferentiationInterface = "a0c0ee7d-e4b9-4e03-894e-1c5f64a51d63"
 ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 PlanePolygons = "f937978b-597e-4162-b50e-ad07b6cf7ab2"
@@ -24,6 +25,7 @@ ExactRiemannExt = ["NonlinearSolve"]
 [compat]
 Accessors = "0.1.38"
 Dates = "1.11.0"
+DifferentiationInterface = "0.7.6"
 ForwardDiff = "0.10.36"
 NonlinearSolve = "4.10.0"
 PlanePolygons = "0.1.12"

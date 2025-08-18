@@ -74,7 +74,7 @@ This implementation will strip out units, and convert down to metric base units 
 function F_euler(u::StaticVector{S,T}, gas::CaloricallyPerfectGas) where {S,T}
     ρv = select_middle(u)
     v = SVector{S - 2,T}(ρv / u[1])
-    P = ustrip(ShockwaveProperties._units_P, pressure(u[1], ρv, u[end], gas))
+    P = dimensionless_pressure(u, gas)
     ρv_flux = ρv * v' + I * P
     return vcat(ρv', ρv_flux, (v * (u[end] + P))')
 end
@@ -119,7 +119,7 @@ Computes the eigenvalues of the Jacobian of the Euler flux function in dimension
 function eigenvalues_∇F_euler(u, dim, gas::CaloricallyPerfectGas)
     ρv = select_middle(u)
     v = ρv / u[1]
-    a = dimensionless_speed_of_sound(u, gas) 
+    a = dimensionless_speed_of_sound(u, gas)
     return vcat_ρ_ρv_ρE_preserve_static(
         v[dim] - a,
         SVector(ntuple(Returns(v[dim]), length(v))),

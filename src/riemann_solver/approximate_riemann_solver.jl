@@ -68,7 +68,7 @@ Compute the HLL numerical flux across the L-R boundary.
 - `uL`, `uR`: States on either side of the boundary
 - `dim` : Direction to calculate F_hll
 """
-function ϕ_hll(uL, uR, dim, gas::CaloricallyPerfectGas)
+function ϕ_hll(uL, uR, dim::Int, gas::CaloricallyPerfectGas)
     fL = select_space_dim(F_euler(uL, gas), dim)
     fR = select_space_dim(F_euler(uR, gas), dim)
     sL, sR = interface_signal_speeds(uL, uR, dim, gas)
@@ -76,18 +76,36 @@ function ϕ_hll(uL, uR, dim, gas::CaloricallyPerfectGas)
 end
 
 """
+    ϕ_hll(uL, uR, n, gas)
+
+Compute the HLL numerical flux across the L-R boundary.
+- `uL`, `uR`: States on either side of the boundary
+- `n` : Direction normal to the boundary, points towards uR
+"""
+function ϕ_hll(uL, uR, n, gas)
+    qL = project_state_to_normal(uL, n)
+    qR = project_state_to_normal(uR, n)
+    fL = F_euler(qL, gas)[:, 1]
+    fR = F_euler(qR, gas)[:, 1]
+    sL, sR = interface_signal_speeds(qL, qR, 1, gas)
+    return ϕ_hll(qL, qR, fL, fR, sL, sR)
+end
+
+"""
     ϕ_hll(uL, u̇L, uR, u̇R, dim, gas)
 
 Compute the Jacobian-vector product of `ϕ_hll` given seeds `u̇L` and `u̇R`.
+
+`n` may either be an integer, for which `e1, e2, ` or `e3` will be used as the normal vector pointing towards `uR`, or a unit normal vector.
 """
-function ϕ_hll_jvp(uL, u̇L, uR, u̇R, dim, gas::CaloricallyPerfectGas)
+function ϕ_hll_jvp(uL, u̇L, uR, u̇R, n, gas::CaloricallyPerfectGas)
     u_arg = vcat(uL, uR)
     # TODO how to seed values into ForwardDiff? We shouldn't have to create and multiply a matrix here.
     #   Although, multiplying a 4×8 matrix by an 8×1 vector shouldn't be too bad
-    J = ForwardDiff.jacobian(u_arg) do u
+    J = jacobian(fdiff_backend, u_arg, Constant(n), Constant(gas)) do u, n, gas
         # TODO remove svector requirement here.
         v1, v2 = split_svector(u)
-        return ϕ_hll(v1, v2, dim, gas)
+        return ϕ_hll(v1, v2, n, gas)
     end
     return J * vcat(u̇L, u̇R)
 end
@@ -100,7 +118,7 @@ Compute the HLL numerical flux across the L-R boundary.
 - `fL`, `fR`: value of the flux function on either side of the boundary, if known.
 - `dim`: Dimension in which to calculate the signal speeds.
 """
-function ϕ_hll(uL, uR, fL, fR, dim, gas::CaloricallyPerfectGas)
+function ϕ_hll(uL, uR, fL, fR, dim::Int, gas::CaloricallyPerfectGas)
     sL, sR = interface_signal_speeds(uL, uR, dim, gas)
     return ϕ_hll(uL, uR, select_space_dim(fL, dim), select_space_dim(fR, dim), sL, sR)
 end
