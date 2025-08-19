@@ -66,7 +66,8 @@ Theorem 18.6 in Smoller. Test if the Riemann problem between states ``u_L`` and 
 or if the solution will yield a solution composed of shocks, simple waves / rarefaction waves, and contact discontinuities.
 """
 function test_for_vacuum_in_solution(uL, uR, gas)
-    (cL, cR) = dimensionless_speed_of_sound.((uL, uR), gas)
+    cL = dimensionless_speed_of_sound(uL, gas)
+    cR = dimensionless_speed_of_sound(uR, gas)
     vL = uL[2] / uL[1]
     vR = uR[2] / uR[1]
     return vR - vL ≥ 2 / (gas.γ - 1) * (cL + cR)
@@ -118,10 +119,11 @@ end
 """
   test_1_wave_for_rarefaction(uL, uR, gas)
 
-Corallary 18.7 in Smoller. Test if the 1-wave in the solution to the Riemann problem between ``u_L`` and ``u_R`` is a rarefaction wave.
+Corallary 18.7 in Smoller. Test if the 1-wave in the solution to the Riemann problem between ``q_L`` and ``q_R`` is a rarefaction wave.
+The states ``q`` are already projected into interface-normal co-ordinates.
 """
-function test_1_wave_for_rarefaction(uL, uR, gas)
-    return test_1_wave_for_rarefaction(jump_ratios(uL, uR, gas), gas)
+function test_1_wave_for_rarefaction(qL, qR, gas)
+    return test_1_wave_for_rarefaction(jump_ratios(qL, qR, gas), gas)
 end
 
 function test_1_wave_for_rarefaction(jumps, gas)
@@ -135,10 +137,11 @@ end
 """
   test_3_wave_for_rarefaction(uL, uR, gas)
 
-Corallary 18.7 in Smoller. Test if the 3-wave in the solution to the Riemann problem between ``u_L`` and ``u_R`` is a rarefaction wave.
+Corallary 18.7 in Smoller. Test if the 3-wave in the solution to the Riemann problem between ``q_L`` and ``q_R`` is a rarefaction wave.
+The states ``q`` are already projected into interface-normal co-ordinates.
 """
-function test_3_wave_for_rarefaction(uL, uR, gas)
-    return test_3_wave_for_rarefaction(jump_ratios(uL, uR, gas), gas)
+function test_3_wave_for_rarefaction(qL, qR, gas)
+    return test_3_wave_for_rarefaction(jump_ratios(qL, qR, gas), gas)
 end
 
 function test_3_wave_for_rarefaction(jumps, gas)
@@ -150,43 +153,46 @@ function test_3_wave_for_rarefaction(jumps, gas)
 end
 
 """
-  solve_for_jump_parameters(uL, uR, gas, n = 1)
+  solve_for_jump_parameters(qL, qR, gas)
 
 Solve for the jump parameters ``(x_1, x_2, x_3)`` as outlined in Smoller.
+- `qL` and `qR` are already projected into the interface-normal co-ordinates.
 """
-function solve_for_jump_parameters(state_left, state_right, gas, n = 1)
-    uL = project_state_to_normal(state_left, n)
-    uR = project_state_to_normal(state_right, n)
-
-    p = SVector(jump_ratios(uL, uR, gas)...)
-    nonlinear_system = NonlinearProblem(ones(SVector{eltype(uL),3}), p) do x, params
+function solve_for_jump_parameters(qL, qR, gas)
+    jump_params = SVector(jump_ratios(qL, qR, gas)...)
+    x0 = @SVector ones(eltype(qL), 3)
+    nonlinear_system = NonlinearProblem(x0, jump_params) do x, params
         # 18.62 stuff - A = 0
         v1 = f_1(x[1], gas) * exp(x[2]) * f_3(x[3], gas) - params[1]
         # 18.61: stuff - B = 0 
         v2 = exp(x[3] - x[1]) - params[2]
         # 18.63: stuff - C = 0
-        v3 = h_1(x[1], gas) + sqrt(p[2] / p[1]) * h_1(x[1] + log(p[2]), gas) - params[3]
+        v3 =
+            h_1(x[1], gas) +
+            sqrt(jump_params[2] / jump_params[1]) * h_1(x[1] + log(jump_params[2]), gas) - params[3]
         return SVector(v1, v2, v3)
     end
-    solution = solve(nonlinear_system)
+    solution = solve(nonlinear_system, SimpleNewtonRaphson())
     return solution.u
 end
 
-function to_ρPv(u, gas)
-    return (u[1], dimensionless_pressure(u, gas), u[2] / u[1])
+function to_ρPv(q, gas)
+    return (q[1], dimensionless_pressure(q, gas), q[2] / q[1])
 end
 
-function solve_riemann_problem(ray, uL, uR, gas, n)
-    if test_for_vacuum_in_solution(uL, uR, gas)
+function solve_riemann_problem(ray, uL, uR, gas, new_coords)
+    qL = project_state_to_normal(uL, new_coords[:, 1])
+    qR = project_state_to_normal(uR, new_coords[:, 1])
+    if test_for_vacuum_in_solution(qL, qR, gas)
         throw(DomainError((uL, uR), "Vacuum state forms between uL and uR!"))
     end
-    x1, x2, x3 = solve_for_jump_parameters(uL, uR, gas, n)
-    uL_prim = to_ρPv(uL, gas)
-    u1_prim = T_1(uL_prim..., x1, gas)
-    u2_prim = T_2(u1_prim..., x2, gas)
-    u3_prim = T_3(u2_prim..., x3, gas)
+    x1, x2, x3 = solve_for_jump_parameters(qL, qR, gas)
+    # switch to ρ, P, v
+    qL_prim = to_ρPv(qL, gas)
+    q1_prim = T_1(qL_prim..., x1, gas)
+    q2_prim = T_2(q1_prim..., x2, gas)
+    q3_prim = T_3(q2_prim..., x3, gas)
 
-    #TODO u3_prim should be close to uR_prim... I think.
     #TODO pick which state
     #TODO add the off-dimension components back in
     #TODO convert back to "real" co-ordinates
