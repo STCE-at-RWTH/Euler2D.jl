@@ -6,9 +6,6 @@ module Euler2D
     read(path, String)
 end Euler2D
 
-# what do we want out of Base?
-using Base.Threads: nthreads, @spawn
-
 using Accessors: @set, @reset
 using Dates
 using DifferentiationInterface
