@@ -8,15 +8,71 @@ u_array_space_dims(::AbstractArray{T,N}) where {T,N} = N - 1
 u_array_space_size(u::AbstractArray{T,N}) where {T,N} = size(u)[2:end]
 
 vcat_ρ_ρv_ρE_preserve_static(u1, u2, u3) = vcat(u1, u2, u3)
-vcat_ρ_ρv_ρE_preserve_static(u1, u2::SVector{S,T}, u3) where {S,T} =
-    SVector{S + 2}(u1, u2..., u3)
-
-function select_middle(u::StaticVector{S,T}) where {S,T}
-    idxs = SVector{S - 2}(ntuple(i -> i + 1, S - 2))
-    return u[idxs]
+function vcat_ρ_ρv_ρE_preserve_static(u1, u2::SVector{S,T}, u3) where {S,T}
+    return SVector{S + 2}(u1, u2..., u3)
 end
 
-select_middle(u::AbstractVector) = @view u[2:end-1]
+### RIPPED FROM PLANEPOLYGONS
+### IF THE CUT-CELLS METHOD EVER GETS IMPLEMENTED
+### MAYBE WE CAN EXPAND THE INTERFACE IN THE OTHER PACKAGE
+
+"""
+  change_of_basis_matrix(A, B)
+
+Get the matrix ``T_{AB}`` to change basis from coordinates ``A`` to ``B``. 
+
+``x_B = Tx_a``.
+"""
+function change_of_basis_matrix(A, B)
+    return inv(B) * A
+end
+
+"""
+  orthonormal_basis(x)
+
+Get an orthonormal basis from a choice of axis ``e_1``.
+"""
+function orthonormal_basis(x)
+    @assert length(x) == 2
+    x̂ = SVector{2}(normalize(x)...)
+    ŷ = SVector(-x̂[2], x̂[1])
+    return hcat(x̂, ŷ)
+end
+
+"""
+  change_basis(p, A, B)
+
+Put the vector ``p`` in basis ``A`` into basis ``B``.
+"""
+function change_basis(p, A, B)
+    return change_of_basis_matrix(A, B) * p
+end
+
+"""
+  change_basis(p, B)
+
+Put the vector ``p`` in the standard Cartesian basis into basis B.
+"""
+change_basis(p, B) = change_basis(p, I, B)
+
+function project_state_to_normal(u::SVector{S,T}, n) where {S,T}
+    ρv_n = select_middle(u) ⋅ n
+    return SVector(u[1], ρv_n, zeros(SVector{S - 3,T})..., u[end])
+end
+
+function project_state_to_normal(u, n)
+    return vcat(u[1], select_middle(u) ⋅ n, zeros(eltype(u), length(u - 3)), u[end])
+end
+
+"""
+  apply_coordinate_tform(u, T)
+
+Multiply the momentum vector of the state `u=[ρ, ρv..., ρE]` by T.
+"""
+function apply_coordinate_tform(u, T)
+    ρv_new = T * select_middle(u)
+    return vcat_ρ_ρv_ρE_preserve_static(u[1], ρv_new, u[end])
+end
 
 function free_space_dims(N, d)
     ((i + 1 for i ∈ 1:N if i ≠ d)...,)
@@ -41,6 +97,17 @@ function split_svector(v)
     end
     return v1, v2
 end
+
+"""
+  select_middle(u)
+
+Select the middle of a vector `u`, returning a copy of `u[2:end-1]` if `u` is an `SVector`, otherwise a view of `u[2:end-1]`.
+"""
+function select_middle(u::StaticVector{S,T}) where {S,T}
+    idxs = SVector{S - 2}(ntuple(i -> i + 1, S - 2))
+    return u[idxs]
+end
+select_middle(u::AbstractVector) = @view u[2:end-1]
 
 ncols_smatrix(::SMatrix{M,N,T,L}) where {M,N,T,L} = N
 ncols_smatrix(::Type{SMatrix{M,N,T,L}}) where {M,N,T,L} = N

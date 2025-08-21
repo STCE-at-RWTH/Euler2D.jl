@@ -36,7 +36,10 @@ function redimensionalize(u_star::SVector{N,T}, s) where {N,T}
     return ConservedProps(ρ, ρv, ρE)
 end
 
-function _pressure(u_star::SVector{N,T}, gas::CaloricallyPerfectGas) where {N,T}
+function dimensionless_pressure(
+    u_star::SVector{N,T},
+    gas::CaloricallyPerfectGas,
+) where {N,T}
     ρv_star = select_middle(u_star)
     return (gas.γ - 1) * (u_star[N] - ρv_star ⋅ ρv_star / (2 * u_star[1]))
 end
@@ -50,24 +53,20 @@ function dimensionless_speed_of_sound(
     u_star::SVector{N,T},
     gas::CaloricallyPerfectGas,
 ) where {N,T}
-    P_star = _pressure(u_star, gas)
+    P_star = dimensionless_pressure(u_star, gas)
     return sqrt(gas.γ * (P_star / u_star[1]))
 end
 
 """
     dimensionless_total_enthalpy_density(u_star, gas)
 
-Compute the dimensionless total enthalpy density `ρH_star` from the nondimesionalized state variable `u``
+Compute the dimensionless total enthalpy density `ρH_star` from the nondimesionalized state variable `u`.
 """
 function dimensionless_total_enthalpy_density(
     u_star::SVector{N,T},
     gas::CaloricallyPerfectGas,
 ) where {N,T}
-    return u_star[N] + _pressure(u_star, gas)
-end
-
-function dimensionless_ΔS_density(u_star::SVector{N}, gas) where {N}
-    return gas.c_v * log(_pressure(u_star, gas) / (u_star[1]^(gas.γ)))
+    return u_star[N] + dimensionless_pressure(u_star, gas)
 end
 
 function nondimensionalize_calorically_perfect_gas(gas::CaloricallyPerfectGas, scale)
@@ -76,5 +75,16 @@ function nondimensionalize_calorically_perfect_gas(gas::CaloricallyPerfectGas, s
         c_p = gas.c_p / specific_heat_capacity_scale(scale),
         γ = gas.γ,
         R = gas.R / specific_heat_capacity_scale(scale),
+    )
+end
+
+function dimensionless_ΔS_density(u_star, gas)
+    return gas.c_v * log(dimensionless_pressure(u_star, gas) / (u_star[1]^(gas.γ)))
+end
+
+function dimensionless_ΔS_density(u_star, gas::CaloricallyPerfectGas, scale)
+    return dimensionless_ΔS_density(
+        u_star,
+        nondimensionalize_calorically_perfect_gas(gas, scale),
     )
 end

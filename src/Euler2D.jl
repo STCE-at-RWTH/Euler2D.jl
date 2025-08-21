@@ -6,12 +6,10 @@ module Euler2D
     read(path, String)
 end Euler2D
 
-# what do we want out of Base?
-using Base.Threads: nthreads, @spawn
-
 using Accessors: @set, @reset
 using Dates
-using ForwardDiff
+using DifferentiationInterface
+using ForwardDiff: ForwardDiff
 using LinearAlgebra
 using OhMyThreads: tforeach, tmap
 using ShockwaveProperties
@@ -35,10 +33,12 @@ include("cell_simulations/grid.jl")
 include("cell_simulations/simulations.jl")
 
 const _SI_DEFAULT_SCALE = EulerEqnsScaling(1.0u"m", 1.0u"kg/m^3", 1.0u"m/s")
+const fdiff_backend = AutoForwardDiff()
 
 # methods
 export F_euler
 export interface_signal_speeds, maximum_Δt
+export eigenvectors_∇F_euler, eigenvectors_∇G_euler
 export step_euler_hll!, simulate_euler_equations, simulate_euler_equations_cells
 
 # dimension stuff
