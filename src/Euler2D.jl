@@ -9,11 +9,12 @@ end Euler2D
 # what do we want out of Base?
 using Base.Threads: nthreads, @spawn
 
-using Accessors
+using Accessors: @set, @reset
 using Dates
 using DifferentiationInterface
 using ForwardDiff: ForwardDiff
 using LinearAlgebra
+using OhMyThreads: tforeach, tmap
 using ShockwaveProperties
 using ShockwaveProperties: MomentumDensity, EnergyDensity
 using StaticArrays
@@ -27,7 +28,7 @@ include("nondimensionalization.jl")
 include("transport.jl")
 include("boundary_conditions.jl")
 include("riemann_solver/approximate_riemann_solver.jl")
-include("riemann_solver/exact_riemann_solver.jl")
+#include("riemann_solver/exact_riemann_solver.jl")
 include("array_simulations/fvm.jl")
 include("array_simulations/array_simulations.jl")
 include("cell_simulations/obstacle.jl")

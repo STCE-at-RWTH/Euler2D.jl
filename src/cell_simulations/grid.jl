@@ -102,16 +102,16 @@ n_seeds(::Type{TangentQuadCell{T,N,P}}) where {T,N,P} = N
     Get the numeric data type associated with this cell.
     """ numeric_dtype
 
-update_dtype(::Type{T}) where {T<:PrimalQuadCell} = Tuple{SVector{4,numeric_dtype(T)}}
+update_dtype(::Type{T}) where {T<:PrimalQuadCell} = NTuple{2,SVector{4,numeric_dtype(T)}}
 function update_dtype(::Type{TangentQuadCell{T,N,P}}) where {T,N,P}
-    return Tuple{SVector{4,T},SMatrix{4,N,T,P}}
+    return Tuple{SVector{4,T},SVector{4,T},SMatrix{4,N,T,P},SMatrix{4,N,T,P}}
 end
 
 @doc """
     update_dtype(::Type{T<:QuadCell})
 
 Get the tuple of update data types that must be enforced upon fetch-ing results out of the worker tasks.
-"""
+""" update_dtype
 
 function inward_normals(T::DataType)
     return (
@@ -456,11 +456,10 @@ function compute_cell_update_and_max_Δt(
     end
 
     Δu = (
-        inv(Δx.west) * ϕ.west - inv(Δx.east) * ϕ.east + inv(Δx.south) * ϕ.south -
-        inv(Δx.north) * ϕ.north
+        inv(Δx.west) * ϕ.west - inv(Δx.east) * ϕ.east,
+        inv(Δx.south) * ϕ.south - inv(Δx.north) * ϕ.north,
     )
-    # tuple madness
-    return (Δt_max, (Δu,))
+    return (Δt_max, Δu)
 end
 
 function compute_cell_update_and_max_Δt(
@@ -492,13 +491,10 @@ function compute_cell_update_and_max_Δt(
 
     RESULT_DTYPE = update_dtype(typeof(cell))
     Δu::RESULT_DTYPE = (
-        (
-            (inv(Δx.west) * ϕ.west) - (inv(Δx.east) * ϕ.east) + (inv(Δx.south) * ϕ.south) - (inv(Δx.north) .* ϕ.north)
-        ),
-        (
-            (inv(Δx.west) * ϕ_jvp.west) - (inv(Δx.east) * ϕ_jvp.east) +
-            (inv(Δx.south) * ϕ_jvp.south) - (inv(Δx.north) .* ϕ_jvp.north)
-        ),
+        (inv(Δx.west) * ϕ.west) - (inv(Δx.east) * ϕ.east),
+        (inv(Δx.south) * ϕ.south) - (inv(Δx.north) * ϕ.north),
+        (inv(Δx.west) * ϕ_jvp.west) - (inv(Δx.east) * ϕ_jvp.east),
+        (inv(Δx.south) * ϕ_jvp.south) - (inv(Δx.north) .* ϕ_jvp.north),
     )
     return (Δt_max, Δu)
 end
@@ -561,11 +557,12 @@ end
 # ( I hope )
 function apply_partition_update!(
     partition::CellGridPartition{T,U},
+    dim,
     Δt,
 ) where {T<:PrimalQuadCell,U}
     for (k, v) ∈ partition.cells_update
         cell = partition.cells_map[k]
-        @reset cell.u = cell.u + Δt * v[1]
+        @reset cell.u = cell.u + Δt * v[dim]
         partition.cells_map[k] = cell
         partition.cells_update[k] = zero.(fieldtypes(U))
     end
@@ -573,12 +570,13 @@ end
 
 function apply_partition_update!(
     partition::CellGridPartition{T,U},
+    dim,
     Δt,
 ) where {T<:TangentQuadCell,U}
     for (k, v) ∈ partition.cells_update
         cell = partition.cells_map[k]
-        @reset cell.u = cell.u + Δt * v[1]
-        @reset cell.u̇ = cell.u̇ + Δt * v[2]
+        @reset cell.u = cell.u + Δt * v[dim]
+        @reset cell.u̇ = cell.u̇ + Δt * v[2+dim]
         partition.cells_map[k] = cell
         partition.cells_update[k] = zero.(fieldtypes(U))
     end
@@ -593,38 +591,53 @@ function step_cell_simulation!(
 )
     T = numeric_dtype(eltype(cell_partitions))
     # compute Δu from flux functions
-    compute_partition_update_tasks = map(cell_partitions) do cell_partition
-        Threads.@spawn begin
-            # not sure what to interpolate here
-            compute_partition_update_and_max_Δt!(cell_partition, $boundary_conditions, $gas)
-        end
+    partition_max_Δts = tmap(T, cell_partitions) do cell_partition
+        compute_partition_update_and_max_Δt!(cell_partition, boundary_conditions, gas)
     end
-    partition_max_Δts::Array{T,length(size(compute_partition_update_tasks))} =
-        fetch.(compute_partition_update_tasks)
     # find Δt
     Δt = mapreduce(min, partition_max_Δts; init = Δt_maximum) do val
         cfl_limit * val
     end
+    needs_shared = collect(
+        Iterators.filter(
+            ((a, b),) -> a ≠ b,
+            ((a.id, b.id) for (a, b) ∈ Iterators.product(cell_partitions, cell_partitions)),
+        ),
+    )
+    # 1. Calculate updates
+    # 2. Share update
+    # 3. apply update with appropriate time step
 
-    propagate_tasks = map(
-        Iterators.filter(Iterators.product(cell_partitions, cell_partitions)) do (p1, p2)
-            p1.id != p2.id
-        end,
-    ) do (p1, p2)
-        Threads.@spawn begin
-            propagate_updates_to!(p1, p2)
-            #@info "Sent data between partitions..." src_id = p2.id dest_id = p1.id count
-        end
+    # first x
+    tforeach(cell_partitions) do cell_partition
+        compute_partition_update_and_max_Δt!(cell_partition, boundary_conditions, gas)
     end
-    wait.(propagate_tasks)
-
-    update_tasks = map(cell_partitions) do p
-        Threads.@spawn begin
-            apply_partition_update!(p, Δt)
-        end
+    tforeach(needs_shared) do (id1, id2)
+        propagate_updates_to!(cell_partitions[id1], cell_partitions[id2])
     end
-    wait.(update_tasks)
-
+    tforeach(cell_partitions) do p
+        apply_partition_update!(p, 1, Δt / 2)
+    end
+    # then in y
+    tforeach(cell_partitions) do cell_partition
+        compute_partition_update_and_max_Δt!(cell_partition, boundary_conditions, gas)
+    end
+    tforeach(needs_shared) do (id1, id2)
+        propagate_updates_to!(cell_partitions[id1], cell_partitions[id2])
+    end
+    tforeach(cell_partitions) do p
+        apply_partition_update!(p, 2, Δt)
+    end
+    # then in x again
+    tforeach(cell_partitions) do cell_partition
+        compute_partition_update_and_max_Δt!(cell_partition, boundary_conditions, gas)
+    end
+    tforeach(needs_shared) do (id1, id2)
+        propagate_updates_to!(cell_partitions[id1], cell_partitions[id2])
+    end
+    tforeach(cell_partitions) do p
+        apply_partition_update!(p, 1, Δt / 2)
+    end
     return Δt
 end
 
