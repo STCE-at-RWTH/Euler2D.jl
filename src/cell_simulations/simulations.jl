@@ -263,6 +263,26 @@ mach_number_field(
     scale::EulerEqnsScaling,
 ) = mach_number_field(csim, n, gas)
 
+"""
+Take the tape data stream and return a channel where simulation state can be queued then pushed.
+"""
+function _initialize_writer_task(channel_size, time_type, cells_type, data_stream)
+    taskref = Ref{Task}()
+    ch = Channel{Union{Symbol,Tuple{time_type,cells_type}}}(
+        channel_size;
+        taskref = taskref,
+    ) do ch
+        while true
+            val = take!(ch)
+            if val == :stop
+                break
+            end
+            write_tstep_to_stream(data_stream, val...)
+        end
+    end
+    return taskref, ch
+end
+
 function write_tstep_to_stream(stream, t, global_cells)
     @info "Writing time step to file." t = t ncells = length(global_cells)
     write(stream, t)
@@ -321,10 +341,10 @@ function simulate_euler_equations_cells(
     scale::EulerEqnsScaling = _SI_DEFAULT_SCALE,
     cfl_limit = 0.75,
     max_tsteps = typemax(Int),
+    maximum_wall_duration = Week(4),
     write_result = true,
     output_channel_size = 5,
     write_frequency = 1,
-    history_in_memory = false,
     output_tag = "cell_euler_sim",
     show_info = true,
     info_frequency = 10,
@@ -364,15 +384,8 @@ function simulate_euler_equations_cells(
         end
         tape_file = joinpath("data", output_tag * ".celltape")
     end
-    if !write_result && !history_in_memory
+    if !write_result
         @info "Only the final value of the simulation will be available." T_end
-    end
-
-    u_history = typeof(global_cells)[]
-    t_history = typeof(t)[]
-    if (history_in_memory)
-        push!(u_history, copy(global_cells))
-        push!(t_history, t)
     end
 
     if write_result
@@ -386,20 +399,12 @@ function simulate_euler_equations_cells(
             write(tape_stream, b...)
         end
         write(tape_stream, global_cell_ids)
-        # TODO we would like to preallocate buffers here...
-        writer_taskref = Ref{Task}()
-        writer_channel = Channel{Union{Symbol,Tuple{T,typeof(global_cells)}}}(
-            output_channel_size;
-            taskref = writer_taskref,
-        ) do ch
-            while true
-                val = take!(ch)
-                if val == :stop
-                    break
-                end
-                write_tstep_to_stream(tape_stream, val...)
-            end
-        end
+        writer_taskref, writer_channel = _initialize_writer_task(
+            output_channel_size,
+            T,
+            typeof(global_cells),
+            tape_stream,
+        )
         put!(writer_channel, (t, global_cells))
     end
 
@@ -421,24 +426,15 @@ function simulate_euler_equations_cells(
         previous_tstep_wall_clock = current_tstep_wall_clock
         n_tsteps += 1
         t += Δt
+        # push output to the writer task
         if (
-            ((n_tsteps - 1) % write_frequency == 0 || n_tsteps == max_tsteps) &&
-            (write_result || history_in_memory)
+            write_result &&
+            ((n_tsteps - 1) % write_frequency == 0 || n_tsteps == max_tsteps)
         )
-            if write_result && history_in_memory
-                u_cur = collect_cell_partitions(cell_partitions, global_cell_ids)
-                put!(writer_channel, (t, u_cur))
-                push!(u_history, u_cur)
-                push!(t_history, t)
-            elseif write_result
-                put!(
-                    writer_channel,
-                    (t, collect_cell_partitions(cell_partitions, global_cell_ids)),
-                )
-            elseif history_in_memory
-                push!(u_history, collect_cell_partitions(cell_partitions, global_cell_ids))
-                push!(t_history, t)
-            end
+            put!(
+                writer_channel,
+                (t, collect_cell_partitions(cell_partitions, global_cell_ids)),
+            )
             n_written_tsteps += 1
             if show_info
                 @info "Saving simulation state at " k = n_tsteps total_saved =
@@ -455,18 +451,6 @@ function simulate_euler_equations_cells(
         write(tape_stream, n_written_tsteps)
         seekend(tape_stream)
         close(tape_stream)
-    end
-
-    if history_in_memory
-        @assert n_written_tsteps == length(t_history)
-        return CellBasedEulerSim{T}(
-            (ncells...,),
-            n_written_tsteps,
-            (((first(r), last(r)) for r ∈ cell_ifaces)...),
-            t_history,
-            global_cell_ids,
-            u_history,
-        )
     end
 
     return CellBasedEulerSim(
@@ -543,6 +527,8 @@ function load_cell_sim(path; steps = :all, T = Float64, show_info = true)
 
         (time_steps_to_read, n_tsteps) = if steps == :all
             1:n_tsteps, n_tsteps
+        elseif steps == :last
+            (n_tsteps,), 1
         else
             steps, length(steps)
         end

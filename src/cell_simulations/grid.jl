@@ -316,12 +316,12 @@ end
 function partition_cell_list(
     global_active_cells,
     global_cell_ids,
-    tasks_per_axis;
+    partitions_per_axis;
     show_info = false,
 )
     # minimum partition size includes i - 1 and i + 1 neighbors
     grid_size = size(global_cell_ids)
-    all_part = split_axis.(grid_size, tasks_per_axis)
+    all_part = split_axis.(grid_size, partitions_per_axis)
 
     cell_type = valtype(global_active_cells)
     update_type = update_dtype(cell_type)
