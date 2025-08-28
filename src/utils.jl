@@ -76,6 +76,19 @@ end
 
 ### END OF BASES
 
+### HORRIBLE BACKUP DICT THINGY
+
+struct BackupDict{K,V}
+    primary::Dict{K,V}
+    secondary::Dict{K,V}
+end
+
+function Base.getindex(dict::BackupDict, key)
+    return get(() -> dict.secondary[key], dict.primary, key)
+end
+
+### END HORRIBLE BACKUP DICT THINGY
+
 function free_space_dims(N, d)
     ((i + 1 for i ∈ 1:N if i ≠ d)...,)
 end
