@@ -229,6 +229,15 @@ function split_axis(len, n)
     return tpl_ranges
 end
 
+"""
+Takes a range `[a, b]` and an axis size `n`, and
+tries to expand the range to `[a-1, b+1]`. 
+
+Will clamp `a-1` to `1` and`b+1` to `n`.
+
+Returns `(c, d) = (max(1,a-1), min(n, b+1)` (the cells needed to copy into a partition) 
+and `(e,f)` (the cells that a partition will be responsible for updating.
+"""
 function expand_to_neighbors(left_idx, right_idx, axis_size)
     len = right_idx - left_idx + 1
     if left_idx > 1
@@ -248,6 +257,8 @@ function expand_to_neighbors(left_idx, right_idx, axis_size)
     end
     return (new_l, new_r), (left_idx, right_idx)
 end
+
+# TODO could we speed up the broadcast operation by splitting the dictionaries that the "owned" cells and the "required" cells are in?
 
 struct CellGridPartition{T,U}
     id::Int
@@ -284,6 +295,16 @@ struct CellGridPartition{T,U}
     end
 end
 
+struct FastCellGridPartition{T,U}
+    id::Int
+
+    owned_cells::Dict{Int,T}
+    owned_update::Dict{Int,U}
+
+    neighbors_overlap_cells::Dict{Int,T}
+    neighbors_update_cells::Dict{Int,U}
+end
+
 """
     numeric_dtype(::CellGridPartition)
     numeric_dtype(::Type{CellGridPartition})
@@ -292,9 +313,13 @@ Underlying numeric data type of this partition.
 """
 numeric_dtype(::CellGridPartition{T,U}) where {T,U} = numeric_dtype(T)
 numeric_dtype(::Type{CellGridPartition{T,U}}) where {T,U} = numeric_dtype(T)
+numeric_dtype(::FastCellGridPartition{T,U}) where {T,U} = numeric_dtype(T)
+numeric_dtype(::Type{FastCellGridPartition{T,U}}) where {T,U} = numeric_dtype(T)
 
 cell_type(::CellGridPartition{T,U}) where {T,U} = T
 cell_type(::Type{CellGridPartition{T,U}}) where {T,U} = T
+cell_type(::FastCellGridPartition{T,U}) where {T,U} = T
+cell_type(::Type{FastCellGridPartition{T,U}}) where {T,U} = T
 
 """
     cells_map_type(::CellGridPartition)
@@ -302,6 +327,8 @@ cell_type(::Type{CellGridPartition{T,U}}) where {T,U} = T
 """
 cells_map_type(::CellGridPartition{T}) where {T} = Dict{Int,T}
 cells_map_type(::Type{CellGridPartition{T}}) where {T} = Dict{Int,T}
+cells_map_type(::FastCellGridPartition{T}) where {T} = Dict{Int,T}
+cells_map_type(::Type{FastCellGridPartition{T}}) where {T} = Dict{Int,T}
 
 function computation_region_indices(p)
     return (range(p.computation_indices[1]...), range(p.computation_indices[2]...))
@@ -310,6 +337,8 @@ end
 function computation_region(p)
     return @view p.cells_copied_ids[computation_region_indices(p)...]
 end
+
+computation_region(p::FastCellGridPartition) = keys(p.owned_cells)
 
 # TODO if we want to move beyond a structured grid, we have to redo this method. I have no idea how to do this.
 
@@ -367,6 +396,91 @@ function partition_cell_list(
     return res
 end
 
+function fast_partition_cell_list(
+    global_active_cells,
+    global_cell_ids,
+    partitions_per_axis;
+    show_info = true,
+)
+    grid_size = size(global_cell_ids)
+    all_part = split_axis.(grid_size, partitions_per_axis)
+
+    CELL_TYPE = valtype(global_active_cells)
+    UPDATE_TYPE = update_dtype(CELL_TYPE)
+
+    if show_info
+        smalllest_partition, biggest_partition =
+            extrema(Iterators.product(all_part...)) do (part_x, part_y)
+                sz = (part_x[2] - part_x[1] + 1) * (part_y[2] - part_y[1] + 1)
+                return sz
+            end
+        @info "Partioning global cell grid into $(*(length.(all_part)...)) partitions." CELL_TYPE UPDATE_TYPE smalllest_partition biggest_partition
+    end
+    partition_infos = Iterators.product(all_part...) |> enumerate |> collect
+    partitions = tmap(partition_infos) do (partition_id, (part_x, part_y))
+        # the partition covers some amount of the global grid
+        # and owns a slice of that cover
+        total_covered_x, locally_owned_x = expand_to_neighbors(part_x..., grid_size[1])
+        total_covered_y, local_owned_y = expand_to_neighbors(part_y..., grid_size[2])
+        partition_covered_cell_ids =
+            @view global_cell_ids[range(total_covered_x...), range(total_covered_y...)]
+        partition_owned_idxs =
+            CartesianIndices((range(locally_owned_x...), range(local_owned_y...)))
+        owned_active_cells = 0
+        shared_active_cells = 0
+        for i ∈ eachindex(IndexCartesian(), partition_covered_cell_ids)
+            id = partition_covered_cell_ids[i]
+            id == 0 && continue
+            if i ∈ partition_owned_idxs
+                owned_active_cells += 1
+            else
+                shared_active_cells += 1
+            end
+        end
+
+        # cells that this partition is responsible for computing the updates to
+        partition_compute_cells = Dict{Int,CELL_TYPE}()
+        partition_compute_cells_updates = Dict{Int,UPDATE_TYPE}()
+        sizehint!(partition_compute_cells, owned_active_cells)
+        sizehint!(partition_compute_cells_updates, owned_active_cells)
+        # cells that OTHER partitions are responsible for but this partition needs to know about
+        partition_shared_cells = Dict{Int,CELL_TYPE}()
+        partition_shared_cells_updates = Dict{Int,UPDATE_TYPE}()
+        sizehint!(partition_shared_cells, shared_active_cells)
+        sizehint!(partition_shared_cells_updates, shared_active_cells)
+        for i ∈ eachindex(IndexCartesian(), partition_covered_cell_ids)
+            id = partition_covered_cell_ids[i]
+            id == 0 && continue
+            if i ∈ partition_owned_idxs
+                partition_compute_cells[id] = global_active_cells[id]
+                partition_compute_cells_updates[id] = zero.(fieldtypes(UPDATE_TYPE))
+            else
+                partition_shared_cells[id] = global_active_cells[id]
+                partition_shared_cells_updates[id] = zero.(fieldtypes(UPDATE_TYPE))
+            end
+        end
+        if show_info
+            @info "Creating cell partition on grid ids..." partition_id = partition_id copied_idxs =
+                (range(total_covered_x...), range(total_covered_y...)) local_compute_idxs =
+                (range(locally_owned_x...), range(local_owned_y...)) owned_active_cells shared_active_cells
+        end
+
+        return FastCellGridPartition{CELL_TYPE,UPDATE_TYPE}(
+            partition_id,
+            partition_compute_cells,
+            partition_compute_cells_updates,
+            partition_shared_cells,
+            partition_shared_cells_updates,
+        )
+    end
+
+    @assert _verify_fastpartitioning(partitions, global_active_cells)
+    return partitions
+end
+
+"""
+Test that the computation regions of the partitions in `p` do not share any cell ids.
+"""
 function _verify_partitioning(p)
     return all(Iterators.filter(Iterators.product(p, p)) do (p1, p2)
         p1.id != p2.id
@@ -381,6 +495,18 @@ function _verify_partitioning(p)
             end
         end
     end
+end
+
+function _verify_fastpartitioning(p, global_cells)
+    no_overlap = all(Iterators.filter(Iterators.product(p, p)) do (p1, p2)
+        p1.id != p2.id
+    end) do (p1, p2)
+        return all(computation_region(p1)) do cell_id
+            cell_id ∉ computation_region(p2)
+        end
+    end
+    computed_cells = mapreduce(computation_region, union, p)
+    return no_overlap && (computed_cells == keys(global_cells))
 end
 
 function collect_cell_partitions!(global_cells, cell_partitions)

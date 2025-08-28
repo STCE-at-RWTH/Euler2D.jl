@@ -74,6 +74,8 @@ function apply_coordinate_tform(u, T)
     return vcat_ρ_ρv_ρE_preserve_static(u[1], ρv_new, u[end])
 end
 
+### END OF BASES
+
 function free_space_dims(N, d)
     ((i + 1 for i ∈ 1:N if i ≠ d)...,)
 end
