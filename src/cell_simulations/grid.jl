@@ -482,22 +482,27 @@ function fast_partition_cell_list(
         # and owns a slice of that cover
         total_covered_x, locally_owned_x = expand_to_neighbors(part_x..., grid_size[1])
         total_covered_y, local_owned_y = expand_to_neighbors(part_y..., grid_size[2])
-        partition_covered_cell_ids =
-            @view global_cell_ids[range(total_covered_x...), range(total_covered_y...)]
+
+        global_covered_idxs =
+            CartesianIndices((range(total_covered_x...), range(total_covered_y...)))
         partition_owned_idxs =
             CartesianIndices((range(locally_owned_x...), range(local_owned_y...)))
+
+        partition_covered_cell_ids = @view global_cell_ids[global_covered_idxs]
+        partition_owned_cell_ids =
+            @view partition_covered_cell_ids[partition_owned_idxs]
+        global_owned_idxs = CartesianIndices(parentindices(partition_owned_cell_ids))
         owned_active_cells = 0
         shared_active_cells = 0
-        for i ∈ eachindex(IndexCartesian(), partition_covered_cell_ids)
-            id = partition_covered_cell_ids[i]
+        for i ∈ global_covered_idxs
+            id = global_cell_ids[i]
             id == 0 && continue
-            if i ∈ partition_owned_idxs
+            if i ∈ global_owned_idxs
                 owned_active_cells += 1
             else
                 shared_active_cells += 1
             end
         end
-
         # cells that this partition is responsible for computing the updates to
         partition_compute_cells = Dict{Int,CELL_TYPE}()
         partition_compute_cells_updates = Dict{Int,UPDATE_TYPE}()
@@ -508,10 +513,10 @@ function fast_partition_cell_list(
         partition_shared_cells_updates = Dict{Int,UPDATE_TYPE}()
         sizehint!(partition_shared_cells, shared_active_cells)
         sizehint!(partition_shared_cells_updates, shared_active_cells)
-        for i ∈ eachindex(IndexCartesian(), partition_covered_cell_ids)
-            id = partition_covered_cell_ids[i]
+        for i ∈ global_covered_idxs
+            id = global_cell_ids[i]
             id == 0 && continue
-            if i ∈ partition_owned_idxs
+            if i ∈ global_owned_idxs
                 partition_compute_cells[id] = global_active_cells[id]
                 partition_compute_cells_updates[id] = zero.(fieldtypes(UPDATE_TYPE))
             else
@@ -521,7 +526,7 @@ function fast_partition_cell_list(
         end
         if show_info
             @info "Creating cell partition on grid ids..." partition_id = partition_id copied_idxs =
-                (range(total_covered_x...), range(total_covered_y...)) local_compute_idxs =
+                global_covered_idxs global_owned_idxs local_compute_idxs =
                 (range(locally_owned_x...), range(local_owned_y...)) owned_active_cells shared_active_cells
         end
 
@@ -561,6 +566,8 @@ function _verify_fastpartitioning(p, global_cells)
     no_overlap = all(Iterators.filter(Iterators.product(p, p)) do (p1, p2)
         p1.id != p2.id
     end) do (p1, p2)
+        shared12 = intersect(keys(p1.owned_cells), keys(p2.neighbor_cells))
+        shared21 = intersect(keys(p2.owned_cells), keys(p1.neighbor_cells))
         return all(owned_cell_ids(p1)) do cell_id
             cell_id ∉ owned_cell_ids(p2)
         end
@@ -736,7 +743,8 @@ end
 
 function propagate_updates_to!(dest::FastCellGridPartition, src::FastCellGridPartition)
     count = 0
-    shared_keys = Iterators.filter(k -> haskey(src.owned_update, k), dest.neighbors_update)
+    shared_keys =
+        Iterators.filter(k -> haskey(src.owned_update, k), keys(dest.neighbors_update))
     for k ∈ shared_keys
         count += 1
         dest.neighbors_update[k] = src.owned_update[k]
@@ -910,9 +918,6 @@ function primal_quadcell_list_and_id_grid(u0, params, bounds, ncells, scaling, o
 
     # u0 is probably cheap, right?
     _u0_func(x) = nondimensionalize(u0(x, params), scaling)
-    u0_type = typeof(_u0_func(first(pts)))
-    T = eltype(u0_type)
-    @show T
 
     u0_grid = map(_u0_func, pts)
     active_mask = active_cell_mask(centers..., obstacles)
@@ -961,7 +966,6 @@ function tangent_quadcell_list_and_id_grid(u0, params, bounds, ncells, scaling, 
     u̇0_type = typeof(_u̇0_func(first(pts)))
 
     NSEEDS = ncols_smatrix(u̇0_type)
-    @show T, NSEEDS
 
     u0_grid = map(_u0_func, pts)
     u̇0_grid = map(_u̇0_func, pts)

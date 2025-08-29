@@ -271,6 +271,7 @@ function _initialize_writer_task(channel_size, time_type, cells_type, data_strea
     ch = Channel{Union{Symbol,Tuple{time_type,cells_type}}}(
         channel_size;
         taskref = taskref,
+        spawn = true,
     ) do ch
         while true
             val = take!(ch)
@@ -341,7 +342,7 @@ function simulate_euler_equations_cells(
     scale::EulerEqnsScaling = _SI_DEFAULT_SCALE,
     cfl_limit = 0.75,
     max_tsteps = typemax(Int),
-    maximum_wall_duration = Week(4),
+    maximum_wall_duration = Hour(167),
     write_result = true,
     output_channel_size = 5,
     write_frequency = 1,
@@ -390,6 +391,7 @@ function simulate_euler_equations_cells(
     end
     wall_clock_start_time = Dates.now()
     previous_tstep_wall_clock = wall_clock_start_time
+    avg_duration = (previous_tstep_wall_clock - wall_clock_start_time) ÷ 2
     if show_info
         start_str = Dates.format(wall_clock_start_time, "HH:MM:SS.sss")
         @info "Starting simulation at $start_str" ncells = n_global_cells npartitions =
@@ -416,7 +418,11 @@ function simulate_euler_equations_cells(
         put!(writer_channel, (t, global_cells))
     end
     # do the time stepping
-    while !(t > T_end || t ≈ T_end) && n_tsteps < max_tsteps
+    while (
+        !(t > T_end || t ≈ T_end) &&
+        n_tsteps < max_tsteps &&
+        (n_tsteps + 4) * avg_duration < maximum_wall_duration
+    )
         Δt = step_cell_simulation!(
             cell_partitions,
             T_end - t,
@@ -425,11 +431,17 @@ function simulate_euler_equations_cells(
             gas,
         )
         current_tstep_wall_clock = Dates.now()
+        avg_duration = (current_tstep_wall_clock - wall_clock_start_time) ÷ n_tsteps
         if show_info && ((n_tsteps - 1) % info_frequency == 0)
             d = current_tstep_wall_clock - previous_tstep_wall_clock
-            avg_duration = (current_tstep_wall_clock - wall_clock_start_time) ÷ n_tsteps
-            @info "Time step $n_tsteps (duration $d, avg. $avg_duration)" t_k = t Δt t_next =
-                t + Δt
+            remaining = canonicalize(
+                maximum_wall_duration - (current_tstep_wall_clock - wall_clock_start_time),
+            )
+            remaining = Dates.CompoundPeriod(
+                remaining.periods[1:max(1, length(remaining.periods) - 2)],
+            )
+            @info "Time step $n_tsteps (duration $d, avg. $avg_duration, remaining wall clock $remaining)" cur_t =
+                t del_t = Δt nex_t = t + Δt
         end
         previous_tstep_wall_clock = current_tstep_wall_clock
         n_tsteps += 1
