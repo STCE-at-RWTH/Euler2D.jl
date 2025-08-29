@@ -347,6 +347,7 @@ function simulate_euler_equations_cells(
     write_frequency = 1,
     output_tag = "cell_euler_sim",
     show_info = true,
+    show_detailed_info = false,
     info_frequency = 10,
     tasks_per_axis = Threads.nthreads(),
 )
@@ -364,16 +365,16 @@ function simulate_euler_equations_cells(
     else
         tangent_quadcell_list_and_id_grid(u0, params, bounds, ncells, scale, obstacles)
     end
+    n_global_cells = length(global_cells)
+    # do the partitioning
+    cell_partitions = partition_cell_list(
+        global_cells,
+        global_cell_ids,
+        tasks_per_axis;
+        show_info = show_detailed_info,
+    )
 
-    cell_partitions = partition_cell_list(global_cells, global_cell_ids, tasks_per_axis)
-    wall_clock_start_time = Dates.now()
-    previous_tstep_wall_clock = wall_clock_start_time
-    if show_info
-        start_str = Dates.format(wall_clock_start_time, "HH:MM:SS.sss")
-        @info "Starting simulation at $start_str" ncells = length(global_cells) npartitions =
-            length(cell_partitions)
-    end
-
+    # initialize counters and timer
     n_tsteps = 1
     n_written_tsteps = 1
     t = zero(T)
@@ -387,7 +388,14 @@ function simulate_euler_equations_cells(
     if !write_result
         @info "Only the final value of the simulation will be available." T_end
     end
-
+    wall_clock_start_time = Dates.now()
+    previous_tstep_wall_clock = wall_clock_start_time
+    if show_info
+        start_str = Dates.format(wall_clock_start_time, "HH:MM:SS.sss")
+        @info "Starting simulation at $start_str" ncells = n_global_cells npartitions =
+            length(cell_partitions)
+    end
+    # open output stream
     if write_result
         tape_stream = open(tape_file, "w+")
         write(tape_stream, zero(Int), mode)
@@ -407,7 +415,7 @@ function simulate_euler_equations_cells(
         )
         put!(writer_channel, (t, global_cells))
     end
-
+    # do the time stepping
     while !(t > T_end || t ≈ T_end) && n_tsteps < max_tsteps
         Δt = step_cell_simulation!(
             cell_partitions,
@@ -433,7 +441,7 @@ function simulate_euler_equations_cells(
         )
             put!(
                 writer_channel,
-                (t, collect_cell_partitions(cell_partitions, global_cell_ids)),
+                (t, collect_cell_partitions(cell_partitions, n_global_cells)),
             )
             n_written_tsteps += 1
             if show_info

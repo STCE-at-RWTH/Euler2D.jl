@@ -569,20 +569,23 @@ function _verify_fastpartitioning(p, global_cells)
     return no_overlap && (computed_cells == keys(global_cells))
 end
 
-function collect_cell_partitions!(global_cells, cell_partitions)
-    for part ∈ cell_partitions
-        data_region = owned_cell_ids(part)
-        for id ∈ data_region
-            id == 0 && continue
-            global_cells[id] = part.cells_map[id]
-        end
+function collect_cell_partition!(global_cells, partition::CellGridPartition)
+    data_region = owned_cell_ids(partition)
+    for id ∈ data_region
+        global_cells[id] = partition.cells_map[id]
     end
 end
 
-function collect_cell_partitions(cell_partitions, global_cell_ids)
-    u_global = empty(cell_partitions[1].cells_map)
-    sizehint!(u_global, count(≠(0), global_cell_ids))
-    collect_cell_partitions!(u_global, cell_partitions)
+function collect_cell_partition!(global_cells, partition::FastCellGridPartition)
+    merge!(global_cells, partition.owned_cells)
+end
+
+function collect_cell_partitions(cell_partitions, n_active_cells)
+    u_global = Dict{Int64,cell_type(first(cell_partitions))}()
+    sizehint!(u_global, n_active_cells)
+    foreach(cell_partitions) do p
+        collect_cell_partition!(u_global, p)
+    end
     return u_global
 end
 
@@ -706,7 +709,7 @@ function compute_partition_update_and_max_Δt!(
 end
 
 """
-    propagate_updates_to!(dest, src, global_cell_ids)
+    propagate_updates_to!(dest, src)
 
 After computing the cell updates for the regions 
 that a partition is responsible for, propagate the updates 
