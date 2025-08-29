@@ -380,11 +380,13 @@ function simulate_euler_equations_cells(
     n_written_tsteps = 1
     t = zero(T)
     if write_result
-        if !isdir("data")
-            @info "Creating directory at" dir = joinpath(pwd(), "data")
-            mkdir("data")
+        tape_file = joinpath(pwd(), "data", output_tag * ".celltape")
+        tape_path = dirname(tape_file)
+        status_file = joinpath(pwd(), "data", output_tag * ".status")
+        if !isdir(tape_path)
+            @info "Creating data directory/ies at $tape_path"
+            mkpath(tape_path)
         end
-        tape_file = joinpath("data", output_tag * ".celltape")
     end
     if !write_result
         @info "Only the final value of the simulation will be available." T_end
@@ -417,12 +419,10 @@ function simulate_euler_equations_cells(
         )
         put!(writer_channel, (t, global_cells))
     end
+
+    time_stepping_status = 0
     # do the time stepping
-    while (
-        !(t > T_end || t ≈ T_end) &&
-        n_tsteps < max_tsteps &&
-        (n_tsteps + 4) * avg_duration < maximum_wall_duration
-    )
+    while time_stepping_status == 0
         Δt = step_cell_simulation!(
             cell_partitions,
             T_end - t,
@@ -446,10 +446,18 @@ function simulate_euler_equations_cells(
         previous_tstep_wall_clock = current_tstep_wall_clock
         n_tsteps += 1
         t += Δt
+
+        if t > T_end || t ≈ T_end
+            time_stepping_status = 1
+        elseif n_tsteps >= max_tsteps
+            time_stepping_status = 2
+        elseif (n_tsteps + 4) * avg_duration > maximum_wall_duration
+            time_stepping_status = 3
+        end
         # push output to the writer task
         if (
             write_result &&
-            ((n_tsteps - 1) % write_frequency == 0 || n_tsteps == max_tsteps)
+            ((n_tsteps - 1) % write_frequency == 0 || n_tsteps >= max_tsteps)
         )
             put!(
                 writer_channel,
@@ -471,6 +479,9 @@ function simulate_euler_equations_cells(
         write(tape_stream, n_written_tsteps)
         seekend(tape_stream)
         close(tape_stream)
+        open(status_file, "w+") do f
+            println(f, time_stepping_status)
+        end
     end
 
     return CellBasedEulerSim(

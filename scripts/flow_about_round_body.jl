@@ -54,8 +54,8 @@ Euler2D.simulate_euler_equations_cells(
     show_detailed_info = true,
     info_frequency = 5,
     write_frequency = 25,
-    max_tsteps = 1000,
-    output_tag = "fast_partitioning_n500nt1000ntasks16",
+    max_tsteps = 10,
+    output_tag = "validate_new_partition/fast_partitioning_n500nt1000ntasks16",
     output_channel_size = 2,
     tasks_per_axis = 4,
 );
