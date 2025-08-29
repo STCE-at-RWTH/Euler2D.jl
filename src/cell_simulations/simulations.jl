@@ -367,7 +367,7 @@ function simulate_euler_equations_cells(
     end
     n_global_cells = length(global_cells)
     # do the partitioning
-    cell_partitions = partition_cell_list(
+    cell_partitions = fast_partition_cell_list(
         global_cells,
         global_cell_ids,
         tasks_per_axis;
@@ -467,7 +467,7 @@ function simulate_euler_equations_cells(
         (((first(r), last(r)) for r ∈ cell_ifaces)...,),
         [t],
         global_cell_ids,
-        [collect_cell_partitions(cell_partitions, global_cell_ids)],
+        [collect_cell_partitions(cell_partitions, n_global_cells)],
     )
 end
 
