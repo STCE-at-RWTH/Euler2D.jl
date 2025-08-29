@@ -1,3 +1,5 @@
+using Revise
+
 using BenchmarkTools
 using Euler2D
 using Euler2D: tangent_quadcell_list_and_id_grid, primal_quadcell_list_and_id_grid
@@ -78,7 +80,7 @@ function parallel_broadcast_update(partitions)
             tpl -> ≠(tpl...),
             ((a.id, b.id) for (a, b) in Iterators.product(partitions, partitions)),
         ) |> collect
-    partition_locks = [Lockable(p) for p ∈ partitions]
+    partition_locks = [Base.Lockable(p) for p ∈ partitions]
     tforeach(needs_shared) do (id1, id2)
         lock(partition_locks[id1])
         Euler2D.propagate_updates_to!(partition_locks[id1][], partitions[id2])

@@ -777,7 +777,7 @@ function step_cell_simulation!(
     cfl_limit,
     gas::CaloricallyPerfectGas,
 )
-    T = numeric_dtype(eltype(cell_partitions))
+    T = numeric_dtype(first(cell_partitions))
     # TODO
     # there has to be a cleverer way to do this...
     # perhaps a dict of id=>list of ids to pull from?
