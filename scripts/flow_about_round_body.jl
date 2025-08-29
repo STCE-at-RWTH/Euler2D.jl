@@ -38,7 +38,7 @@ probe = [
     CircularObstacle((0.0, 0.0), 0.75),
     RectangularObstacle(SVector(1.0, 0.0), SVector(2.0, 1.5)),
 ]
-ncells = (500, 500)
+ncells = (400, 400)
 
 Euler2D.simulate_euler_equations_cells(
     u0,
@@ -51,10 +51,11 @@ Euler2D.simulate_euler_equations_cells(
     mode = Euler2D.TANGENT,
     gas = DRY_AIR,
     scale = scale,
-    info_frequency = 10,
-    write_frequency = 20,
-    max_tsteps = 1000,
-    output_tag = "probe_obstacle_tangent_very_long_time",
+    show_detailed_info = true,
+    info_frequency = 5,
+    write_frequency = 25,
+    max_tsteps = 10,
+    output_tag = "validate_new_partition/fast_partitioning_n500nt1000ntasks16",
     output_channel_size = 2,
-    tasks_per_axis = 2,
+    tasks_per_axis = 4,
 );

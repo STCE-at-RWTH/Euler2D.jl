@@ -263,6 +263,27 @@ mach_number_field(
     scale::EulerEqnsScaling,
 ) = mach_number_field(csim, n, gas)
 
+"""
+Take the tape data stream and return a channel where simulation state can be queued then pushed.
+"""
+function _initialize_writer_task(channel_size, time_type, cells_type, data_stream)
+    taskref = Ref{Task}()
+    ch = Channel{Union{Symbol,Tuple{time_type,cells_type}}}(
+        channel_size;
+        taskref = taskref,
+        spawn = true,
+    ) do ch
+        while true
+            val = take!(ch)
+            if val == :stop
+                break
+            end
+            write_tstep_to_stream(data_stream, val...)
+        end
+    end
+    return taskref, ch
+end
+
 function write_tstep_to_stream(stream, t, global_cells)
     @info "Writing time step to file." t = t ncells = length(global_cells)
     write(stream, t)
@@ -321,12 +342,13 @@ function simulate_euler_equations_cells(
     scale::EulerEqnsScaling = _SI_DEFAULT_SCALE,
     cfl_limit = 0.75,
     max_tsteps = typemax(Int),
+    maximum_wall_duration = Hour(167),
     write_result = true,
     output_channel_size = 5,
     write_frequency = 1,
-    history_in_memory = false,
     output_tag = "cell_euler_sim",
     show_info = true,
+    show_detailed_info = false,
     info_frequency = 10,
     tasks_per_axis = Threads.nthreads(),
 )
@@ -344,37 +366,40 @@ function simulate_euler_equations_cells(
     else
         tangent_quadcell_list_and_id_grid(u0, params, bounds, ncells, scale, obstacles)
     end
+    n_global_cells = length(global_cells)
+    # do the partitioning
+    cell_partitions = fast_partition_cell_list(
+        global_cells,
+        global_cell_ids,
+        tasks_per_axis;
+        show_info = show_detailed_info,
+    )
 
-    cell_partitions = partition_cell_list(global_cells, global_cell_ids, tasks_per_axis)
-    wall_clock_start_time = Dates.now()
-    previous_tstep_wall_clock = wall_clock_start_time
-    if show_info
-        start_str = Dates.format(wall_clock_start_time, "HH:MM:SS.sss")
-        @info "Starting simulation at $start_str" ncells = length(global_cells) npartitions =
-            length(cell_partitions)
-    end
-
+    # initialize counters and timer
     n_tsteps = 1
     n_written_tsteps = 1
     t = zero(T)
     if write_result
-        if !isdir("data")
-            @info "Creating directory at" dir = joinpath(pwd(), "data")
-            mkdir("data")
+        tape_file = joinpath(pwd(), "data", output_tag * ".celltape")
+        tape_path = dirname(tape_file)
+        status_file = joinpath(pwd(), "data", output_tag * ".status")
+        if !isdir(tape_path)
+            @info "Creating data directory/ies at $tape_path"
+            mkpath(tape_path)
         end
-        tape_file = joinpath("data", output_tag * ".celltape")
     end
-    if !write_result && !history_in_memory
+    if !write_result
         @info "Only the final value of the simulation will be available." T_end
     end
-
-    u_history = typeof(global_cells)[]
-    t_history = typeof(t)[]
-    if (history_in_memory)
-        push!(u_history, copy(global_cells))
-        push!(t_history, t)
+    wall_clock_start_time = Dates.now()
+    previous_tstep_wall_clock = wall_clock_start_time
+    avg_duration = (previous_tstep_wall_clock - wall_clock_start_time) ÷ 2
+    if show_info
+        start_str = Dates.format(wall_clock_start_time, "HH:MM:SS.sss")
+        @info "Starting simulation at $start_str" ncells = n_global_cells npartitions =
+            length(cell_partitions)
     end
-
+    # open output stream
     if write_result
         tape_stream = open(tape_file, "w+")
         write(tape_stream, zero(Int), mode)
@@ -386,24 +411,18 @@ function simulate_euler_equations_cells(
             write(tape_stream, b...)
         end
         write(tape_stream, global_cell_ids)
-        # TODO we would like to preallocate buffers here...
-        writer_taskref = Ref{Task}()
-        writer_channel = Channel{Union{Symbol,Tuple{T,typeof(global_cells)}}}(
-            output_channel_size;
-            taskref = writer_taskref,
-        ) do ch
-            while true
-                val = take!(ch)
-                if val == :stop
-                    break
-                end
-                write_tstep_to_stream(tape_stream, val...)
-            end
-        end
+        writer_taskref, writer_channel = _initialize_writer_task(
+            output_channel_size,
+            T,
+            typeof(global_cells),
+            tape_stream,
+        )
         put!(writer_channel, (t, global_cells))
     end
 
-    while !(t > T_end || t ≈ T_end) && n_tsteps < max_tsteps
+    time_stepping_status = 0
+    # do the time stepping
+    while time_stepping_status == 0
         Δt = step_cell_simulation!(
             cell_partitions,
             T_end - t,
@@ -412,33 +431,38 @@ function simulate_euler_equations_cells(
             gas,
         )
         current_tstep_wall_clock = Dates.now()
+        avg_duration = (current_tstep_wall_clock - wall_clock_start_time) ÷ n_tsteps
         if show_info && ((n_tsteps - 1) % info_frequency == 0)
             d = current_tstep_wall_clock - previous_tstep_wall_clock
-            avg_duration = (current_tstep_wall_clock - wall_clock_start_time) ÷ n_tsteps
-            @info "Time step $n_tsteps (duration $d, avg. $avg_duration)" t_k = t Δt t_next =
-                t + Δt
+            remaining = canonicalize(
+                maximum_wall_duration - (current_tstep_wall_clock - wall_clock_start_time),
+            )
+            remaining = Dates.CompoundPeriod(
+                remaining.periods[1:max(1, length(remaining.periods) - 2)],
+            )
+            @info "Time step $n_tsteps (duration $d, avg. $avg_duration, remaining wall clock $remaining)" cur_t =
+                t del_t = Δt nex_t = t + Δt
         end
         previous_tstep_wall_clock = current_tstep_wall_clock
         n_tsteps += 1
         t += Δt
+
+        if t > T_end || t ≈ T_end
+            time_stepping_status = 1
+        elseif n_tsteps >= max_tsteps
+            time_stepping_status = 2
+        elseif (n_tsteps + 4) * avg_duration > maximum_wall_duration
+            time_stepping_status = 3
+        end
+        # push output to the writer task
         if (
-            ((n_tsteps - 1) % write_frequency == 0 || n_tsteps == max_tsteps) &&
-            (write_result || history_in_memory)
+            write_result &&
+            ((n_tsteps - 1) % write_frequency == 0 || n_tsteps >= max_tsteps)
         )
-            if write_result && history_in_memory
-                u_cur = collect_cell_partitions(cell_partitions, global_cell_ids)
-                put!(writer_channel, (t, u_cur))
-                push!(u_history, u_cur)
-                push!(t_history, t)
-            elseif write_result
-                put!(
-                    writer_channel,
-                    (t, collect_cell_partitions(cell_partitions, global_cell_ids)),
-                )
-            elseif history_in_memory
-                push!(u_history, collect_cell_partitions(cell_partitions, global_cell_ids))
-                push!(t_history, t)
-            end
+            put!(
+                writer_channel,
+                (t, collect_cell_partitions(cell_partitions, n_global_cells)),
+            )
             n_written_tsteps += 1
             if show_info
                 @info "Saving simulation state at " k = n_tsteps total_saved =
@@ -455,18 +479,9 @@ function simulate_euler_equations_cells(
         write(tape_stream, n_written_tsteps)
         seekend(tape_stream)
         close(tape_stream)
-    end
-
-    if history_in_memory
-        @assert n_written_tsteps == length(t_history)
-        return CellBasedEulerSim{T}(
-            (ncells...,),
-            n_written_tsteps,
-            (((first(r), last(r)) for r ∈ cell_ifaces)...),
-            t_history,
-            global_cell_ids,
-            u_history,
-        )
+        open(status_file, "w+") do f
+            println(f, time_stepping_status)
+        end
     end
 
     return CellBasedEulerSim(
@@ -475,7 +490,7 @@ function simulate_euler_equations_cells(
         (((first(r), last(r)) for r ∈ cell_ifaces)...,),
         [t],
         global_cell_ids,
-        [collect_cell_partitions(cell_partitions, global_cell_ids)],
+        [collect_cell_partitions(cell_partitions, n_global_cells)],
     )
 end
 
@@ -543,6 +558,8 @@ function load_cell_sim(path; steps = :all, T = Float64, show_info = true)
 
         (time_steps_to_read, n_tsteps) = if steps == :all
             1:n_tsteps, n_tsteps
+        elseif steps == :last
+            (n_tsteps,), 1
         else
             steps, length(steps)
         end

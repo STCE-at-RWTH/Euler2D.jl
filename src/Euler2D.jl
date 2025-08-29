@@ -11,7 +11,7 @@ using Dates
 using DifferentiationInterface
 using ForwardDiff: ForwardDiff
 using LinearAlgebra
-using OhMyThreads: tforeach, tmap
+using OhMyThreads: tforeach, tmap, tmapreduce
 using ShockwaveProperties
 using ShockwaveProperties: MomentumDensity, EnergyDensity
 using StaticArrays
