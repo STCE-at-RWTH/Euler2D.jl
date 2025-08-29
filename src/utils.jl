@@ -77,14 +77,19 @@ end
 ### END OF BASES
 
 ### HORRIBLE BACKUP DICT THINGY
+"""
+  BackupDict{K, V}
 
-struct BackupDict{K,V}
+A wrapper around two Dicts that will try to look up values in
+`primary` before `secondary`.
+"""
+struct BackupDict{K,V} #<: AbstractDict{K,V}
     primary::Dict{K,V}
     secondary::Dict{K,V}
 end
 
-function Base.getindex(dict::BackupDict, key)
-    return get(() -> dict.secondary[key], dict.primary, key)
+function Base.getindex(bdict::BackupDict, key)
+    return get(() -> bdict.secondary[key], bdict.primary, key)
 end
 
 ### END HORRIBLE BACKUP DICT THINGY

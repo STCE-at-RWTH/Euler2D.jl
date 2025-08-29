@@ -2,6 +2,7 @@ using BenchmarkTools
 using Euler2D
 using Euler2D: tangent_quadcell_list_and_id_grid, primal_quadcell_list_and_id_grid
 using Euler2D: partition_cell_list, step_cell_simulation!
+using OhMyThreads
 using ForwardDiff
 using LinearAlgebra
 using PProf
@@ -19,7 +20,7 @@ bcs = (
 )
 bounds = ((-2.0, 0.0), (-1.5, 1.5))
 just_circle = [CircularObstacle((0.0, 0.0), 0.75)]
-ncells = (50, 75)
+ncells = (225, 300)
 
 starting_parameters = SVector(0.662, 4.0, 220.0)
 
@@ -46,10 +47,45 @@ global_cells, global_ids = primal_quadcell_list_and_id_grid(
     scale,
     just_circle,
 );
-cell_partitions = partition_cell_list(global_cells, global_ids, 2; show_info = true);
+cell_partitions = partition_cell_list(global_cells, global_ids, 4; show_info = true);
 
 using Euler2D: fast_partition_cell_list
-# fast_cell_partitions = fast_partition_cell_list(global_cells, global_ids, 2)
+fast_cell_partitions = fast_partition_cell_list(global_cells, global_ids, 4)
+
+serial_update(partitions, bc, gas) =
+    foreach(partitions) do p
+        Euler2D.compute_partition_update_and_max_Δt!(p, bc, gas)
+    end
+
+parallel_update(partitions, bc, gas) =
+    tforeach(partitions) do p
+        Euler2D.compute_partition_update_and_max_Δt!(p, bc, gas)
+    end
+
+function serial_broadcast_update(partitions)
+    needs_shared = Iterators.filter(
+        ((a, b),) -> a ≠ b,
+        ((a.id, b.id) for (a, b) in Iterators.product(partitions, partitions)),
+    )
+    foreach(needs_shared) do (id1, id2)
+        Euler2D.propagate_updates_to!(partitions[id1], partitions[id2])
+    end
+end
+
+function parallel_broadcast_update(partitions)
+    needs_shared =
+        Iterators.filter(
+            tpl -> ≠(tpl...),
+            ((a.id, b.id) for (a, b) in Iterators.product(partitions, partitions)),
+        ) |> collect
+    partition_locks = [Lockable(p) for p ∈ partitions]
+    tforeach(needs_shared) do (id1, id2)
+        lock(partition_locks[id1])
+        Euler2D.propagate_updates_to!(partition_locks[id1][], partitions[id2])
+        unlock(partition_locks[id1])
+    end
+end
+
 # step_cell_simulation!(cell_partitions, 0.1, bcs, 0.5, DRY_AIR)
 #
 # ## 
