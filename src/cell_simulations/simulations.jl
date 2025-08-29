@@ -455,10 +455,7 @@ function simulate_euler_equations_cells(
             time_stepping_status = 3
         end
         # push output to the writer task
-        if (
-            write_result &&
-            ((n_tsteps - 1) % write_frequency == 0 || n_tsteps >= max_tsteps)
-        )
+        if (write_result && ((n_tsteps - 1) % write_frequency == 0))
             put!(
                 writer_channel,
                 (t, collect_cell_partitions(cell_partitions, n_global_cells)),
@@ -472,6 +469,8 @@ function simulate_euler_equations_cells(
     end
 
     if write_result
+        put!(writer_channel, (t, collect_cell_partitions(cell_partitions, n_global_cells)))
+        n_written_tsteps += 1
         put!(writer_channel, :stop)
         wait(writer_taskref[])
 
