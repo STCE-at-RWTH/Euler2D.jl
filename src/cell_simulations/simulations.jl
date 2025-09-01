@@ -469,8 +469,14 @@ function simulate_euler_equations_cells(
     end
 
     if write_result
-        put!(writer_channel, (t, collect_cell_partitions(cell_partitions, n_global_cells)))
-        n_written_tsteps += 1
+        # only write the current state if we haven't already
+        if ((n_tsteps - 1) % write_frequency != 0)
+            put!(
+                writer_channel,
+                (t, collect_cell_partitions(cell_partitions, n_global_cells)),
+            )
+            n_written_tsteps += 1
+        end
         put!(writer_channel, :stop)
         wait(writer_taskref[])
 
