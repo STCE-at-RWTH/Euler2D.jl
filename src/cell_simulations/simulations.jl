@@ -507,7 +507,7 @@ function _load_tsteps_from_file!(
     show_info = true,
 ) where {CellType,T}
     step_size_bytes = sizeof(T) + n_active * sizeof(CellType)
-    skip_size = vcat(0, diff(tstep_range) .- 1)
+    skip_size = length(tstep_range) == 1 ? [0] : vcat(0, diff(tstep_range) .- 1)
     temp = Vector{CellType}(undef, n_active)
     for i ∈ eachindex(tstep_range)
         if skip_size[i] > 0
@@ -528,11 +528,11 @@ function _load_tsteps_from_file!(
 end
 
 """
-    load_cell_sim(path; T=Float64, show_info=true)
+    load_cell_sim(path; steps=:all, T=Float64, show_info=true)
 
 Load a cell-based simulation from path, computed with data type `T`.
 Other kwargs include:
-- `steps = :all` or `steps = ` some iterable of values
+- `steps = :all`, or `steps=:last`, or `steps = ` some iterable of values
 - `show_info=true`: show metadata via `@info`
 """
 function load_cell_sim(path; steps = :all, T = Float64, show_info = true)
@@ -558,7 +558,7 @@ function load_cell_sim(path; steps = :all, T = Float64, show_info = true)
         (time_steps_to_read, n_tsteps) = if steps == :all
             1:n_tsteps, n_tsteps
         elseif steps == :last
-            (n_tsteps,), 1
+            [n_tsteps], 1
         else
             steps, length(steps)
         end
