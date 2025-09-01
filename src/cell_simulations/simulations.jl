@@ -507,7 +507,7 @@ function _load_tsteps_from_file!(
     show_info = true,
 ) where {CellType,T}
     step_size_bytes = sizeof(T) + n_active * sizeof(CellType)
-    skip_size = length(tstep_range) == 1 ? [0] : vcat(0, diff(tstep_range) .- 1)
+    skip_size = diff(vcat(0, tstep_range)) .- 1
     temp = Vector{CellType}(undef, n_active)
     for i ∈ eachindex(tstep_range)
         if skip_size[i] > 0
