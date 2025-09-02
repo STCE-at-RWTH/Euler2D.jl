@@ -1,101 +1,3 @@
-struct EulerEqnsScaling{T,Q1<:Unitful.Length{T},Q2<:Density{T},Q3<:Velocity{T}}
-    x_0::Q1
-    ρ_0::Q2
-    v_0::Q3
-end
-
-length_scale(c::EulerEqnsScaling) = c.x_0
-density_scale(c::EulerEqnsScaling) = c.ρ_0
-velocity_scale(c::EulerEqnsScaling) = c.v_0
-time_scale(c::EulerEqnsScaling) = length_scale(c) / velocity_scale(c)
-pressure_scale(c::EulerEqnsScaling) = density_scale(c) * velocity_scale(c)^2
-energy_density_scale(c::EulerEqnsScaling) = pressure_scale(c) # wow the magic of inviscid flow
-body_force_scale(c::EulerEqnsScaling) = energy_density_scale(c) / length_scale(c)
-
-function nondimensionalize(u::ConservedProps{N,T}, s) where {N,T}
-    ρv = uconvert.(NoUnits, (u.ρv / (density_scale(s) * velocity_scale(s))))
-    return SVector{N + 2,T}(
-        uconvert(NoUnits, u.ρ / density_scale(s)),
-        ρv...,
-        uconvert(NoUnits, u.ρE / energy_density_scale(s)),
-    )
-end
-
-function redimensionalize(u_star::SVector{N,T}, s) where {N,T}
-    ρ = u_star[1] * density_scale(s)
-    ρv = select_middle(u_star) * density_scale(s) * velocity_scale(s)
-    ρE = u_star[N] * energy_density_scale(s)
-    return ConservedProps(ρ, ρv, ρE)
-end
-
-function dimensionless_pressure(u_star::SVector{N,T}, gas::CaloricallyPerfectGas) where {N,T}
-    ρv_star = select_middle(u_star)
-    return (gas.γ - 1)*(u_star[N] - ρv_star ⋅ ρv_star / (2 * u_star[1]))
-end
-
-"""
-    dimensionless_speed_of_sound(u_star, gas)
-
-Compute the non-dimesionalized speed of sound `a_star` from the nondimesionalized state variable `u``
-"""
-function dimensionless_speed_of_sound(
-    u_star::SVector{N,T},
-    gas::CaloricallyPerfectGas,
-) where {N,T}
-    P_star = dimensionless_pressure(u_star, gas)
-    return sqrt(gas.γ * (P_star / u_star[1]))
-end
-
-function dimensionless_mach_number(u_star::SVector{N, T}, gas::CaloricallyPerfectGas) where {N, T}
-    a = dimensionless_speed_of_sound(u_star, gas)
-    ρa = u_star[1] * a
-    return select_middle(u_star) ./ ρa
-end
-
-"""
-    dimensionless_total_enthalpy_density(u_star, gas)
-
-Compute the dimensionless total enthalpy density `ρH_star` from the nondimesionalized state variable `u``
-"""
-function dimensionless_total_enthalpy_density(
-    u_star::SVector{N,T},
-    gas::CaloricallyPerfectGas,
-) where {N,T}
-    return u_star[N] + dimensionless_pressure(u_star, gas)
-end
-
-
-# do we need the multiple eigenvalues in the middle? I do not know...
-"""
-    eigenvalues_∇F_euler(u, dims, gas)
-
-Computes the eigenvalues of the Jacobian of the Euler flux function in dimension `dim`.
-"""
-function eigenvalues_∇F_euler(u, dim, gas::CaloricallyPerfectGas)
-    ρv = select_middle(u)
-    v = ustrip.(ρv / u[1])
-    a = ustrip(speed_of_sound(u[1], ρv, u[end], gas))
-    return vcat_ρ_ρv_ρE_preserve_static(
-        v[dim] - a,
-        SVector(ntuple(Returns(v[dim]), length(v))),
-        v[dim] + a,
-    )
-end
-
-function eigenvalues_∇F_euler(
-    u::ConservedProps{N,T,Q1,Q2,Q3},
-    dim,
-    gas::CaloricallyPerfectGas,
-) where {N,T,Q1,Q2,Q3}
-    v = ustrip.(ShockwaveProperties._units_v, velocity(u))
-    a = ustrip(ShockwaveProperties._units_v, speed_of_sound(u, gas))
-    return vcat_ρ_ρv_ρE_preserve_static(
-        v[dim] - a,
-        SVector(ntuple(Returns(v[dim]), N)),
-        v[dim] + a,
-    )
-end
-
 """
     roe_parameter_vector(u, gas)
 
@@ -131,12 +33,11 @@ function roe_matrix_eigenvalues(uL, uR, dim, gas::CaloricallyPerfectGas)
     v̄ = select_middle(w̄) / w̄[1]
     H̄ = w̄[end] / w̄[1]
     a = sqrt((gas.γ - 1) * (H̄ - (v̄ ⋅ v̄) / 2))
-    # FIXME how to avoid a huge performance hit here?
-    return vcat_ρ_ρv_ρE_preserve_static(
-        v̄[dim] - a,
-        SVector(ntuple(Returns(v̄[dim]), length(v̄))),
-        v̄[dim] + a,
-    )
+    return if v̄ isa SVector
+        vcat(SVector(v̄[dim] - a), v̄[dim] * ones(typeof(v̄)), SVector(v̄[dim] + a))
+    else
+        vcat(v̄[dim] - a, fill(v̄[dim], length(v̄)), v̄[dim] + a)
+    end
 end
 
 """
@@ -166,7 +67,7 @@ Compute the HLL numerical flux across the L-R boundary.
 - `uL`, `uR`: States on either side of the boundary
 - `dim` : Direction to calculate F_hll
 """
-function ϕ_hll(uL, uR, dim, gas::CaloricallyPerfectGas)
+function ϕ_hll(uL, uR, dim::Int, gas::CaloricallyPerfectGas)
     fL = select_space_dim(F_euler(uL, gas), dim)
     fR = select_space_dim(F_euler(uR, gas), dim)
     sL, sR = interface_signal_speeds(uL, uR, dim, gas)
@@ -174,17 +75,36 @@ function ϕ_hll(uL, uR, dim, gas::CaloricallyPerfectGas)
 end
 
 """
+    ϕ_hll(uL, uR, n, gas)
+
+Compute the HLL numerical flux across the L-R boundary.
+- `uL`, `uR`: States on either side of the boundary
+- `n` : Direction normal to the boundary, points towards uR
+"""
+function ϕ_hll(uL, uR, n, gas)
+    qL = project_state_to_normal(uL, n)
+    qR = project_state_to_normal(uR, n)
+    fL = F_euler(qL, gas)[:, 1]
+    fR = F_euler(qR, gas)[:, 1]
+    sL, sR = interface_signal_speeds(qL, qR, 1, gas)
+    return ϕ_hll(qL, qR, fL, fR, sL, sR)
+end
+
+"""
     ϕ_hll(uL, u̇L, uR, u̇R, dim, gas)
 
 Compute the Jacobian-vector product of `ϕ_hll` given seeds `u̇L` and `u̇R`.
+
+`n` may either be an integer, for which `e1, e2, ` or `e3` will be used as the normal vector pointing towards `uR`, or a unit normal vector.
 """
-function ϕ_hll_jvp(uL, u̇L, uR, u̇R, dim, gas::CaloricallyPerfectGas)
+function ϕ_hll_jvp(uL, u̇L, uR, u̇R, n, gas::CaloricallyPerfectGas)
     u_arg = vcat(uL, uR)
     # TODO how to seed values into ForwardDiff? We shouldn't have to create and multiply a matrix here.
     #   Although, multiplying a 4×8 matrix by an 8×1 vector shouldn't be too bad
-    J = ForwardDiff.jacobian(u_arg) do u
+    J = jacobian(fdiff_backend, u_arg, Constant(n), Constant(gas)) do u, n, gas
+        # TODO remove svector requirement here.
         v1, v2 = split_svector(u)
-        return ϕ_hll(v1, v2, dim, gas)
+        return ϕ_hll(v1, v2, n, gas)
     end
     return J * vcat(u̇L, u̇R)
 end
@@ -197,7 +117,7 @@ Compute the HLL numerical flux across the L-R boundary.
 - `fL`, `fR`: value of the flux function on either side of the boundary, if known.
 - `dim`: Dimension in which to calculate the signal speeds.
 """
-function ϕ_hll(uL, uR, fL, fR, dim, gas::CaloricallyPerfectGas)
+function ϕ_hll(uL, uR, fL, fR, dim::Int, gas::CaloricallyPerfectGas)
     sL, sR = interface_signal_speeds(uL, uR, dim, gas)
     return ϕ_hll(uL, uR, select_space_dim(fL, dim), select_space_dim(fR, dim), sL, sR)
 end

@@ -9,7 +9,7 @@ const _units_ρv_transport = ShockwaveProperties._units_P
 const _units_ρE_transport = u"kg/s^3"
 
 # then we can select dimensions easily
-
+# BUG F_ρv not determined
 struct ConservedPropsTransport{
     N,
     T,
@@ -74,7 +74,7 @@ This implementation will strip out units, and convert down to metric base units 
 function F_euler(u::StaticVector{S,T}, gas::CaloricallyPerfectGas) where {S,T}
     ρv = select_middle(u)
     v = SVector{S - 2,T}(ρv / u[1])
-    P = ustrip(ShockwaveProperties._units_P, pressure(u[1], ρv, u[end], gas))
+    P = dimensionless_pressure(u, gas)
     ρv_flux = ρv * v' + I * P
     return vcat(ρv', ρv_flux, (v * (u[end] + P))')
 end
@@ -109,3 +109,81 @@ function select_space_dim(
 end
 
 select_space_dim(F_e, dim) = F_e[:, dim]
+
+# do we need the multiple eigenvalues in the middle? I do not know...
+"""
+    eigenvalues_∇F_euler(u, dims, gas)
+
+Computes the eigenvalues of the Jacobian of the Euler flux function in dimension `dim`.
+"""
+function eigenvalues_∇F_euler(u, dim, gas::CaloricallyPerfectGas)
+    ρv = select_middle(u)
+    v = ρv / u[1]
+    a = dimensionless_speed_of_sound(u, gas)
+    return vcat_ρ_ρv_ρE_preserve_static(
+        v[dim] - a,
+        SVector(ntuple(Returns(v[dim]), length(v))),
+        v[dim] + a,
+    )
+end
+
+function eigenvalues_∇F_euler(
+    u::ConservedProps{N,T,Q1,Q2,Q3},
+    dim,
+    gas::CaloricallyPerfectGas,
+) where {N,T,Q1,Q2,Q3}
+    v = ustrip.(ShockwaveProperties._units_v, velocity(u))
+    a = ustrip(ShockwaveProperties._units_v, speed_of_sound(u, gas))
+    return vcat_ρ_ρv_ρE_preserve_static(
+        v[dim] - a,
+        SVector(ntuple(Returns(v[dim]), N)),
+        v[dim] + a,
+    )
+end
+
+"""
+  eigenvectors_∇F_euler(u, gas)
+
+Compute the eigenvectors of the Jacobian of the Euler equations flux.
+"""
+function eigenvectors_∇F_euler(u::SVector{3,T}, gas) where {T}
+    v = u[2] / u[1]
+    a = dimensionless_speed_of_sound(u, gas)
+    H = dimensionless_total_enthalpy_density(u, gas) / u[1]
+    r1 = SVector(1, v - a, H - v * a)
+    r2 = SVector(1, v, v * v / 2)
+    r3 = SVector(1, v + a, H + v * a)
+    return hcat(r1, r2, r3)
+end
+
+"""
+Compute the eigenvectors of the Jacobian of the x-component of the Euler equations flux.
+"""
+function eigenvectors_∇F_euler(u::SVector{4,T}, gas) where {T}
+    v1 = u[2] / u[1]
+    v2 = u[3] / u[1]
+    a = dimensionless_speed_of_sound(u, gas)
+    H = dimensionless_total_enthalpy_density(u, gas) / u[1]
+    r1 = SVector(1.0, v1 - a, v2, H - a * v1)
+    r2 = SVector(1.0, v1, v2, 0.5 * (v1 * v1 + v2 * v2))
+    r3 = SVector(0.0, 0.0, 1.0, v2)
+    r4 = SVector(1.0, v1 + a, v2, H + a * v1)
+    return hcat(r1, r2, r3, r4)
+end
+
+"""
+  eigenvectors_∇G_euler(u, gas)
+
+Compute the eigenvectors of the Jacobian of the y-component of the Euler equations flux.
+"""
+function eigenvectors_∇G_euler(u::SVector{4,T}, gas) where {T}
+    v1 = u[2] / u[1]
+    v2 = u[3] / u[1]
+    a = dimensionless_speed_of_sound(u, gas)
+    H = dimensionless_total_enthalpy_density(u, gas) / u[1]
+    r1 = SVector(1.0, v1, v2 - a, H - a * v2)
+    r2 = SVector(0.0, 1.0, 0.0, v1)
+    r3 = SVector(1.0, v1, v2, 0.5 * (v1 * v1 + v2 * v2))
+    r4 = SVector(1.0, v1, v2 + a, H + a * v2)
+    return hcat(r1, r2, r3, r4)
+end

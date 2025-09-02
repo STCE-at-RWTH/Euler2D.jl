@@ -8,9 +8,10 @@ end Euler2D
 
 using Accessors: @set, @reset
 using Dates
-using ForwardDiff
+using DifferentiationInterface
+using ForwardDiff: ForwardDiff
 using LinearAlgebra
-using OhMyThreads: tforeach, tmap
+using OhMyThreads: tforeach, tmap, tmapreduce
 using ShockwaveProperties
 using ShockwaveProperties: MomentumDensity, EnergyDensity
 using StaticArrays
@@ -24,7 +25,7 @@ include("nondimensionalization.jl")
 include("transport.jl")
 include("boundary_conditions.jl")
 include("riemann_solver/approximate_riemann_solver.jl")
-#include("riemann_solver/exact_riemann_solver.jl")
+include("riemann_solver/exact_riemann_solver.jl")
 include("array_simulations/fvm.jl")
 include("array_simulations/array_simulations.jl")
 include("cell_simulations/obstacle.jl")
@@ -34,6 +35,7 @@ include("postprocessing/finite_diffs.jl")
 include("postprocessing/canny_rh_filter.jl")
 
 const _SI_DEFAULT_SCALE = EulerEqnsScaling(1.0u"m", 1.0u"kg/m^3", 1.0u"m/s")
+const fdiff_backend = AutoForwardDiff()
 
 # reexport
 export ShockwaveProperties
@@ -42,7 +44,8 @@ export DRY_AIR
 # methods
 export F_euler
 export interface_signal_speeds, maximum_Δt
-export simulate_euler_equations_cells
+export eigenvectors_∇F_euler, eigenvectors_∇G_euler
+export step_euler_hll!, simulate_euler_equations, simulate_euler_equations_cells
 
 # dimension stuff
 export EulerEqnsScaling
