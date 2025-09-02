@@ -6,6 +6,8 @@ module Euler2D
     read(path, String)
 end Euler2D
 
+using LoopVectorization
+
 using Accessors: @set, @reset
 using Dates
 using DifferentiationInterface
