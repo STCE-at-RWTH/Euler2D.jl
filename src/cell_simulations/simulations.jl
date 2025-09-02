@@ -263,21 +263,78 @@ mach_number_field(
     scale::EulerEqnsScaling,
 ) = mach_number_field(csim, n, gas)
 
-function all_cells_contained_by(poly, sim)
-    closed_poly = is_poly_closed(poly) ? poly : make_closed(poly)
+function minimum_cell_size(sim::CellBasedEulerSim)
     _, cells = nth_step(sim, 1)
-    return filter(sim.cell_ids) do id
-        id == 0 && return false
-        return is_cell_contained_by(cells[id], closed_poly)
+    return tmapreduce(
+        (size_a, size_b) -> min.(size_a, size_b),
+        sim.cell_ids;
+        init = (Inf, Inf),
+    ) do id
+        id == 0 && return (Inf, Inf)
+        return cells[id].extent
     end
 end
 
-function all_cells_overlapping(poly, sim)
-    closed_poly = is_poly_closed(poly) ? poly : make_closed(poly)
+function maximum_cell_size(sim::CellBasedEulerSim)
+    _, cells = nth_step(sim, 1)
+    return tmapreduce(
+        (size_a, size_b) -> max.(size_a, size_b),
+        sim.cell_ids;
+        init = (-Inf, -Inf),
+    ) do id
+        id == 0 && return (-Inf, -Inf)
+        return cells[id].extent
+    end
+end
+
+function _in_window(cell, window_x, window_y)
+    return (
+        window_x[1] ≤ cell.center[1] ≤ window_x[2] &&
+        window_y[1] ≤ cell.center[2] ≤ window_y[2]
+    )
+end
+
+"""
+    all_cells_contained_by(poly, sim; padding=nothing)
+
+Get all of the cell IDs from `sim` that are contained by `poly`. 
+Will compute the window size automatically if `padding` is `nothing`.
+"""
+function all_cells_contained_by(poly, sim; padding = nothing)
+    bbox_x = extrema(p -> p[1], edge_starts(poly))
+    bbox_y = extrema(p -> p[2], edge_starts(poly))
+    window = if isnothing(padding)
+        dx, dy = minimum_cell_size(sim)
+        (bbox_x .+ (-dx, dx), bbox_y .+ (-dy, dy))
+    else
+        (bbox_x .+ (-padding[1], padding[2]), bbox_y .+ (-padding[2], padding[2]))
+    end
     _, cells = nth_step(sim, 1)
     return filter(sim.cell_ids) do id
-        id == 0 && return false
-        return is_cell_overlapping(cells[id], closed_poly)
+        (id == 0 || !_in_window(cells[id], window...)) && return false
+        return is_cell_contained_by(cells[id], poly)
+    end
+end
+
+"""
+    all_cells_overlapping(poly, sim; padding=nothing)
+
+Get all of the cell IDs from `sim` that are overlapping `poly` but not contained by `poly`. 
+Will compute the window size automatically if `padding` is `nothing`.
+"""
+function all_cells_overlapping(poly, sim; padding = nothing)
+    bbox_x = extrema(p -> p[1], edge_starts(poly))
+    bbox_y = extrema(p -> p[2], edge_starts(poly))
+    window = if isnothing(padding)
+        dx, dy = minimum_cell_size(sim)
+        (bbox_x .+ (-dx, dx), bbox_y .+ (-dy, dy))
+    else
+        (bbox_x .+ (-padding[1], padding[2]), bbox_y .+ (-padding[2], padding[2]))
+    end
+    _, cells = nth_step(sim, 1)
+    return filter(sim.cell_ids) do id
+        (id == 0 || !_in_window(cells[id], window...)) && return false
+        return is_cell_overlapping(cells[id], poly)
     end
 end
 

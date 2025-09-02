@@ -12,6 +12,7 @@ using DifferentiationInterface
 using ForwardDiff: ForwardDiff
 using LinearAlgebra
 using OhMyThreads: tforeach, tmap, tmapreduce
+using PlanePolygons
 using ShockwaveProperties
 using ShockwaveProperties: MomentumDensity, EnergyDensity
 using StaticArrays
@@ -28,6 +29,7 @@ include("riemann_solver/approximate_riemann_solver.jl")
 include("riemann_solver/exact_riemann_solver.jl")
 include("array_simulations/fvm.jl")
 include("array_simulations/array_simulations.jl")
+include("cell_simulations/cells.jl")
 include("cell_simulations/obstacle.jl")
 include("cell_simulations/grid.jl")
 include("cell_simulations/simulations.jl")

@@ -80,7 +80,7 @@ Checks if the center value of `dP2_view` is a maximum in direction `θ`.
 function is_edge_candidate(dP2_view, θ)
     @assert size(dP2_view) == (3, 3)
     grid_theta = gradient_grid_direction(θ)
-    const idx = CartesianIndex(2, 2)
+    local idx = CartesianIndex(2, 2)
     return dP2_view[idx+grid_theta] < dP2_view[idx] &&
            dP2_view[idx-grid_theta] < dP2_view[idx]
 end
