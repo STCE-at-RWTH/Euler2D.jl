@@ -54,11 +54,12 @@ export step_euler_hll!, simulate_euler_equations, simulate_euler_equations_cells
 # dimension stuff
 export EulerEqnsScaling
 export nondimensionalize, redimensionalize
-export length_scale, time_scale, density_scale
-export velocity_scale, pressure_scale, energy_density_scale
-export dimensionless_mach_number, dimensionless_pressure
-export dimensionless_pressure, dimensionless_speed_of_sound
-export dimensionless_total_enthalpy_density
+export length_scale, time_scale, mass_scale
+export velocity_scale, density_scale, pressure_scale
+export energy_density_scale, body_force_scale, specific_heat_capacity_scale
+export dimensionless_pressure, dimensionless_ΔS_density
+export dimensionless_mach_number, dimensionless_speed_of_sound
+export dimensionless_total_enthalpy_density, dimensionless_total_enthalpy
 
 # boundary condition types
 export BoundaryCondition, PeriodicAxis, EdgeBoundary

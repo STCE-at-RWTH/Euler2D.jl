@@ -92,7 +92,7 @@ function dimensionless_total_enthalpy(u_star, gas)
     return dimensionless_total_enthalpy_density(u_star, gas) / u_star[1]
 end
 
-function nondimensionalize_calorically_perfect_gas(gas::CaloricallyPerfectGas, scale)
+function nondimensionalize(gas::CaloricallyPerfectGas, scale)
     return (
         c_v = gas.c_v / specific_heat_capacity_scale(scale),
         c_p = gas.c_p / specific_heat_capacity_scale(scale),
@@ -106,8 +106,5 @@ function dimensionless_ΔS_density(u_star, gas)
 end
 
 function dimensionless_ΔS_density(u_star, gas::CaloricallyPerfectGas, scale)
-    return dimensionless_ΔS_density(
-        u_star,
-        nondimensionalize_calorically_perfect_gas(gas, scale),
-    )
+    return dimensionless_ΔS_density(u_star, nondimensionalize(gas, scale))
 end
