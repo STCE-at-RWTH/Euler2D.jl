@@ -83,6 +83,15 @@ function dimensionless_total_enthalpy_density(
     return u_star[N] + dimensionless_pressure(u_star, gas)
 end
 
+"""
+    dimensionless_total_enthalpy(u_star, gas)
+
+Compute the dimensionless total enthalpy `H_star` from the dimensionless state variable `u_star`.
+"""
+function dimensionless_total_enthalpy(u_star, gas)
+    return dimensionless_total_enthalpy_density(u_star, gas) / u_star[1]
+end
+
 function nondimensionalize_calorically_perfect_gas(gas::CaloricallyPerfectGas, scale)
     return (
         c_v = gas.c_v / specific_heat_capacity_scale(scale),
