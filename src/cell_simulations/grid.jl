@@ -605,13 +605,17 @@ function collect_cell_partition!(global_cells, partition::FastCellGridPartition)
     merge!(global_cells, partition.owned_cells)
 end
 
+function collect_cell_partitions!(global_cells, partitions)
+    foreach(partitions) do p
+        collect_cell_partition!(global_cells, p)
+    end
+    return global_cells
+end
+
 function collect_cell_partitions(cell_partitions, n_active_cells)
     u_global = Dict{Int64,cell_type(first(cell_partitions))}()
     sizehint!(u_global, n_active_cells)
-    foreach(cell_partitions) do p
-        collect_cell_partition!(u_global, p)
-    end
-    return u_global
+    return collect_cell_partitions!(u_global, cell_partitions)
 end
 
 function _iface_speed(iface::Tuple{Int,T,T}, gas) where {T<:QuadCell}
@@ -830,7 +834,6 @@ function step_cell_simulation!(
             cell_partitions;
             outputtype = T,
             init = Δt_maximum,
-            nchunks = nchunks_compute_update,
         ) do cell_partition
             compute_partition_update_and_max_Δt!(cell_partition, boundary_conditions, gas)
         end
@@ -846,7 +849,7 @@ function step_cell_simulation!(
     end
 
     # then in y
-    tforeach(cell_partitions; nchunks = nchunks_compute_update) do cell_partition
+    tforeach(cell_partitions) do cell_partition
         compute_partition_update_and_max_Δt!(cell_partition, boundary_conditions, gas)
     end
     tforeach(cell_partitions) do p
@@ -858,7 +861,7 @@ function step_cell_simulation!(
         apply_partition_update!(p, 2, Δt)
     end
     # then in x again
-    tforeach(cell_partitions; nchunks = nchunks_compute_update) do cell_partition
+    tforeach(cell_partitions) do cell_partition
         compute_partition_update_and_max_Δt!(cell_partition, boundary_conditions, gas)
     end
     tforeach(cell_partitions) do p

@@ -1,3 +1,6 @@
+using Profile
+using PProf
+
 using Euler2D
 using LinearAlgebra
 using Unitful
@@ -25,7 +28,7 @@ scale = EulerEqnsScaling(x0, ρ0, a0)
 @info "Current nondimensionalization scale is:" x_0 = length_scale(scale) v_0 =
     velocity_scale(scale) ρ_0 = density_scale(scale)
 
-bcs = (
+const bcs = (
     ExtrapolateToPhantom(), # north 
     StrongWall(), # south
     ExtrapolateToPhantom(), # east
@@ -33,14 +36,17 @@ bcs = (
     StrongWall(), # walls
 )
 
-bounds = ((-1.5, 0.5), (0.0, 2.0))
+const bounds = ((-1.5, 0.5), (0.0, 2.0))
 probe = [
     CircularObstacle((0.0, 0.0), 0.75),
     RectangularObstacle(SVector(1.0, 0.0), SVector(2.0, 1.5)),
 ]
-ncells = (400, 400)
+const ncells = (540, 540 * 4 ÷ 3)
 
-Euler2D.simulate_euler_equations_cells(
+Profile.init(; n = 10^7, delay = 0.005)
+Profile.clear()
+
+@profile Euler2D.simulate_euler_equations_cells(
     u0,
     starting_parameters,
     20.0,
@@ -51,7 +57,7 @@ Euler2D.simulate_euler_equations_cells(
     mode = Euler2D.TANGENT,
     gas = DRY_AIR,
     scale = scale,
-    show_detailed_info = true,
+    show_detailed_info = false,
     info_frequency = 5,
     write_frequency = 25,
     max_tsteps = 200,
