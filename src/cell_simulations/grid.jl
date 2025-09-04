@@ -587,10 +587,10 @@ function _verify_fastpartitioning(p, global_cells)
         shared12 = intersect(keys(p1.owned_cells), keys(p2.neighbor_cells))
         shared21 = intersect(keys(p2.owned_cells), keys(p1.neighbor_cells))
         return all(owned_cell_ids(p1)) do cell_id
-            cell_id ∉ owned_cell_ids(p2)
+            !owns_cell(p2, cell_id)
         end
     end
-    computed_cells = mapreduce(owned_cell_ids, union, p)
+    computed_cells = mapreduce(p -> keys(p.owned_cells), union, p)
     return no_overlap && (computed_cells == keys(global_cells))
 end
 
@@ -809,12 +809,14 @@ function step_cell_simulation!(
     gas::CaloricallyPerfectGas,
 )
     T = numeric_dtype(first(cell_partitions))
-    partition_locks = Dict([p.id => Base.Lockable(p) for p ∈ cell_partitions])
     partition_neighboring = Dict([
         p.id => [
-            filter(cell -> any(owns_cell(cell_partitions[j], cell)), p.neighbor_ids) for j ∈ eachindex(cell_partitions)
+            p2.id for p2 ∈ Iterators.filter(cell_partitions) do other
+                return any(cell_id -> owns_cell(p, cell_id), other.neighbor_ids)
+            end
         ] for p ∈ cell_partitions
     ])
+    nchunks_compute_update = length(cell_partitions)
     # 1. Calculate updates
     # 2. Share update
     # 3. apply update with appropriate time step
@@ -828,6 +830,7 @@ function step_cell_simulation!(
             cell_partitions;
             outputtype = T,
             init = Δt_maximum,
+            nchunks = nchunks_compute_update,
         ) do cell_partition
             compute_partition_update_and_max_Δt!(cell_partition, boundary_conditions, gas)
         end
@@ -837,28 +840,36 @@ function step_cell_simulation!(
         for src_idx ∈ partition_neighboring[p.id]
             propagate_updates_to!(p, cell_partitions[src_idx])
         end
+    end
+    tforeach(cell_partitions) do p
         apply_partition_update!(p, 1, Δt / 2)
     end
+
     # then in y
-    tforeach(cell_partitions) do cell_partition
+    tforeach(cell_partitions; nchunks = nchunks_compute_update) do cell_partition
         compute_partition_update_and_max_Δt!(cell_partition, boundary_conditions, gas)
     end
     tforeach(cell_partitions) do p
         for src_idx ∈ partition_neighboring[p.id]
             propagate_updates_to!(p, cell_partitions[src_idx])
         end
+    end
+    tforeach(cell_partitions) do p
         apply_partition_update!(p, 2, Δt)
     end
     # then in x again
-    tforeach(cell_partitions) do cell_partition
+    tforeach(cell_partitions; nchunks = nchunks_compute_update) do cell_partition
         compute_partition_update_and_max_Δt!(cell_partition, boundary_conditions, gas)
     end
     tforeach(cell_partitions) do p
         for src_idx ∈ partition_neighboring[p.id]
             propagate_updates_to!(p, cell_partitions[src_idx])
         end
+    end
+    tforeach(cell_partitions) do p
         apply_partition_update!(p, 1, Δt / 2)
     end
+
     return Δt
 end
 

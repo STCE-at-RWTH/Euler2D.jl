@@ -15,7 +15,7 @@ using Unitful
 
 bcs = (
     ExtrapolateToPhantom(), # north 
-    ExtrapolateToPhantom(), # south
+    StrongWall(), # south
     ExtrapolateToPhantom(), # east
     ExtrapolateToPhantom(), # west
     StrongWall(), # walls
