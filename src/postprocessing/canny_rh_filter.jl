@@ -2,27 +2,59 @@
 # Canny-Edge-Detection/Rankine-Hugoniot-conditions unified shock sensor for inviscid and viscous flows  
 # Takeshi R. Fujimoto ∗, Taro Kawasaki 1, Keiichi Kitamura
 # Journal of Computational Physics, 396, pp. 264 - 279
+#
+
+module CannyShockSensor
+
+using Euler2D
+using Euler2D: CellBasedEulerSim, select_middle
+
+using LinearAlgebra
+using ShockwaveProperties
+using StaticArrays
+using Tullio
+
+export find_shock_in_timestep
 
 _diff_op(T) = SVector{3,T}(-one(T), zero(T), one(T))
 _avg_op(T) = SVector{3,T}(one(T), 2 * one(T), one(T))
 
-_sobol_X(T) = _diff_op(T) * _avg_op(T)'
-_sobol_Y(T) = _avg_op(T) * _diff_op(T)'
+_sobel_X(T) = _diff_op(T) * _avg_op(T)'
+_sobel_Y(T) = _avg_op(T) * _diff_op(T)'
+
+# don't ask.
+# makes the whole "symmetry about y=0" thing work
+# WILL NOT WORK WITH OFFSETARRAYS
+function _pad_by_copying_outwards!(target, pad_size)
+    for i = pad_size:-1:1
+        @views begin
+            target[i, :] = target[i+1, :]
+            target[end-i+1, :] = target[end-i, :]
+            target[:, i] = target[:, i+1]
+            target[:, end-i+1] = target[:, end-i]
+        end
+    end
+    return nothing
+end
+
+_convolve_op(mat, op) = @tullio out[i, j] := mat[i+k+1, j+l+1] * op[k+2, l+2]
+_convolve_op!(res, mat, op) = @tullio res[i, j] = mat[i+k+1, j+l+1] * op[k+2, l+2]
+
+_d_dx_convolve(mat) = _convolve_op(mat, _sobel_X(eltype(mat)))
+_d_dy_convolve(mat) = _convolve_op(mat, _sobel_Y(eltype(mat)))
+_d_dx_convolve!(res, mat) = _convolve_op!(res, mat, _sobel_X(eltype(mat)))
+_d_dy_convolve!(res, mat) = _convolve_op!(res, mat, _sobel_Y(eltype(mat)))
 
 """
     convolve_sobel(field::Matrix{T})
 
 Computes the convolution of the Sobel gradient kernel ``G_x`` and ``G_y`` with the given field.
 """
-function convolve_sobel(matrix)
-    new_size = size(matrix) .- 2
-    outX = similar(matrix, new_size)
-    outY = similar(matrix, new_size)
-    for i ∈ eachindex(IndexCartesian(), outX, outY)
-        view_range = i:(i+CartesianIndex(2, 2))
-        outX[i] = _sobol_X(eltype(matrix)) ⋅ @view(matrix[view_range])
-        outY[i] = _sobol_Y(eltype(matrix)) ⋅ @view(matrix[view_range])
-    end
+function convolve_sobel(field)
+    sX = _sobel_X(eltype(field))
+    sY = _sobel_Y(eltype(field))
+    outX = _convolve_op(field, sX)
+    outY = _convolve_op(field, sY)
     return outX, outY
 end
 
@@ -98,6 +130,48 @@ function mark_maxima(dP2, θ_ij)
     end
 end
 
+function _shock_velocity(θij, u1, u2, gas)
+    h1 = dimensionless_total_enthalpy(u1, gas)
+    h2 = dimensionless_total_enthalpy(u2, gas)
+    # q = dot(v,v)
+    v1 = select_middle(u1) / u1[1]
+    v2 = select_middle(u2) / u2[1]
+    Δv = v1 - v2
+    A = 2 * h1 + v1 ⋅ v1
+    B = 2 * h2 + v2 ⋅ v2
+    vs_x = (A - B) / (2 * (Δv[1] + tan(θij) * Δv[2]))
+    vs_y = (A - B) / (2 * (cot(θij) * Δv[1] + Δv[2]))
+    return SVector(vs_x, vs_y)
+end
+
+"""
+    rh_errors_shock_frame(θij, u1, u2, gas)
+
+Compute the Mach number jump error and a smoothness criterion between two states `u1` and `u2`.
+
+1. Translate the states `u1` and `u2` into a coordinate system that moves with the shock.
+`u1` is upstream, `u2` is downstream. In the bow-shock problem, we want to assert that there is
+a pressure increase across the shock (upstream -> downstream).
+2. Estimate the change across that shock. Note that `a` does not change under a velocity transformation
+3. Return the error between the computed value and the simulated value, as well as an estimate of the "strength" of the shock.
+"""
+function rh_errors_shock_frame(θij, u1, u2, gas)
+    @assert dimensionless_pressure(u1, gas) ≤ dimensionless_pressure(u2, gas)
+    v1 = select_middle(u1) / u1[1]
+    v2 = select_middle(u2) / u2[1]
+    v_s = _shock_velocity(θij, u1, u2, gas)
+    m1 = (v1 - v_s) ./ dimensionless_speed_of_sound(u1, gas)
+    m2 = (v2 - v_s) ./ dimensionless_speed_of_sound(u2, gas)
+    dir = sincos(θij)
+    n̂ = SVector(dir[2], dir[1])
+    m1_normal = m1 ⋅ n̂
+    m2_normal = m2 ⋅ n̂
+    m_ratio = ShockwaveProperties.shock_normal_mach_ratio(m1, n̂, gas)
+    m2_predicted = m1_normal * m_ratio
+    mach_jump_error = abs(m2_normal - m2_predicted) / m2_normal
+    return mach_jump_error
+end
+
 #assumes stationary shock "edge"
 function rh_error_lab_frame(cell_front, cell_behind, θ, gas)
     m1 = dimensionless_mach_number(cell_front.u, gas)
@@ -143,52 +217,29 @@ function find_shock_in_timestep(
     show_info = true,
 ) where {T,C}
     # TODO really gotta figure out how to deal with nothings or missings in this matrix
-    pfield = map(p -> isnothing(p) ? zero(T) : p, pressure_field(sim, t, gas))
-    Gx, Gy = convolve_sobel(pfield)
-    θ_ij = atan.(Gx, Gy)
-    dP2 = Gx .^ 2 + Gy .^ 2
-    edge_candidates = mark_maxima(dP2, θ_ij)
-    if show_info
-        @info "Number of candidates..." n_candidates = sum(edge_candidates)
+    # TODO this solution is not very good
+    pfield = Matrix{T}(undef, grid_size(sim) .+ 4)
+    @show size(pfield), grid_size(sim)
+    pfield_nopad = @view pfield[3:end-2, 3:end-2]
+    @show size(pfield_nopad)
+    @assert size(pfield_nopad) == size(sim.cell_ids)
+    Euler2D.pressure_field!(pfield_nopad, sim, t, gas)
+    _pad_by_copying_outwards!(pfield, 2)
+    # find the gradients via the sobel operators
+    # not quite accurate but good enough since we discretize to the compass directions anyway
+    dPdx = _d_dx_convolve(pfield)
+    dPdy = _d_dy_convolve(pfield)
+    dP2 = dPdx .^ 2 .+ dPdy .^ 2
+    @assert size(dPdx) == size(dPdy) == (size(sim.cell_ids) .+ 2)
+    edge_marks = Matrix{Bool}(undef, grid_size(sim))
+    for i ∈ eachindex(IndexCartesian(), edge_marks)
+        dP_window = i:(i+CartesianIndex(2, 2))
+        θ = atan(dPdy[i+CartesianIndex(1, 1)], dPdx[i+CartesianIndex(1, 1)])
+        edge_marks[i] = is_edge_candidate(@view(dP2[dP_window]), θ)
     end
-    Gx_overlay = @view(Gx[2:end-1, 2:end-1])
-    Gy_overlay = @view(Gy[2:end-1, 2:end-1])
-    id_overlay = @view(sim.cell_ids[3:end-2, 3:end-2])
-    @assert all(size(Gx_overlay) .== size(Gy_overlay)) &&
-            all(size(Gy_overlay) .== size(id_overlay)) &&
-            all(size(Gx_overlay) .== size(edge_candidates))
-    # loop over every cell and check if the candidates are shocks
-    for j ∈ eachindex(IndexCartesian(), edge_candidates)
-        i = j + CartesianIndex(2, 2)
-        if id_overlay[j] > 0 && edge_candidates[j]
-            θ = atan(Gy_overlay[j], Gx_overlay[j])
-            θ_disc = discretize_gradient_direction(θ)
-            θ_grid = gradient_grid_direction(θ_disc)
-            # gradient points in direction of steepest increase...
-            # cell in "front" of shock should be opposite the gradient?
-            id_front = sim.cell_ids[i-θ_grid]
-            id_back = sim.cell_ids[i+θ_grid]
-            if id_front == 0 || id_back == 0
-                edge_candidates[j] = false
-                continue
-            end
-            cell_front = sim.cells[t][id_front]
-            cell_back = sim.cells[t][id_back]
-            edge_candidates[i] = is_candidate_cell_shock(
-                cell_front,
-                cell_back,
-                θ_grid,
-                gas,
-                rh_rel_error_max,
-                continuous_variation_thold,
-            )
-        end
-    end
-    if show_info
-        @info "Number of candidates after RH condition thresholding..." n_candidates =
-            sum(edge_candidates)
-    end
-    return edge_candidates
+    ncandidates = count(edge_marks)
+end
+
 end
 
 function shock_cells(sim, n, shock_field)
