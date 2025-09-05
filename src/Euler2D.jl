@@ -57,9 +57,12 @@ export nondimensionalize, redimensionalize
 export length_scale, time_scale, mass_scale
 export velocity_scale, density_scale, pressure_scale
 export energy_density_scale, body_force_scale, specific_heat_capacity_scale
-export dimensionless_pressure, dimensionless_ΔS_density
+export dimensionless_velocity, dimensionless_pressure, dimensionless_ΔS_density
 export dimensionless_mach_number, dimensionless_speed_of_sound
+export dimensionless_internal_energy_density, dimensionless_internal_energy
 export dimensionless_total_enthalpy_density, dimensionless_total_enthalpy
+export dimensionless_enthalpy_density, dimensionless_enthalpy
+export shift_velocity_coordinates
 
 # boundary condition types
 export BoundaryCondition, PeriodicAxis, EdgeBoundary

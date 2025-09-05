@@ -131,11 +131,11 @@ function mark_maxima(dP2, θ_ij)
 end
 
 function _shock_velocity(θij, u1, u2, gas)
-    h1 = dimensionless_total_enthalpy(u1, gas)
-    h2 = dimensionless_total_enthalpy(u2, gas)
+    h1 = dimensionless_enthalpy(u1, gas)
+    h2 = dimensionless_enthalpy(u2, gas)
     # q = dot(v,v)
-    v1 = select_middle(u1) / u1[1]
-    v2 = select_middle(u2) / u2[1]
+    v1 = dimensionless_velocity(u1)
+    v2 = dimensionless_velocity(u2)
     Δv = v1 - v2
     A = 2 * h1 + v1 ⋅ v1
     B = 2 * h2 + v2 ⋅ v2
