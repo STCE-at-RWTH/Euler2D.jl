@@ -29,6 +29,15 @@ function nondimensionalize(u::ConservedProps{N,T}, s) where {N,T}
     )
 end
 
+function nondimensionalize(gas::CaloricallyPerfectGas, scale)
+    return (
+        c_v = gas.c_v / specific_heat_capacity_scale(scale),
+        c_p = gas.c_p / specific_heat_capacity_scale(scale),
+        γ = gas.γ,
+        R = gas.R / specific_heat_capacity_scale(scale),
+    )
+end
+
 function redimensionalize(u_star::SVector{N,T}, s) where {N,T}
     ρ = u_star[1] * density_scale(s)
     ρv = select_middle(u_star) * density_scale(s) * velocity_scale(s)
@@ -71,10 +80,23 @@ function dimensionless_mach_number(
     return select_middle(u_star) ./ ρa
 end
 
+dimensionless_velocity(u_star) = select_middle(u_star) ./ u_star[1]
+
+function dimensionless_internal_energy_density(u_star)
+    ρv = select_middle(u_star)
+    return u_star[end] - (ρv ⋅ ρv) / (2 * u_star[1])
+end
+
+function dimensionless_internal_energy(u_star)
+    return dimensionless_internal_energy_density(u_star) / u_star[1]
+end
+
 """
     dimensionless_total_enthalpy_density(u_star, gas)
 
 Compute the dimensionless total enthalpy density `ρH_star` from the nondimesionalized state variable `u`.
+
+INCLUDES KINETIC ENERGY!
 """
 function dimensionless_total_enthalpy_density(
     u_star::SVector{N,T},
@@ -83,22 +105,24 @@ function dimensionless_total_enthalpy_density(
     return u_star[N] + dimensionless_pressure(u_star, gas)
 end
 
+function dimensionless_enthalpy_density(u_star, gas)
+    ρe = dimensionless_internal_energy_density(u_star)
+    return ρe + dimensionless_pressure(u_star, gas)
+end
+
 """
     dimensionless_total_enthalpy(u_star, gas)
 
 Compute the dimensionless total enthalpy `H_star` from the dimensionless state variable `u_star`.
+
+INCLUDES KINETIC ENERGY!
 """
 function dimensionless_total_enthalpy(u_star, gas)
     return dimensionless_total_enthalpy_density(u_star, gas) / u_star[1]
 end
 
-function nondimensionalize(gas::CaloricallyPerfectGas, scale)
-    return (
-        c_v = gas.c_v / specific_heat_capacity_scale(scale),
-        c_p = gas.c_p / specific_heat_capacity_scale(scale),
-        γ = gas.γ,
-        R = gas.R / specific_heat_capacity_scale(scale),
-    )
+function dimensionless_enthalpy(u_star, gas)
+    return dimensionless_enthalpy_density(u_star, gas) / u_star[1]
 end
 
 function dimensionless_ΔS_density(u_star, gas)
@@ -107,4 +131,13 @@ end
 
 function dimensionless_ΔS_density(u_star, gas::CaloricallyPerfectGas, scale)
     return dimensionless_ΔS_density(u_star, nondimensionalize(gas, scale))
+end
+
+function shift_velocity_coordinates(u_star, v0)
+    ρ = u_star[begin]
+    v_star = dimensionless_velocity(u_star)
+    v = v_star - v0
+    ρe = dimensionless_internal_energy_density(u_star)
+    ρv = ρ * v
+    return SVector(ρ, ρv..., ρe + ρv ⋅ v / 2)
 end
