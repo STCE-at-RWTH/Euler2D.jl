@@ -162,14 +162,17 @@ function rh_errors_shock_frame(θij, u1, u2, gas)
     v_s = _shock_velocity(θij, u1, u2, gas)
     m1 = (v1 - v_s) ./ dimensionless_speed_of_sound(u1, gas)
     m2 = (v2 - v_s) ./ dimensionless_speed_of_sound(u2, gas)
-    dir = sincos(θij)
-    n̂ = SVector(dir[2], dir[1])
-    m1_normal = m1 ⋅ n̂
-    m2_normal = m2 ⋅ n̂
-    m_ratio = ShockwaveProperties.shock_normal_mach_ratio(m1, n̂, gas)
-    m2_predicted = m1_normal * m_ratio
+    n̂ = normalize(v_s)
+    m1_normal = abs(m1 ⋅ n̂)
+    m2_normal = abs(m2 ⋅ n̂)
+    if m1_normal > m2_normal
+        @warn "Shock assumptions violated?" s = norm(v_s) m1_normal m2_normal
+    end
+    m2sqr = (2 + (gas.γ - 1) * m1_normal^2) / (2 * gas.γ * m1_normal^2 - (gas.γ - 1))
+    m2_predicted = sqrt(m2sqr)
     mach_jump_error = abs(m2_normal - m2_predicted) / m2_normal
-    return mach_jump_error
+    smoothness_error = abs((m2_normal - m1_normal)) / m1_normal
+    return mach_jump_error, smoothness_error
 end
 
 #assumes stationary shock "edge"
@@ -208,21 +211,11 @@ function is_candidate_cell_shock(
     return true
 end
 
-"""Check for the specified value in the array at indices `I±window`"""
-function _check_for_value_near(
-    A,
-    I,
-    value,
-    window = CartesianIndex(-1, -1):CartesianIndex(1, 1),
-)
-    return any(window) do ΔI
-        checkbounds(Bool, A, I + ΔI) && A[I+ΔI] == value
-    end
-end
-
 struct ShockSensorInfo
     candidates::Matrix{Bool}
+    domainerred::Matrix{Bool}
     n_candidate_cells::Int
+    n_erred::Int
     n_thinned::Int
     n_rejected_smooth::Int
     n_rejected_rh::Int
@@ -276,20 +269,49 @@ function find_shock_in_timestep(
             continue
         end
         θ = atan(dPdy_nopad[i], dPdx_nopad[i])
-        θij = gradient_grid_direction(θ)
+        θij = discretize_gradient_direction(θ)
+        Δi = gradient_grid_direction(θ)
         # make sure we can look up i±θij and that neither of those cells are empty
         if !(
-            (checkbounds(Bool, candidates, i + θij) && sim.cell_ids[i+θij] != 0) &&
-            (checkbounds(Bool, candidates, i - θij) && sim.cell_ids[i-θij] != 0)
+            (checkbounds(Bool, candidates, i + Δi) && sim.cell_ids[i+Δi] != 0) &&
+            (checkbounds(Bool, candidates, i - Δi) && sim.cell_ids[i-Δi] != 0)
         )
             candidates[i] = false
             n_no_shock += 1
             continue
         end
+
+        _, cells = nth_step(sim, t)
+        u_A = cells[sim.cell_ids[i+Δi]].u
+        u_B = cells[sim.cell_ids[i-Δi]].u
+        try
+            errs = if dimensionless_pressure(u_A, gas) < dimensionless_pressure(u_B, gas)
+                rh_errors_shock_frame(θij, u_A, u_B, gas)
+            else
+                rh_errors_shock_frame(θij, u_B, u_A, gas)
+            end
+            if errs[1] > rh_rel_error_max
+                n_no_shock += 1
+                candidates[i] = false
+            elseif errs[2] <= continuous_variation_thold
+                n_too_smooth += 1
+                candidates[i] = false
+            end
+        catch err
+            if !(err isa DomainError)
+                rethrow()
+            else
+                candidates[i] = false
+                erred[i] = true
+            end
+        end
     end
+
     return ShockSensorInfo(
         candidates,
+        erred,
         count(candidates),
+        count(erred),
         n_marked_edges,
         n_too_smooth,
         n_no_shock,
