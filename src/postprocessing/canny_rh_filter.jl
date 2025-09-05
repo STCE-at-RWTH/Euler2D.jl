@@ -112,6 +112,10 @@ Checks if the center value of `dP2_view` is a maximum in direction `θ`.
 function is_edge_candidate(dP2_view, θ)
     @assert size(dP2_view) == (3, 3)
     grid_theta = gradient_grid_direction(θ)
+    if isnothing(grid_theta)
+        @show θ, grid_theta
+    end
+    @assert !isnothing(grid_theta)
     local idx = CartesianIndex(2, 2)
     return dP2_view[idx+grid_theta] < dP2_view[idx] &&
            dP2_view[idx-grid_theta] < dP2_view[idx]
@@ -257,6 +261,9 @@ function find_shock_in_timestep(
     for i ∈ eachindex(IndexCartesian(), candidates, dPdx_nopad, dPdy_nopad)
         window = i:(i+CartesianIndex(2, 2))
         θ = atan(dPdy_nopad[i], dPdx_nopad[i])
+        if isnan(θ)
+            @show dPdy_nopad[i] dPdx_nopad[i] θ
+        end
         candidates[i] = is_edge_candidate(@view(dP2[window]), θ)
     end
     n_marked_edges = count(candidates)
