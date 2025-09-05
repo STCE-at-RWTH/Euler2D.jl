@@ -208,19 +208,38 @@ function is_candidate_cell_shock(
     return true
 end
 
+"""Check for the specified value in the array at indices `I±window`"""
+function _check_for_value_near(
+    A,
+    I,
+    value,
+    window = CartesianIndex(-1, -1):CartesianIndex(1, 1),
+)
+    return any(window) do ΔI
+        checkbounds(Bool, A, I + ΔI) && A[I+ΔI] == value
+    end
+end
+
+struct ShockSensorInfo
+    candidates::Matrix{Bool}
+    n_candidate_cells::Int
+    n_thinned::Int
+    n_rejected_smooth::Int
+    n_rejected_rh::Int
+end
+
 function find_shock_in_timestep(
     sim::CellBasedEulerSim{T,C},
     t,
     gas;
     rh_rel_error_max = 0.5,
     continuous_variation_thold = 0.01,
-    show_info = true,
 ) where {T,C}
     # TODO really gotta figure out how to deal with nothings or missings in this matrix
     # TODO this solution is not very good
     pfield = Matrix{T}(undef, grid_size(sim) .+ 4)
     @show size(pfield), grid_size(sim)
-    pfield_nopad = @view pfield[3:end-2, 3:end-2]
+    pfield_nopad = @view pfield[begin+2:end-2, begin+2:end-2]
     @show size(pfield_nopad)
     @assert size(pfield_nopad) == size(sim.cell_ids)
     Euler2D.pressure_field!(pfield_nopad, sim, t, gas)
@@ -231,13 +250,50 @@ function find_shock_in_timestep(
     dPdy = _d_dy_convolve(pfield)
     dP2 = dPdx .^ 2 .+ dPdy .^ 2
     @assert size(dPdx) == size(dPdy) == (size(sim.cell_ids) .+ 2)
-    edge_marks = Matrix{Bool}(undef, grid_size(sim))
-    for i ∈ eachindex(IndexCartesian(), edge_marks)
-        dP_window = i:(i+CartesianIndex(2, 2))
-        θ = atan(dPdy[i+CartesianIndex(1, 1)], dPdx[i+CartesianIndex(1, 1)])
-        edge_marks[i] = is_edge_candidate(@view(dP2[dP_window]), θ)
+    dPdx_nopad = @view dPdx[begin+1:end-1, begin+1:end-1]
+    dPdy_nopad = @view dPdy[begin+1:end-1, begin+1:end-1]
+    dP2_nopad = @view dPdy[begin+1:end-1, begin+1:end-1]
+    candidates = Matrix{Bool}(undef, grid_size(sim))
+    for i ∈ eachindex(IndexCartesian(), candidates, dPdx_nopad, dPdy_nopad)
+        window = i:(i+CartesianIndex(2, 2))
+        θ = atan(dPdy_nopad[i], dPdx_nopad[i])
+        candidates[i] = is_edge_candidate(@view(dP2[window]), θ)
     end
-    ncandidates = count(edge_marks)
+    n_marked_edges = count(candidates)
+    n_too_smooth = 0
+    n_no_shock = 0
+    erred = fill(false, grid_size(sim))
+
+    for i ∈ eachindex(
+        IndexCartesian(),
+        sim.cell_ids,
+        candidates,
+        pfield_nopad,
+        dPdx_nopad,
+        dPdy_nopad,
+    )
+        if !candidates[i]
+            continue
+        end
+        θ = atan(dPdy_nopad[i], dPdx_nopad[i])
+        θij = gradient_grid_direction(θ)
+        # make sure we can look up i±θij and that neither of those cells are empty
+        if !(
+            (checkbounds(Bool, candidates, i + θij) && sim.cell_ids[i+θij] != 0) &&
+            (checkbounds(Bool, candidates, i - θij) && sim.cell_ids[i-θij] != 0)
+        )
+            candidates[i] = false
+            n_no_shock += 1
+            continue
+        end
+    end
+    return ShockSensorInfo(
+        candidates,
+        count(candidates),
+        n_marked_edges,
+        n_too_smooth,
+        n_no_shock,
+    )
 end
 
 end
