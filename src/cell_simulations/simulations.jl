@@ -220,7 +220,8 @@ end
 
 Compute the dimensionless pressure field for a cell-based Euler simulation `csim` at time step `n` in gas `gas`.
 
-Stores results in `result`. Returns `nothing`.
+Stores zero if the cell in question is not active.
+Stores results in `result`. Returns `result`.
 """
 function pressure_field!(
     result,
@@ -230,10 +231,13 @@ function pressure_field!(
 )
     _, cells = nth_step(csim, n)
     for i ∈ eachindex(result, csim.cell_ids)
-        csim.cell_ids[i] == 0 && continue
-        result[i] = dimensionless_pressure(cells[csim.cell_ids[i]].u, gas)
+        if csim.cell_ids[i] == 0
+            result[i] = zero(eltype(result))
+        else
+            result[i] = dimensionless_pressure(cells[csim.cell_ids[i]].u, gas)
+        end
     end
-    return nothing
+    return result
 end
 
 """

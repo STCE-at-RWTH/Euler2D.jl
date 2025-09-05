@@ -26,12 +26,12 @@ _sobel_Y(T) = _avg_op(T) * _diff_op(T)'
 # makes the whole "symmetry about y=0" thing work
 # WILL NOT WORK WITH OFFSETARRAYS
 function _pad_by_copying_outwards!(target, pad_size)
-    for i = pad_size:-1:1
+    for i = pad_size-1:-1:0
         @views begin
-            target[i, :] = target[i+1, :]
-            target[end-i+1, :] = target[end-i, :]
-            target[:, i] = target[:, i+1]
-            target[:, end-i+1] = target[:, end-i]
+            target[begin+i, :] = target[begin+i+1, :]
+            target[end-i, :] = target[end-i-1, :]
+            target[:, begin+i] = target[:, begin+i+1]
+            target[:, end-i] = target[:, end-i-1]
         end
     end
     return nothing
