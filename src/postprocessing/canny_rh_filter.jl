@@ -6,13 +6,14 @@
 
 module CannyShockSensor
 
-using Euler2D
-using Euler2D: CellBasedEulerSim, select_middle
-
 using LinearAlgebra
 using ShockwaveProperties
 using StaticArrays
 using Tullio
+
+using Euler2D
+using Euler2D: CellBasedEulerSim, select_middle
+using PlanePolygons
 
 export find_shock_in_timestep
 
@@ -133,7 +134,6 @@ end
 function _shock_velocity(θij, u1, u2, gas)
     h1 = dimensionless_enthalpy(u1, gas)
     h2 = dimensionless_enthalpy(u2, gas)
-    # q = dot(v,v)
     v1 = dimensionless_velocity(u1)
     v2 = dimensionless_velocity(u2)
     Δv = v1 - v2
@@ -157,16 +157,17 @@ a pressure increase across the shock (upstream -> downstream).
 """
 function rh_errors_shock_frame(θij, u1, u2, gas)
     @assert dimensionless_pressure(u1, gas) ≤ dimensionless_pressure(u2, gas)
+    v_s = _shock_velocity(θij, u1, u2, gas)
+
     v1 = select_middle(u1) / u1[1]
     v2 = select_middle(u2) / u2[1]
-    v_s = _shock_velocity(θij, u1, u2, gas)
     m1 = (v1 - v_s) ./ dimensionless_speed_of_sound(u1, gas)
     m2 = (v2 - v_s) ./ dimensionless_speed_of_sound(u2, gas)
-    n̂ = normalize(v_s)
-    m1_normal = abs(m1 ⋅ n̂)
-    m2_normal = abs(m2 ⋅ n̂)
+    n = normalize(v_s)
+    m1_normal = abs(m1 ⋅ n)
+    m2_normal = abs(m2 ⋅ n)
     if m1_normal > m2_normal
-        @warn "Shock assumptions violated?" s = norm(v_s) m1_normal m2_normal
+        # @warn "Shock assumptions violated?" s = norm(v_s) m1_normal m2_normal
     end
     m2sqr = (2 + (gas.γ - 1) * m1_normal^2) / (2 * gas.γ * m1_normal^2 - (gas.γ - 1))
     m2_predicted = sqrt(m2sqr)
@@ -175,40 +176,19 @@ function rh_errors_shock_frame(θij, u1, u2, gas)
     return mach_jump_error, smoothness_error
 end
 
-#assumes stationary shock "edge"
-function rh_error_lab_frame(cell_front, cell_behind, θ, gas)
-    m1 = dimensionless_mach_number(cell_front.u, gas)
-    m2 = dimensionless_mach_number(cell_behind.u, gas)
-    dir = sincos(θ)
-    n̂ = SVector(dir[2], dir[1])
-    m_ratio = ShockwaveProperties.shock_normal_mach_ratio(m1, n̂, gas)
-    m1_norm = abs(m1 ⋅ n̂)
-    m2_norm_rh = m1_norm * m_ratio
-    m2_norm_sim = abs(m2 ⋅ n̂)
-    return (abs(m2_norm_rh - m2_norm_sim) / m2_norm_sim, abs(m1_norm / m2_norm_sim - 1))
-end
-
-function is_candidate_cell_shock(
-    cell_front,
-    cell_back,
-    θ_disc,
-    gas,
-    rh_thold,
-    smoothness_thold,
-)
-    try
-        rh_err, sim_err = rh_error_lab_frame(cell_front, cell_back, θ_disc, gas)
-        if rh_err > rh_thold || sim_err < smoothness_thold
-            return false
-        end
-    catch possible_domainerr
-        if possible_domainerr isa DomainError
-            return false
-        else
-            rethrow()
-        end
-    end
-    return true
+function hugoniot_equation_relative_err(u_A, u_B, gas)
+    # try to apply hugoniot equation
+    # to test for admissible discontinuity?
+    e_A = dimensionless_internal_energy(u_A)
+    e_B = dimensionless_internal_energy(u_B)
+    P_A = dimensionless_pressure(u_A, gas)
+    P_B = dimensionless_pressure(u_B, gas)
+    ρ_A = u_A[begin]
+    ρ_B = u_B[begin]
+    # if we get the order wrong, we just mutiply this by -1... should be fine?
+    lhs = e_B - e_A
+    rhs = (P_A + P_B) / 2 * (inv(ρ_A) - inv(ρ_B))
+    return abs((lhs - rhs) / lhs)
 end
 
 struct ShockSensorInfo
@@ -282,28 +262,25 @@ function find_shock_in_timestep(
         end
 
         _, cells = nth_step(sim, t)
-        u_A = cells[sim.cell_ids[i+Δi]].u
-        u_B = cells[sim.cell_ids[i-Δi]].u
-        try
-            errs = if dimensionless_pressure(u_A, gas) < dimensionless_pressure(u_B, gas)
-                rh_errors_shock_frame(θij, u_A, u_B, gas)
-            else
-                rh_errors_shock_frame(θij, u_B, u_A, gas)
-            end
-            if errs[1] > rh_rel_error_max
-                n_no_shock += 1
-                candidates[i] = false
-            elseif errs[2] <= continuous_variation_thold
-                n_too_smooth += 1
-                candidates[i] = false
-            end
-        catch err
-            if !(err isa DomainError)
-                rethrow()
-            else
-                candidates[i] = false
-                erred[i] = true
-            end
+        u_A = cells[sim.cell_ids[i-Δi]].u
+        u_B = cells[sim.cell_ids[i+Δi]].u
+        abs_relative_err = hugoniot_equation_relative_err(u_A, u_B, gas)
+        if abs_relative_err >= rh_rel_error_max
+            candidates[i] = false
+            n_no_shock += 1
+            continue
+        end
+
+        v_shock = _shock_velocity(θij, u_A, u_B, gas)
+        u_shock_A = shift_velocity_coordinates(u_A, v_shock)
+        u_shock_B = shift_velocity_coordinates(u_B, v_shock)
+        n = normalize(v_shock)
+        Mn_A = dimensionless_mach_number(u_shock_A, gas) ⋅ n
+        Mn_B = dimensionless_mach_number(u_shock_B, gas) ⋅ n
+        abs_smoothness_err = abs((Mn_A - Mn_B) / Mn_A)
+        if abs_smoothness_err <= continuous_variation_thold
+            candidates[i] = false
+            n_too_smooth += 1
         end
     end
 
