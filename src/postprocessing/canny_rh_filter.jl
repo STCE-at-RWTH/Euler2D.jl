@@ -285,12 +285,12 @@ Will throw out any cells that deviate from both of their immediate neighbors by 
 function extract_bow_shock_points(sim, sensor_info; gap_size = 8)
     _, cells = nth_step(sim, 1)
     size_diff = grid_size(sim) .- size(sensor_info.candidates)
-    @assert all(iseven.(size_diff))
     Δi, Δj = div.(size_diff, 2)
     ids_view = @view sim.cell_ids[begin+Δi:end-Δi, begin+Δj:end-Δj]
     @assert size(ids_view) == size(sensor_info.candidates)
     @assert size(ids_view) .+ size_diff == grid_size(sim)
-    max_gap_length = gap_size * norm(Euler2D.minimum_cell_size(sim))
+    # TODO maybe implement gap finding?
+    # max_gap_length = gap_size * norm(Euler2D.minimum_cell_size(sim))
     candidate_points = map(
         zip(
             eachslice(sensor_info.candidates; dims = (2,)),

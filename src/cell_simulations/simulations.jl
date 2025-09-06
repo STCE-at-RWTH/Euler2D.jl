@@ -363,6 +363,25 @@ function all_cells_overlapping(poly, sim; padding = nothing)
     end
 end
 
+function total_mass_contained_by(
+    poly,
+    sim::CellBasedEulerSim{T,TangentQuadCell{T,NSEEDS,NP}},
+    tstep,
+) where {T,NSEEDS,NP}
+    contained = all_cells_contained_by(poly, sim)
+    overlapping = all_cells_contained_by(poly, sim)
+    _, cells = nth_step(sim, tstep)
+    total_U = (
+        sum(contained) do id
+            cell_volume(cells[id]) * cells[id].u
+        end + sum(overlapping) do id
+            A = overlapping_cell_area(cells[id], poly)
+            return A * cells[id].u
+        end
+    )
+    return total_U
+end
+
 """
 Take the tape data stream and return a channel where simulation state can be queued then pushed.
 """

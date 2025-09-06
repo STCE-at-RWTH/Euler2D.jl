@@ -1,4 +1,4 @@
-module LocalPseudoinversionInternal
+module LocalPseudoinversion
 
 using DifferentiationInterface
 using ForwardDiff: ForwardDiff
