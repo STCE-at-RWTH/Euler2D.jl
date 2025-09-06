@@ -40,7 +40,8 @@ cell_volume(cell::FVMCell) = poly_area(cell_boundary_polygon(cell))
 Does `cell2` (or `poly`) contain `cell1`?
 """
 function is_cell_contained_by(cell1, poly)
-    return all(edge_starts(cell_boundary_polygon(cell1))) do pt
+    cell_poly = cell_boundary_polygon(cell1)
+    return all(edge_starts(cell_poly)) do pt
         return PlanePolygons.point_inside_strict(poly, pt)
     end
 end
