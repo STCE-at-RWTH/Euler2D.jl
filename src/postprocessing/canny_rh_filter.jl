@@ -118,19 +118,6 @@ function is_edge_candidate(dP2_view, θ)
            dP2_view[idx-grid_theta] < dP2_view[idx]
 end
 
-"""
-    mark_maxima(dP2, θ)
-
-Performs edge thinning on dP2 using gradient directions θ.
-"""
-function mark_maxima(dP2, θ_ij)
-    candidates = fill(false, size(dP2) .- 2)
-    for i ∈ eachindex(candidates)
-        dP2_view = @view dP2[i:i+CartesianIndex(2, 2)]
-        candidates[i] = is_edge_candidate(dP2_view, θ_ij[i+CartesianIndex(1, 1)])
-    end
-end
-
 function _shock_velocity(θij, u1, u2, gas)
     h1 = dimensionless_enthalpy(u1, gas)
     h2 = dimensionless_enthalpy(u2, gas)
@@ -145,37 +132,10 @@ function _shock_velocity(θij, u1, u2, gas)
 end
 
 """
-    rh_errors_shock_frame(θij, u1, u2, gas)
+    hugoniot_equation_relative_err(u_A, u_B, gas)
 
-Compute the Mach number jump error and a smoothness criterion between two states `u1` and `u2`.
-
-1. Translate the states `u1` and `u2` into a coordinate system that moves with the shock.
-`u1` is upstream, `u2` is downstream. In the bow-shock problem, we want to assert that there is
-a pressure increase across the shock (upstream -> downstream).
-2. Estimate the change across that shock. Note that `a` does not change under a velocity transformation
-3. Return the error between the computed value and the simulated value, as well as an estimate of the "strength" of the shock.
+Compute the relative error between the two sides of the Hugoniot equation, relative to the change in internal energy ``e``.
 """
-function rh_errors_shock_frame(θij, u1, u2, gas)
-    @assert dimensionless_pressure(u1, gas) ≤ dimensionless_pressure(u2, gas)
-    v_s = _shock_velocity(θij, u1, u2, gas)
-
-    v1 = select_middle(u1) / u1[1]
-    v2 = select_middle(u2) / u2[1]
-    m1 = (v1 - v_s) ./ dimensionless_speed_of_sound(u1, gas)
-    m2 = (v2 - v_s) ./ dimensionless_speed_of_sound(u2, gas)
-    n = normalize(v_s)
-    m1_normal = abs(m1 ⋅ n)
-    m2_normal = abs(m2 ⋅ n)
-    if m1_normal > m2_normal
-        # @warn "Shock assumptions violated?" s = norm(v_s) m1_normal m2_normal
-    end
-    m2sqr = (2 + (gas.γ - 1) * m1_normal^2) / (2 * gas.γ * m1_normal^2 - (gas.γ - 1))
-    m2_predicted = sqrt(m2sqr)
-    mach_jump_error = abs(m2_normal - m2_predicted) / m2_normal
-    smoothness_error = abs((m2_normal - m1_normal)) / m1_normal
-    return mach_jump_error, smoothness_error
-end
-
 function hugoniot_equation_relative_err(u_A, u_B, gas)
     # try to apply hugoniot equation
     # to test for admissible discontinuity?
@@ -191,12 +151,44 @@ function hugoniot_equation_relative_err(u_A, u_B, gas)
     return abs((lhs - rhs) / lhs)
 end
 
+"""
+    mach_number_change_across_shock(θij, u1, u2, gas)
+
+Compute the Mach number jump error and a smoothness criterion between two states `u1` and `u2`.
+
+1. Translate the states `u1` and `u2` into a coordinate system that moves with the shock.
+`u1` is upstream, `u2` is downstream. In the bow-shock problem, we want to assert that there is
+a pressure increase across the shock (upstream -> downstream).
+2. Estimate the change across that shock. Note that `a` does not change under a velocity transformation
+3. Return the relative change in the mach number, which is an estimate of the "strength" of the shock.
+"""
+function mach_number_change_across_shock(θij, u_A, u_B, gas)
+    v_shock = _shock_velocity(θij, u_A, u_B, gas)
+    u_shock_A = shift_velocity_coordinates(u_A, v_shock)
+    u_shock_B = shift_velocity_coordinates(u_B, v_shock)
+    n = normalize(v_shock)
+    Mn_A = dimensionless_mach_number(u_shock_A, gas) ⋅ n
+    Mn_B = dimensionless_mach_number(u_shock_B, gas) ⋅ n
+    return abs((Mn_A - Mn_B) / Mn_A)
+end
+
+"""
+    ShockSensorInfo
+
+Fields
+---
+- `candidates`: Which cell ids are candidate cells for a shock?
+- `n_candidates`: How many are there?
+- `n_thinned`: How many cells were candidates after edge thinning?
+- `n_rejected_smooth`: How many of the thinned edges failed to satisfy the non-smoothness threshold?
+- `n_rejected_rh`: How many of the thinned edges failed to satisfy the Hugoniot equation?
+"""
 struct ShockSensorInfo
     candidates::Matrix{Bool}
-    domainerred::Matrix{Bool}
     n_candidate_cells::Int
-    n_erred::Int
     n_thinned::Int
+    rh_relative_error_max::Float64
+    smoothness_thold::Float64
     n_rejected_smooth::Int
     n_rejected_rh::Int
 end
@@ -211,9 +203,7 @@ function find_shock_in_timestep(
     # TODO really gotta figure out how to deal with nothings or missings in this matrix
     # TODO this solution is not very good
     pfield = Matrix{T}(undef, grid_size(sim) .+ 4)
-    @show size(pfield), grid_size(sim)
     pfield_nopad = @view pfield[begin+2:end-2, begin+2:end-2]
-    @show size(pfield_nopad)
     @assert size(pfield_nopad) == size(sim.cell_ids)
     Euler2D.pressure_field!(pfield_nopad, sim, t, gas)
     _pad_by_copying_outwards!(pfield, 2)
@@ -225,7 +215,6 @@ function find_shock_in_timestep(
     @assert size(dPdx) == size(dPdy) == (size(sim.cell_ids) .+ 2)
     dPdx_nopad = @view dPdx[begin+1:end-1, begin+1:end-1]
     dPdy_nopad = @view dPdy[begin+1:end-1, begin+1:end-1]
-    dP2_nopad = @view dPdy[begin+1:end-1, begin+1:end-1]
     candidates = Matrix{Bool}(undef, grid_size(sim))
     for i ∈ eachindex(IndexCartesian(), candidates, dPdx_nopad, dPdy_nopad)
         window = i:(i+CartesianIndex(2, 2))
@@ -235,7 +224,6 @@ function find_shock_in_timestep(
     n_marked_edges = count(candidates)
     n_too_smooth = 0
     n_no_shock = 0
-    erred = fill(false, grid_size(sim))
 
     for i ∈ eachindex(
         IndexCartesian(),
@@ -270,14 +258,7 @@ function find_shock_in_timestep(
             n_no_shock += 1
             continue
         end
-
-        v_shock = _shock_velocity(θij, u_A, u_B, gas)
-        u_shock_A = shift_velocity_coordinates(u_A, v_shock)
-        u_shock_B = shift_velocity_coordinates(u_B, v_shock)
-        n = normalize(v_shock)
-        Mn_A = dimensionless_mach_number(u_shock_A, gas) ⋅ n
-        Mn_B = dimensionless_mach_number(u_shock_B, gas) ⋅ n
-        abs_smoothness_err = abs((Mn_A - Mn_B) / Mn_A)
+        abs_smoothness_err = mach_number_change_across_shock(θij, u_A, u_B, gas)
         if abs_smoothness_err <= continuous_variation_thold
             candidates[i] = false
             n_too_smooth += 1
@@ -286,38 +267,43 @@ function find_shock_in_timestep(
 
     return ShockSensorInfo(
         candidates,
-        erred,
         count(candidates),
-        count(erred),
         n_marked_edges,
+        rh_rel_error_max,
+        continuous_variation_thold,
         n_too_smooth,
         n_no_shock,
     )
 end
 
-end
+"""
+    extract_bow_shock_points(sim, sensor_info)
 
-function shock_cells(sim, n, shock_field)
-    sort(
-        reduce(
-            vcat,
-            filter(!isnothing, map(enumerate(eachcol(shock_field))) do (j, col)
-                i = findfirst(col)
-                isnothing(i) && return nothing
-                id = @view(sim.cell_ids[2:end-1, 2:end-1])[i, j]
-                return sim.cells[n][id]
-            end),
-        );
-        lt = (a, b) -> a.center[2] < b.center[2],
-    )
-end
-
-function shock_points(sim::CellBasedEulerSim{T,C}, n, shock_field) where {T,C}
-    sp = shock_cells(sim, n, shock_field)
-    res = Matrix{T}(undef, (length(sp), 2))
-    for i ∈ eachindex(sp)
-        res[i, :] = sp[i].center
+Tries to extract the main bow shock from a simulation given the results of applying a shock sensor.
+Will throw out any cells that deviate from both of their immediate neighbors by more than `gap_size` cell radii.
+"""
+function extract_bow_shock_points(sim, sensor_info; gap_size = 8)
+    _, cells = nth_step(sim, 1)
+    size_diff = grid_size(sim) .- size(sensor_info.candidates)
+    @assert all(iseven.(size_diff))
+    Δi, Δj = div.(size_diff, 2)
+    ids_view = @view sim.cell_ids[begin+Δi:end-Δi, begin+Δj:end-Δj]
+    @assert size(ids_view) == size(sensor_info.candidates)
+    @assert size(ids_view) .+ size_diff == grid_size(sim)
+    max_gap_length = gap_size * norm(Euler2D.minimum_cell_size(sim))
+    candidate_points = map(
+        zip(
+            eachslice(sensor_info.candidates; dims = (2,)),
+            eachslice(ids_view; dims = (2,)),
+        ),
+    ) do (candidate_row, ids_row)
+        idx = findfirst(candidate_row)
+        isnothing(idx) && return SVector(Inf, Inf)
+        cell_id = ids_row[idx]
+        return cells[cell_id].center
     end
-    #sort!(sp; lt=(a, b) -> a[2] < b[2])
-    return res
+    filter!(≠(SVector(Inf, Inf)), candidate_points)
+    return candidate_points
+end
+
 end
