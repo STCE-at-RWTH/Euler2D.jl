@@ -40,8 +40,8 @@ cell_volume(cell::FVMCell) = poly_area(cell_boundary_polygon(cell))
 Does `cell2` (or `poly`) contain `cell1`?
 """
 function is_cell_contained_by(cell1, poly)
-    cell_poly = cell_boundary_polygon(cell1)
-    return all(edge_starts(cell_poly)) do pt
+    cell_polys = cell_boundary_polygon(cell1)
+    return all(edge_starts(cell_polys)) do pt
         return PlanePolygons.point_inside_strict(poly, pt)
     end
 end
@@ -197,21 +197,6 @@ end
 
 inward_normals(cell::RectangularFVMCell) = inward_normals(numeric_dtype(cell))
 outward_normals(cell::RectangularFVMCell) = outward_normals(numeric_dtype(cell))
-
-"""
-    TangentPolyCell{T, NV}
-
-
-"""
-struct TangentPolyCell{T,NV,NSEEDS,NTANGENTS} <: FVMCell{T}
-    id::Int
-    boundary::SClosedPolygon{T,NV}
-    u::SVector{4,T}
-    u̇::SMatrix{4,NSEEDS,T,NTANGENTS}
-    neighbors::NTuple{NV,Tuple{CellNeighboring,Int}}
-end
-
-cell_boundary_polygon(cell::TangentPolyCell) = cell.boundary
 
 function phantom_neighbor(cell::PrimalQuadCell, dir, bc, gas)
     # HACK use nneighbors as intended.

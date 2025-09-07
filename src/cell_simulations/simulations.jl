@@ -312,11 +312,54 @@ function maximum_cell_size(sim::CellBasedEulerSim)
     end
 end
 
+function _find_window_on_range(range, window, buffer)
+    idx1 = max(
+        something(findfirst(>=(window[1]), range), firstindex(range)) - buffer,
+        firstindex(range),
+    )
+    idx2 = min(
+        something(findfirst(>=(window[2]), range), lastindex(range)) + buffer,
+        lastindex(range),
+    )
+    return idx1:idx2
+end
+
+function _cell_ids_view_from_window(cell_center_ranges, window; buffer = 10)
+    return _find_window_on_range.(cell_center_ranges, window, buffer)
+end
+
 function _in_window(cell, window_x, window_y)
     return (
         window_x[1] ≤ cell.center[1] ≤ window_x[2] &&
         window_y[1] ≤ cell.center[2] ≤ window_y[2]
     )
+end
+
+function ∇u_at(sim, n, x, y, boundary_conditions, gas; padding = nothing)
+    window = if isnothing(padding)
+        dx, dy = 2 .* minimum_cell_size(sim)
+        (x .+ (-dx, dx), y .+ (-dy, dy))
+    else
+        (x .+ (-padding[1], padding[2]), y .+ (-padding[2], padding[2]))
+    end
+    _, cells = nth_step(sim, n)
+    slices = _cell_ids_view_from_window(cell_centers(sim), window; buffer = 8)
+    contains_point = Iterators.filter(@view sim.cell_ids[slices...]) do id
+        return (
+            id != 0 &&
+            PlanePolygons.point_inside(cell_boundary_polygon(cells[id]), Point(x, y))
+        )
+    end
+    counter = 0
+    acc = zero(SMatrix{4,2,Float64,8})
+    for id ∈ contains_point
+        counter += 1
+        nbrs = neighbor_cells(cells[id], cells, boundary_conditions, gas)
+        dudx = (nbrs.east.u - nbrs.west.u) / cells[id].extent[1]
+        dudy = (nbrs.north.u - nbrs.south.u) / cells[id].extent[2]
+        @reset acc += hcat(dudx, dudy)
+    end
+    return acc / counter
 end
 
 """
@@ -335,9 +378,13 @@ function all_cells_contained_by(poly, sim; padding = nothing)
         (bbox_x .+ (-padding[1], padding[2]), bbox_y .+ (-padding[2], padding[2]))
     end
     _, cells = nth_step(sim, 1)
-    return filter(sim.cell_ids) do id
-        (id == 0 || !_in_window(cells[id], window...)) && return false
-        return is_cell_contained_by(cells[id], poly)
+    slices = _cell_ids_view_from_window(cell_centers(sim), window; buffer = 4)
+    return Iterators.filter(@view sim.cell_ids[slices...]) do id
+        return (
+            id != 0 &&
+            _in_window(cells[id], window...) &&
+            is_cell_contained_by(cells[id], poly)
+        )
     end
 end
 
@@ -357,29 +404,45 @@ function all_cells_overlapping(poly, sim; padding = nothing)
         (bbox_x .+ (-padding[1], padding[2]), bbox_y .+ (-padding[2], padding[2]))
     end
     _, cells = nth_step(sim, 1)
-    return filter(sim.cell_ids) do id
-        (id == 0 || !_in_window(cells[id], window...)) && return false
-        return is_cell_overlapping(cells[id], poly)
+    slices = _cell_ids_view_from_window(cell_centers(sim), window; buffer = 8)
+    return Iterators.filter(@view sim.cell_ids[slices...]) do id
+        return (
+            id != 0 &&
+            _in_window(cells[id], window...) &&
+            is_cell_overlapping(cells[id], poly)
+        )
     end
 end
 
+"""
+    total_mass_contained_by(poly, sim, tstep)
+
+Get the TOTAL `(mass, momentum, energy)` contained inside of `poly` at timestep `tstep`. 
+"""
 function total_mass_contained_by(
     poly,
     sim::CellBasedEulerSim{T,TangentQuadCell{T,NSEEDS,NP}},
-    tstep,
+    tstep;
+    poly_bbox_padding = nothing,
 ) where {T,NSEEDS,NP}
-    contained = all_cells_contained_by(poly, sim)
-    overlapping = all_cells_contained_by(poly, sim)
+    contained = all_cells_contained_by(poly, sim; padding = poly_bbox_padding)
+    overlapping = all_cells_contained_by(poly, sim; padding = poly_bbox_padding)
     _, cells = nth_step(sim, tstep)
-    total_U = (
-        sum(contained) do id
-            cell_volume(cells[id]) * cells[id].u
-        end + sum(overlapping) do id
-            A = overlapping_cell_area(cells[id], poly)
-            return A * cells[id].u
-        end
-    )
-    return total_U
+    U_total = zero(typeof(cells[1].u))
+    Udot_total = zero(typeof(cells[1].u̇))
+    for id ∈ contained
+        A = cell_volume(cells[id])
+        @reset U_total += A * cells[id].u
+        @reset Udot_total += A * cells[id].u̇
+    end
+    # this is allocating like hell
+    # chopping many many polygons
+    for id ∈ overlapping
+        A = overlapping_cell_area(cells[id], poly)
+        @reset U_total += A * cells[id].u
+        @reset Udot_total += A * cells[id].u̇
+    end
+    return U_total, Udot_total
 end
 
 """

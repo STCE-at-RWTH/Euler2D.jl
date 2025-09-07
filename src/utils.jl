@@ -55,15 +55,6 @@ Put the vector ``p`` in the standard Cartesian basis into basis B.
 """
 change_basis(p, B) = change_basis(p, I, B)
 
-function project_state_to_normal(u::SVector{S,T}, n) where {S,T}
-    ρv_n = select_middle(u) ⋅ n
-    return SVector(u[1], ρv_n, zeros(SVector{S - 3,T})..., u[end])
-end
-
-function project_state_to_normal(u, n)
-    return vcat(u[1], select_middle(u) ⋅ n, zeros(eltype(u), length(u - 3)), u[end])
-end
-
 """
   apply_coordinate_tform(u, T)
 
@@ -76,6 +67,15 @@ end
 
 ### END OF BASES
 
+### FINITE DIFFS
+"""Get an appropriate `ε` for finite differences around `arg`."""
+function fdiff_eps(arg::T) where {T<:Real}
+    cbrt_eps = cbrt(eps(T))
+    h = 2^(round(log2((1 + abs(arg)) * cbrt_eps)))
+    return h
+end
+
+###
 ### HORRIBLE BACKUP DICT THINGY
 """
   BackupDict{K, V}
