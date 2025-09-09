@@ -3,17 +3,19 @@
 # Takeshi R. Fujimoto ∗, Taro Kawasaki 1, Keiichi Kitamura
 # Journal of Computational Physics, 396, pp. 264 - 279
 #
+# Altered to compare the Hugoniot equation values rather than the mach number ratio.
 
 module CannyShockSensor
 
+using Interpolations
 using LinearAlgebra
-using ShockwaveProperties
 using StaticArrays
 using Tullio
 
 using Euler2D
 using Euler2D: CellBasedEulerSim, select_middle
 using PlanePolygons
+using ShockwaveProperties
 
 export find_shock_in_timestep
 
@@ -300,10 +302,18 @@ function extract_bow_shock_points(sim, sensor_info; gap_size = 8)
         idx = findfirst(candidate_row)
         isnothing(idx) && return SVector(Inf, Inf)
         cell_id = ids_row[idx]
-        return cells[cell_id].center
+        return cells[cell_id].center - SVector(0.0, cells[cell_id].extent[2] / 2)
     end
     filter!(≠(SVector(Inf, Inf)), candidate_points)
     return candidate_points
+end
+
+function extract_bow_shock_interpolation(sim, sensor_info; skip_pts = 10)
+    points = extract_bow_shock_points(sim, sensor_info)[begin:skip_pts:end]
+    return scale(
+        interpolate(points, BSpline(Linear())),
+        range(0.0, 1.0; length = length(points)),
+    )
 end
 
 end
