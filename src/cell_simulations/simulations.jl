@@ -426,23 +426,23 @@ function total_mass_contained_by(
     poly_bbox_padding = nothing,
 ) where {T,NSEEDS,NP}
     contained = all_cells_contained_by(poly, sim; padding = poly_bbox_padding)
-    overlapping = all_cells_contained_by(poly, sim; padding = poly_bbox_padding)
+    overlapping = all_cells_overlapping(poly, sim; padding = poly_bbox_padding)
     _, cells = nth_step(sim, tstep)
-    U_total = zero(typeof(cells[1].u))
-    Udot_total = zero(typeof(cells[1].u̇))
-    for id ∈ contained
-        A = cell_volume(cells[id])
-        @reset U_total += A * cells[id].u
-        @reset Udot_total += A * cells[id].u̇
-    end
-    # this is allocating like hell
-    # chopping many many polygons
-    for id ∈ overlapping
-        A = overlapping_cell_area(cells[id], poly)
-        @reset U_total += A * cells[id].u
-        @reset Udot_total += A * cells[id].u̇
-    end
-    return U_total, Udot_total
+    U_zero = zero(typeof(cells[1].u))
+    Udot_zero = zero(typeof(cells[1].u̇))
+    U_contained, Udot_contained =
+        mapreduce((a, b) -> a .+ b, contained; init = (U_zero, Udot_zero)) do id
+            A = cell_volume(cells[id])
+            return A .* (cells[id].u, cells[id].u̇)
+        end
+
+    U_overlap, Udot_overlap =
+        mapreduce((a, b) -> a .+ b, overlapping; init = (U_zero, Udot_zero)) do id
+            A = overlapping_cell_area(cells[id], poly)
+            return A .* (cells[id].u, cells[id].u̇)
+        end
+
+    return U_contained + U_overlap, Udot_contained + Udot_overlap
 end
 
 """
