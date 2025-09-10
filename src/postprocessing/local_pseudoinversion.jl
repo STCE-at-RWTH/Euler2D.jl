@@ -135,7 +135,7 @@ function compute_coarse_cell_contents(
         p_cell = cell_boundary_polygon(cells[id])
         p_union = poly_intersection(coarse_cell_boundary, p_cell)
         # dependence of the overlapping area on its corners
-        # A_union, dA_union = DifferentiationInterface.value_and_gradient(
+        # A_union, dA_union_dxj = DifferentiationInterface.value_and_gradient(
         #     poly_area,
         #     fdiff_backend,
         #     PlanePolygons._flatten(p_union),
@@ -151,12 +151,8 @@ function compute_coarse_cell_contents(
         end
         # dependence of the overlapping area's corners on the big cell's corners
         dxj = mapreduce(vcat, edge_starts(p_union)) do pt
-            intersection_point_jacobian_old(pt, coarse_cell_boundary, p_union)
+            intersection_point_jacobian(pt, coarse_cell_boundary, p_union)
         end
-        # @show num_vertices(p_union), size(dA_union), size(dxj), size(du_dx_vtxs)
-        # dAdxj = dA_union' * dxj
-        # return @tullio res[i, j] :=
-        # (u_loc[i] * dAdxj[j] + A_union * du_dx_vtxs[i, k] * dxj[k, j])
         return u_loc * dA_union_dxj' + A_union * du_dx_vtxs * dxj
     end
     # @show size(U_total), size(dU_totaldpts), size(dA)
@@ -208,8 +204,9 @@ function populate_coarse_cell(
     else
         cell_poly
     end
-    u, udot, du_dx_vtxs =
+    u, udot, du_dx_vtxs_maybenans =
         compute_coarse_cell_contents(actual_poly, sim, tstep, boundary_conditions, gas)
+    du_dx_vtxs = map(v -> isnan(v) ? zero(T) : v, du_dx_vtxs_maybenans)
     return CoarseQuadCell(id, cell_poly, u, udot, du_dx_vtxs)
 end
 
