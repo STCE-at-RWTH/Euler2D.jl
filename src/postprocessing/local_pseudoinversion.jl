@@ -27,31 +27,20 @@ Get the Jacobian of the point (x, y) w.r.t the vertices of `poly1`,
 provided (x, y) is the intersection of a pair of edges of `poly1` and `poly2`.
 """
 function intersection_point_jacobian(point, poly1, poly2)
-    N_1 = num_vertices(poly1)
-    J = zeros(eltype(point), (2, 2 * N_1))
-    for (i1, (p1, p2)) ∈ enumerate(zip(edge_starts(poly1), edge_ends(poly1)))
-        i2 = (i1 + 1) % N_1 + 1 # get the next index modulo NV and add 1 for indexing
-        ℓ_1 = Line(p1, p2 - p1)
-        is_other_point_on_line(ℓ_1, point) || continue # skip if point is not on ℓ_1
-        for (q1, q2) ∈ zip(edge_starts(poly2), edge_ends(poly2))
-            ℓ_2 = Line(q1, q2 - q1)
-            is_other_point_on_line(ℓ_2, point) || continue
-            # duplicate work here but this is all very fast anyway
-            J_loc = DifferentiationInterface.jacobian(
-                fdiff_backend,
-                vcat(p1, p2),
-                Constant(ℓ_2),
-            ) do blob, ℓ
-                a = blob[SVector(1, 2)]
-                b = blob[SVector(3, 4)]
-                AB = Line(a, b - a)
-                return line_intersect(AB, ℓ)
-            end
-            slice1 = (2*i1-1):2*i1
-            slice2 = (2*i2-1):2*i2
-            @views begin
-                J[:, slice1] += J_loc[:, 1:2]
-                J[:, slice2] += J_loc[:, 3:4]
+    N = num_vertices(poly1)
+    J = zeros(eltype(point), (2, 2 * N))
+    foreach(enumerate(zip(edge_starts(poly1), edge_ends(poly1)))) do (i, (p1, p2))
+        if is_other_point_on_line(Line(p1, p2 - p1), point)
+            for ell2 ∈
+                Iterators.filter(ℓ -> is_other_point_on_line(ℓ, point), edge_lines(poly2))
+                jac = DifferentiationInterface.jacobian(fdiff_backend, vcat(p1, p2)) do vals
+                    q1 = vals[SVector(1, 2)]
+                    q2 = vals[SVector(3, 4)]
+                    return line_intersect(Line(q1, q2 - q1), ell2)
+                end
+                j = ((i + 1) % N) + 1
+                J[2*i-1:2*i] = jac[SVector(1, 2)]
+                J[2*j-1:2*j] = jac[SVector(3, 4)]
             end
         end
     end
@@ -71,27 +60,6 @@ function intersection_area_jacobian(flat_poly1, poly2)
         @reset grad1[i] = (out1 - out2) / (2 * h)
     end
     return grad1
-end
-
-function intersection_point_jacobian_old(point, poly1, poly2)
-    N = num_vertices(poly1)
-    J = zeros(eltype(point), (2, 2 * N))
-    foreach(enumerate(zip(edge_starts(poly1), edge_ends(poly1)))) do (i, (p1, p2))
-        if is_other_point_on_line(Line(p1, p2 - p1), point)
-            for ell2 ∈
-                Iterators.filter(ℓ -> is_other_point_on_line(ℓ, point), edge_lines(poly2))
-                jac = DifferentiationInterface.jacobian(fdiff_backend, vcat(p1, p2)) do vals
-                    q1 = vals[SVector(1, 2)]
-                    q2 = vals[SVector(3, 4)]
-                    return line_intersect(Line(q1, q2 - q1), ell2)
-                end
-                j = ((i + 1) % N) + 1
-                J[2*i-1:2*i] = jac[SVector(1, 2)]
-                J[2*j-1:2*j] = jac[SVector(3, 4)]
-            end
-        end
-    end
-    return J
 end
 
 ## END POLYGON STUFF
