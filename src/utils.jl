@@ -17,45 +17,6 @@ end
 ### MAYBE WE CAN EXPAND THE INTERFACE IN THE OTHER PACKAGE
 
 """
-  change_of_basis_matrix(A, B)
-
-Get the matrix ``T_{AB}`` to change basis from coordinates ``A`` to ``B``. 
-
-``x_B = Tx_a``.
-"""
-function change_of_basis_matrix(A, B)
-    return inv(B) * A
-end
-
-"""
-  orthonormal_basis(x)
-
-Get an orthonormal basis from a choice of axis ``e_1``.
-"""
-function orthonormal_basis(x)
-    @assert length(x) == 2
-    x̂ = SVector{2}(normalize(x)...)
-    ŷ = SVector(-x̂[2], x̂[1])
-    return hcat(x̂, ŷ)
-end
-
-"""
-  change_basis(p, A, B)
-
-Put the vector ``p`` in basis ``A`` into basis ``B``.
-"""
-function change_basis(p, A, B)
-    return change_of_basis_matrix(A, B) * p
-end
-
-"""
-  change_basis(p, B)
-
-Put the vector ``p`` in the standard Cartesian basis into basis B.
-"""
-change_basis(p, B) = change_basis(p, I, B)
-
-"""
   apply_coordinate_tform(u, T)
 
 Multiply the momentum vector of the state `u=[ρ, ρv..., ρE]` by T.
