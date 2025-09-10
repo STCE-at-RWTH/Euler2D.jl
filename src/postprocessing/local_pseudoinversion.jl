@@ -73,6 +73,27 @@ function intersection_area_jacobian(flat_poly1, poly2)
     return grad1
 end
 
+function intersection_point_jacobian_old(point, poly1, poly2)
+    N = num_vertices(poly1)
+    J = zeros(eltype(point), (2, 2 * N))
+    foreach(enumerate(zip(edge_starts(poly1), edge_ends(poly1)))) do (i, (p1, p2))
+        if is_other_point_on_line(Line(p1, p2 - p1), point)
+            for ell2 ∈
+                Iterators.filter(ℓ -> is_other_point_on_line(ℓ, point), edge_lines(poly2))
+                jac = DifferentiationInterface.jacobian(fdiff_backend, vcat(p1, p2)) do vals
+                    q1 = vals[SVector(1, 2)]
+                    q2 = vals[SVector(3, 4)]
+                    return line_intersect(Line(q1, q2 - q1), ell2)
+                end
+                j = ((i + 1) % N) + 1
+                J[2*i-1:2*i] = jac[SVector(1, 2)]
+                J[2*j-1:2*j] = jac[SVector(3, 4)]
+            end
+        end
+    end
+    return J
+end
+
 ## END POLYGON STUFF
 
 ## BOW-SHOCK PROBLEM SPECIFIC
@@ -162,7 +183,7 @@ function compute_coarse_cell_contents(
         end
         # dependence of the overlapping area's corners on the big cell's corners
         dxj = mapreduce(vcat, edge_starts(p_union)) do pt
-            intersection_point_jacobian(pt, coarse_cell_boundary, p_cell)
+            intersection_point_jacobian_old(pt, coarse_cell_boundary, p_union)
         end
         # @show num_vertices(p_union), size(dA_union), size(dxj), size(du_dx_vtxs)
         # dAdxj = dA_union' * dxj

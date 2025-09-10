@@ -335,6 +335,7 @@ function _in_window(cell, window_x, window_y)
     )
 end
 
+# I am satisfied that this implementation is correct
 function ∇u_at(sim, n, x, y, boundary_conditions, gas; padding = nothing)
     window = if isnothing(padding)
         dx, dy = 2 .* minimum_cell_size(sim)
