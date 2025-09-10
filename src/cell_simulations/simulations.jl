@@ -344,7 +344,7 @@ function ∇u_at(sim, n, x, y, boundary_conditions, gas; padding = nothing)
     end
     _, cells = nth_step(sim, n)
     slices = _cell_ids_view_from_window(cell_centers(sim), window; buffer = 8)
-    contains_point = Iterators.filter(@view sim.cell_ids[slices...]) do id
+    contains_point = Iterators.filter(sim.cell_ids[slices...]) do id
         return (
             id != 0 &&
             PlanePolygons.point_inside(cell_boundary_polygon(cells[id]), Point(x, y))
@@ -428,8 +428,8 @@ function total_mass_contained_by(
     contained = all_cells_contained_by(poly, sim; padding = poly_bbox_padding)
     overlapping = all_cells_overlapping(poly, sim; padding = poly_bbox_padding)
     _, cells = nth_step(sim, tstep)
-    U_zero = zero(typeof(cells[1].u))
-    Udot_zero = zero(typeof(cells[1].u̇))
+    U_zero = zero(SVector{4,Float64})
+    Udot_zero = zero(SMatrix{4,NSEEDS,T,NP})
     U_contained, Udot_contained =
         mapreduce((a, b) -> a .+ b, contained; init = (U_zero, Udot_zero)) do id
             A = cell_volume(cells[id])

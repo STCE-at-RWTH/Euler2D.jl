@@ -6,16 +6,13 @@ using ForwardDiff: ForwardDiff
 using Graphs
 using LinearAlgebra
 using MetaGraphsNext
+using OhMyThreads: tmap, tmapreduce
 using Tullio
 using StaticArrays
 
 using Euler2D
-using Euler2D: CellBasedEulerSim
-using Euler2D: CellNeighboring, FVMCell, TangentQuadCell
-using Euler2D: fdiff_eps
-# TODO organize exports from Euler2D
-using Euler2D: minimum_cell_size, all_cells_overlapping, total_mass_contained_by
-using Euler2D: ∇u_at, cell_boundary_polygon
+using Euler2D: CellNeighboring, fdiff_eps, select_middle
+using Euler2D: all_cells_overlapping, total_mass_contained_by
 using PlanePolygons
 
 const fdiff_backend = AutoForwardDiff()
@@ -149,12 +146,17 @@ function compute_coarse_cell_contents(
         p_cell = cell_boundary_polygon(cells[id])
         p_union = poly_intersection(coarse_cell_boundary, p_cell)
         # dependence of the overlapping area on its corners
-        A_union, dA_union = DifferentiationInterface.value_and_gradient(
-            poly_area,
-            fdiff_backend,
-            PlanePolygons._flatten(p_union),
+        # A_union, dA_union = DifferentiationInterface.value_and_gradient(
+        #     poly_area,
+        #     fdiff_backend,
+        #     PlanePolygons._flatten(p_union),
+        # )
+        A_union = poly_area(p_union)
+        dA_union_dxj = intersection_area_jacobian(
+            PlanePolygons._flatten(coarse_cell_boundary),
+            p_cell,
         )
-        # dependence of u(x) at each of the overlapping area's corners
+        # # dependence of u(x) at each of the overlapping area's corners
         du_dx_vtxs = mapreduce(hcat, edge_starts(p_union)) do pt
             ∇u_at(sim, tstep, pt..., boundary_conditions, gas; padding = 2 .* min_cell_size)
         end
@@ -163,10 +165,10 @@ function compute_coarse_cell_contents(
             intersection_point_jacobian(pt, coarse_cell_boundary, p_cell)
         end
         # @show num_vertices(p_union), size(dA_union), size(dxj), size(du_dx_vtxs)
-        dAdxj = dA_union' * dxj
-        return @tullio res[i, j] :=
-            (u_loc[i] * dAdxj[j] + A_union * du_dx_vtxs[i, k] * dxj[k, j])
-        # return cells[id].u * dAdxj' + A_union * du_dx_vtxs * dxj
+        # dAdxj = dA_union' * dxj
+        # return @tullio res[i, j] :=
+        # (u_loc[i] * dAdxj[j] + A_union * du_dx_vtxs[i, k] * dxj[k, j])
+        return u_loc * dA_union_dxj' + A_union * du_dx_vtxs * dxj
     end
     # @show size(U_total), size(dU_totaldpts), size(dA)
     du_dx_vtxs = (A * dU_totaldpts - U_total * dA') / (A * A)
@@ -229,6 +231,8 @@ const DUAL_GRAPH_NODE_TYPE = Tuple{
     Union{Nothing,CoarseQuadCell{T,NS,NTANGENTS},SVector{4,T}},
 } where {S,T,NS,NTANGENTS}
 
+const AMBIENT_BC_DUAL_IDX = 0
+
 function populate_coarse_cell_graph(
     coarse_cells,
     sim::CellBasedEulerSim{T,TangentQuadCell{T,NS,NTANGENTS}},
@@ -244,8 +248,7 @@ function populate_coarse_cell_graph(
     for cell ∈ coarse_cells
         g[cell.id] = (DualNodeKind{:cell}(), cell)
     end
-    ambient_idx = 1000 * nv(g)
-    g[ambient_idx] = (DualNodeKind{:boundary_ambient}(), free_stream_conditions)
+    g[AMBIENT_BC_DUAL_IDX] = (DualNodeKind{:boundary_ambient}(), free_stream_conditions)
     phantom_idx = 1000 * nv(g) + 1
     for cell ∈ coarse_cells
         for other ∈ coarse_cells
@@ -265,7 +268,7 @@ function populate_coarse_cell_graph(
         )
             # TODO fix hardcoded directions and properties here
             if cell.id % 3 == 1 && dir == :west
-                g[cell.id, ambient_idx] = (dir, p1, p2)
+                g[cell.id, AMBIENT_BC_DUAL_IDX] = (dir, p1, p2)
             end
         end
     end
@@ -294,7 +297,7 @@ function make_coarse_cell_graph(
             ),
         ),
     )
-    cells_itr = map(empty_polys_enumerated) do (i, poly)
+    cells_itr = tmap(empty_polys_enumerated) do (i, poly)
         populate_coarse_cell(i, poly, sim, tstep, boundary_conditions, gas)
     end
     return populate_coarse_cell_graph(
@@ -327,6 +330,17 @@ function _unmarshal_edge_data_gradient(g)
     return (g[1, :], g[SVector(2, 3), :], g[SVector(4, 5), :], g[SVector(6, 7), :])
 end
 
+function project_to_orthonormal_basis(v, new_basis_x)
+    B = PlanePolygons.orthonormal_basis(new_basis_x)
+    return change_basis(v, B)
+end
+
+function project_state_to_orthonormal_basis(u, new_basis_x)
+    B = PlanePolygons.orthonormal_basis(new_basis_x)
+    ρv_B = change_basis(Euler2D.select_middle(u), B)
+    return SVector(u[begin], ρv_B..., u[end])
+end
+
 function _edge_basis(edge_data)
     (_, p1, p2) = edge_data
     L = norm(p2 - p1)
@@ -355,9 +369,10 @@ _u_idx(::DualNodeKind{:cell}, id, nbr) = nbr
 _u_idx(::DualNodeKind{:boundary_ambient}, id, nbr) = 1
 
 function _compute_ϕ(
-    cell_kind::DualNodeKind{:cell},
+    ϕ,
+    ::DualNodeKind{:cell},
     cell_data,
-    other_kind::DualNodeKind{:cell},
+    ::DualNodeKind{:cell},
     other_data,
     edge_data,
     gas,
@@ -370,9 +385,10 @@ function _compute_ϕ(
 end
 
 function _compute_ϕ(
-    cell_kind::DualNodeKind{:cell},
+    ϕ,
+    ::DualNodeKind{:cell},
     cell_data,
-    other_kind::DualNodeKind{:boundary_vN},
+    ::DualNodeKind{:boundary_vN},
     ::Nothing,
     edge_data,
     gas,
@@ -385,9 +401,10 @@ function _compute_ϕ(
 end
 
 function _compute_ϕ(
-    cell_kind::DualNodeKind{:cell},
+    ϕ,
+    ::DualNodeKind{:cell},
     cell_data,
-    other_kind::DualNodeKind{:boundary_ambient},
+    ::DualNodeKind{:boundary_ambient},
     other_data,
     edge_data,
     gas,
@@ -400,9 +417,10 @@ function _compute_ϕ(
 end
 
 function _compute_ϕ(
-    cell_kind::DualNodeKind{:cell},
+    ϕ,
+    ::DualNodeKind{:cell},
     cell_data,
-    other_kind::Union{DualNodeKind{:boundary_sym},DualNodeKind{:boundary_body}},
+    ::Union{DualNodeKind{:boundary_sym},DualNodeKind{:boundary_body}},
     ::Nothing,
     edge_data,
     gas,
@@ -418,11 +436,13 @@ function _compute_ϕ(
 end
 
 function _compute_grad_ϕ_edge(
-    cell_kind::DualNodeKind{:cell},
+    ϕ,
+    ::DualNodeKind{:cell},
     cell_data,
-    other_kind::DualNodeKind{:cell},
+    ::DualNodeKind{:cell},
     other_data,
     edge_data,
+    gas,
 )
     blob = _marshal_edge_data(edge_data)
     dϕ_dedge = jacobian(
@@ -435,18 +455,20 @@ function _compute_grad_ϕ_edge(
         (L, n̂, t̂, ê1) = _edge_basis((nothing, p1, p2))
         u_L = project_state_to_orthonormal_basis(cell_u, n̂)
         u_R = project_state_to_orthonormal_basis(other_u, n̂)
-        ϕ_n = ϕ(u_L, u_R, 1, DRY_AIR)
+        ϕ_n = ϕ(u_L, u_R, 1, gas)
         return L * project_state_to_orthonormal_basis(ϕ_n, ê1)
     end
     return dϕ_dedge
 end
 
 function _compute_grad_ϕ_edge(
-    cell_kind::DualNodeKind{:cell},
+    ϕ,
+    ::DualNodeKind{:cell},
     cell_data,
-    other_kind::Union{DualNodeKind{:boundary_sym},DualNodeKind{:boundary_body}},
+    ::Union{DualNodeKind{:boundary_sym},DualNodeKind{:boundary_body}},
     ::Nothing,
     edge_data,
+    gas,
 )
     blob = _marshal_edge_data(edge_data)
     dϕ_dedge = jacobian(fdiff_backend, blob, Constant(cell_data.u)) do v, u
@@ -457,31 +479,33 @@ function _compute_grad_ϕ_edge(
         ρv_reflected = -(ρv ⋅ n̂) * n̂ + (ρv ⋅ t̂) * t̂
         other_u = SVector(u[1], ρv_reflected..., u[4])
         u_R = project_state_to_orthonormal_basis(other_u, n̂)
-        ϕ_n = ϕ(u_L, u_R, 1, DRY_AIR)
+        ϕ_n = ϕ(u_L, u_R, 1, gas)
         return L * project_state_to_orthonormal_basis(ϕ_n, ê1)
     end
     return dϕ_dedge
 end
 
 function _compute_grad_ϕ_u(
-    cell_kind::DualNodeKind{:cell},
+    ϕ,
+    ::DualNodeKind{:cell},
     cell_data,
-    other_kind::DualNodeKind{:cell},
+    ::DualNodeKind{:cell},
     other_data,
     edge_data,
+    gas,
 )
     (L, n̂, t̂, ê1) = _edge_basis(edge_data)
     dϕ_dcell = jacobian(fdiff_backend, cell_data.u, Constant(other_data.u)) do u, u_other
         u_L = project_state_to_orthonormal_basis(u, n̂)
         u_R = project_state_to_orthonormal_basis(u_other, n̂)
-        ϕ_n = ϕ(u_L, u_R, 1, DRY_AIR)
+        ϕ_n = ϕ(u_L, u_R, 1, gas)
         return L * project_state_to_orthonormal_basis(ϕ_n, ê1)
     end
 
     dϕ_dother = jacobian(fdiff_backend, other_data.u) do u
         u_L = project_state_to_orthonormal_basis(cell_data.u, n̂)
         u_R = project_state_to_orthonormal_basis(u, n̂)
-        ϕ_n = ϕ(u_L, u_R, 1, DRY_AIR)
+        ϕ_n = ϕ(u_L, u_R, 1, gas)
         return L * project_state_to_orthonormal_basis(ϕ_n, ê1)
     end
 
@@ -489,24 +513,26 @@ function _compute_grad_ϕ_u(
 end
 
 function _compute_grad_ϕ_u(
-    cell_kind::DualNodeKind{:cell},
+    ϕ,
+    ::DualNodeKind{:cell},
     cell_data,
-    other_kind::DualNodeKind{:boundary_ambient},
+    ::DualNodeKind{:boundary_ambient},
     other_data,
     edge_data,
+    gas,
 )
     (L, n̂, t̂, ê1) = _edge_basis(edge_data)
     dϕ_dcell = jacobian(fdiff_backend, cell_data.u) do u
         u_L = project_state_to_orthonormal_basis(u, n̂)
         u_R = project_state_to_orthonormal_basis(other_data, n̂)
-        ϕ_n = ϕ(u_L, u_R, 1, DRY_AIR)
+        ϕ_n = ϕ(u_L, u_R, 1, gas)
         return L * project_state_to_orthonormal_basis(ϕ_n, ê1)
     end
 
     dϕ_dother = jacobian(fdiff_backend, other_data) do u
         u_L = project_state_to_orthonormal_basis(cell_data.u, n̂)
         u_R = project_state_to_orthonormal_basis(u, n̂)
-        ϕ_n = ϕ(u_L, u_R, 1, DRY_AIR)
+        ϕ_n = ϕ(u_L, u_R, 1, gas)
         return L * project_state_to_orthonormal_basis(ϕ_n, ê1)
     end
 
@@ -514,11 +540,13 @@ function _compute_grad_ϕ_u(
 end
 
 function _compute_grad_ϕ_u(
-    cell_kind::DualNodeKind{:cell},
+    ϕ,
+    ::DualNodeKind{:cell},
     cell_data,
-    other_kind::Union{DualNodeKind{:boundary_sym},DualNodeKind{:boundary_body}},
+    ::Union{DualNodeKind{:boundary_sym},DualNodeKind{:boundary_body}},
     ::Nothing,
     edge_data,
+    gas,
 )
     (L, n̂, t̂, ê1) = _edge_basis(edge_data)
     dϕ_dcell = jacobian(fdiff_backend, cell_data.u) do u
@@ -527,46 +555,62 @@ function _compute_grad_ϕ_u(
         ρv_reflected = -(ρv ⋅ n̂) * n̂ + (ρv ⋅ t̂) * t̂
         other_u = SVector(u[1], ρv_reflected..., u[4])
         u_R = project_state_to_orthonormal_basis(other_u, n̂)
-        ϕ_n = ϕ(u_L, u_R, 1, DRY_AIR)
+        ϕ_n = ϕ(u_L, u_R, 1, gas)
         return L * project_state_to_orthonormal_basis(ϕ_n, ê1)
     end
     return dϕ_dcell, zero(dϕ_dcell)
 end
 
 function _compute_grad_ϕ_u(
-    cell_kind::DualNodeKind{:cell},
+    ϕ,
+    ::DualNodeKind{:cell},
     cell_data,
-    other_kind::DualNodeKind{:boundary_vN},
+    ::DualNodeKind{:boundary_vN},
     ::Nothing,
     edge_data,
+    gas,
 )
     (L, n̂, t̂, ê1) = _edge_basis(edge_data)
     dϕ_dcell = jacobian(fdiff_backend, cell_data.u) do u
         u_L = project_state_to_orthonormal_basis(u, n̂)
         u_R = project_state_to_orthonormal_basis(u, n̂)
-        ϕ_n = ϕ(u_L, u_R, 1, DRY_AIR)
+        ϕ_n = ϕ(u_L, u_R, 1, gas)
         return L * project_state_to_orthonormal_basis(ϕ_n, ê1)
     end
     return dϕ_dcell, zero(dϕ_dcell)
 end
 
-function boundary_integral(dual, id)
+function boundary_integral(ϕ, dual, id)
     nbrs = neighbor_labels(dual, id)
     return sum(nbrs) do nbr
-        return _compute_ϕ(dual[id]..., dual[nbr]..., dual[id, nbr])
+        return _compute_ϕ(ϕ, dual[id]..., dual[nbr]..., dual[id, nbr])
     end
 end
 
-function boundary_integral_gradient(dual, id)
+function boundary_integral_gradient(ϕ, dual, id, gas)
     edge_gradients = map(neighbor_labels(dual, id)) do nbr
         cell_kind, cell_data = dual[id]
         nbr_kind, nbr_data = dual[nbr]
         edge_data = dual[id, nbr]
         edge_length = norm(edge_data[3] - edge_data[2])
-        dϕ_did, dϕ_dnbr =
-            _compute_grad_ϕ_u(cell_kind, cell_data, nbr_kind, nbr_data, edge_data)
-        dLϕ_dedge =
-            _compute_grad_ϕ_edge(cell_kind, cell_data, nbr_kind, nbr_data, edge_data)
+        dϕ_did, dϕ_dnbr = _compute_grad_ϕ_u(
+            ϕ,
+            cell_kind,
+            cell_data,
+            nbr_kind,
+            nbr_data,
+            edge_data,
+            gas,
+        )
+        dLϕ_dedge = _compute_grad_ϕ_edge(
+            ϕ,
+            cell_kind,
+            cell_data,
+            nbr_kind,
+            nbr_data,
+            edge_data,
+            gas,
+        )
         other_idx = _u_idx(nbr_kind, id, nbr)
         return (edge_data[1], id, other_idx, dϕ_did, dϕ_dnbr, edge_length, dLϕ_dedge)
     end
@@ -583,11 +627,11 @@ function boundary_integral_gradient(dual, id)
         ddpts[:, (2*k-1):2*k] += dLϕ_dpts[:, SVector(1, 2)]
         ddpts[:, (2*l-1):2*l] += dLϕ_dpts[:, SVector(3, 4)]
 
-        ddpts[:, (2*k-1):2*k] += dϕ_dui * dual[i][2].du_dpts[:, (2*k-1):2*k]
-        ddpts[:, (2*l-1):2*l] += dϕ_dui * dual[i][2].du_dpts[:, (2*l-1):2*l]
+        ddpts[:, (2*k-1):2*k] += dϕ_dui * dual[i][2].du_dvtxs[:, (2*k-1):2*k]
+        ddpts[:, (2*l-1):2*l] += dϕ_dui * dual[i][2].du_dvtxs[:, (2*l-1):2*l]
 
-        ddpts[:, (2*k-1):2*k] += dϕ_duj * dual[j][2].du_dpts[:, (2*m-1):2*m]
-        ddpts[:, (2*l-1):2*l] += dϕ_duj * dual[j][2].du_dpts[:, (2*n-1):2*n]
+        ddpts[:, (2*k-1):2*k] += dϕ_duj * dual[j][2].du_dvtxs[:, (2*m-1):2*m]
+        ddpts[:, (2*l-1):2*l] += dϕ_duj * dual[j][2].du_dvtxs[:, (2*n-1):2*n]
     end
     return ddparams, ddpts
 end
@@ -597,15 +641,15 @@ const x_select = hcat(
     SVector(0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0),
 )
 
-function ξ_local_pseudoinversion(dual, id, ε) # where the magic happens
+function ξ_local_pseudoinversion(ϕ, dual, id, gas) # where the magic happens
     # A = boundary_integral_ddparams(dual, id)
     # @assert rank(A) == min(size(A)...)
     # B = boundary_integral_ddL(dual, id)
     # @assert rank(B) == min(size(B)...)
     # C = pinv(B)*A
-    local (A, B) = boundary_integral_gradient(dual, id)
+    local (A, B) = boundary_integral_gradient(ϕ, dual, id, gas)
     local C = pinv(B * x_select)
-    return -(C * A) * ε
+    return -(C * A)
 end
 
 end

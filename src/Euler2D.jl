@@ -49,7 +49,7 @@ export DRY_AIR
 export F_euler
 export interface_signal_speeds, maximum_Δt
 export eigenvectors_∇F_euler, eigenvectors_∇G_euler
-export step_euler_hll!, simulate_euler_equations, simulate_euler_equations_cells
+export simulate_euler_equations_cells
 
 # dimension stuff
 export EulerEqnsScaling
@@ -74,13 +74,13 @@ export SupersonicInflow
 export numeric_dtype
 
 # CellSim methods
-export CellBasedEulerSim, PrimalQuadCell
+export CellBasedEulerSim, FVMCell, PrimalQuadCell, TangentQuadCell
 export inward_normals, outward_normals
 export cell_boundaries, cell_centers, nth_step, eachstep
 export grid_size, n_data_dims, n_space_dims, n_tsteps
+export cell_volume, cell_boundary_polygon, minimum_cell_size, maximum_cell_size
 export Obstacle, TriangularObstacle, RectangularObstacle, CircularObstacle
-export point_inside
-export load_cell_sim, find_shock_in_timestep
+export load_cell_sim
 
 function _interpolate_field(fieldfn, sim, t, args...)
     if t < 0 || t > sim.tsteps[end]
@@ -134,5 +134,6 @@ end
 # All sim methods
 export pressure_field, density_field, velocity_field
 export mach_number_field, total_internal_energy_density_field
+export ∇u_at
 
 end
