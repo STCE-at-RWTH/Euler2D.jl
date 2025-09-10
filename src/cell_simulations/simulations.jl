@@ -29,7 +29,7 @@ Represents a completed simulation of the Euler equations on a mesh of 2-dimensio
 - `density_field, momentum_density_field, total_internal_energy_density_field`: Compute quantities at a given time step.
 - `pressure_field, velocity_field, mach_number_field`: Compute quantities at a given time step.
 """
-struct CellBasedEulerSim{T,C<:QuadCell}
+struct CellBasedEulerSim{T,C<:FVMCell}
     ncells::Tuple{Int,Int}
     nsteps::Int
     bounds::NTuple{2,Tuple{T,T}}
@@ -216,6 +216,31 @@ function pressure_field(
 end
 
 """
+    pressure_field!(result, csim::CellBasedEulerSim, n, gas)
+
+Compute the dimensionless pressure field for a cell-based Euler simulation `csim` at time step `n` in gas `gas`.
+
+Stores zero if the cell in question is not active.
+Stores results in `result`. Returns `result`.
+"""
+function pressure_field!(
+    result,
+    csim::CellBasedEulerSim,
+    n::Integer,
+    gas::CaloricallyPerfectGas,
+)
+    _, cells = nth_step(csim, n)
+    for i ∈ eachindex(result, csim.cell_ids)
+        if csim.cell_ids[i] == 0
+            result[i] = zero(eltype(result))
+        else
+            result[i] = dimensionless_pressure(cells[csim.cell_ids[i]].u, gas)
+        end
+    end
+    return result
+end
+
+"""
     pressure_field(csim::CellBasedEulerSim, scale, n)
 
 Compute the total internal energy density field for a cell-based Euler simulation `csim` and redimensionalize it at time step `n`.
@@ -262,6 +287,164 @@ mach_number_field(
     gas::CaloricallyPerfectGas,
     scale::EulerEqnsScaling,
 ) = mach_number_field(csim, n, gas)
+
+function minimum_cell_size(sim::CellBasedEulerSim)
+    _, cells = nth_step(sim, 1)
+    return tmapreduce(
+        (size_a, size_b) -> min.(size_a, size_b),
+        sim.cell_ids;
+        init = (Inf, Inf),
+    ) do id
+        id == 0 && return (Inf, Inf)
+        return cells[id].extent
+    end
+end
+
+function maximum_cell_size(sim::CellBasedEulerSim)
+    _, cells = nth_step(sim, 1)
+    return tmapreduce(
+        (size_a, size_b) -> max.(size_a, size_b),
+        sim.cell_ids;
+        init = (-Inf, -Inf),
+    ) do id
+        id == 0 && return (-Inf, -Inf)
+        return cells[id].extent
+    end
+end
+
+function _find_window_on_range(range, window, buffer)
+    idx1 = max(
+        something(findfirst(>=(window[1]), range), firstindex(range)) - buffer,
+        firstindex(range),
+    )
+    idx2 = min(
+        something(findfirst(>=(window[2]), range), lastindex(range)) + buffer,
+        lastindex(range),
+    )
+    return idx1:idx2
+end
+
+function _cell_ids_view_from_window(cell_center_ranges, window; buffer = 10)
+    return _find_window_on_range.(cell_center_ranges, window, buffer)
+end
+
+function _in_window(cell, window_x, window_y)
+    return (
+        window_x[1] ≤ cell.center[1] ≤ window_x[2] &&
+        window_y[1] ≤ cell.center[2] ≤ window_y[2]
+    )
+end
+
+# I am satisfied that this implementation is correct
+function ∇u_at(sim, n, x, y, boundary_conditions, gas; padding = nothing)
+    window = if isnothing(padding)
+        dx, dy = 2 .* minimum_cell_size(sim)
+        (x .+ (-dx, dx), y .+ (-dy, dy))
+    else
+        (x .+ (-padding[1], padding[2]), y .+ (-padding[2], padding[2]))
+    end
+    _, cells = nth_step(sim, n)
+    slices = _cell_ids_view_from_window(cell_centers(sim), window; buffer = 8)
+    contains_point = Iterators.filter(@view sim.cell_ids[slices...]) do id
+        return (
+            id != 0 &&
+            PlanePolygons.point_inside(cell_boundary_polygon(cells[id]), Point(x, y))
+        )
+    end
+    counter = 0
+    acc = zero(SMatrix{4,2,Float64,8})
+    for id ∈ contains_point
+        counter += 1
+        nbrs = neighbor_cells(cells[id], cells, boundary_conditions, gas)
+        dudx = (nbrs.east.u - nbrs.west.u) / cells[id].extent[1]
+        dudy = (nbrs.north.u - nbrs.south.u) / cells[id].extent[2]
+        @reset acc += hcat(dudx, dudy)
+    end
+    return acc / counter
+end
+
+"""
+    all_cells_contained_by(poly, sim; padding=nothing)
+
+Get all of the cell IDs from `sim` that are contained by `poly`. 
+Will compute the window size automatically if `padding` is `nothing`.
+"""
+function all_cells_contained_by(poly, sim; padding = nothing)
+    bbox_x = extrema(p -> p[1], edge_starts(poly))
+    bbox_y = extrema(p -> p[2], edge_starts(poly))
+    window = if isnothing(padding)
+        dx, dy = minimum_cell_size(sim)
+        (bbox_x .+ (-dx, dx), bbox_y .+ (-dy, dy))
+    else
+        (bbox_x .+ (-padding[1], padding[2]), bbox_y .+ (-padding[2], padding[2]))
+    end
+    _, cells = nth_step(sim, 1)
+    slices = _cell_ids_view_from_window(cell_centers(sim), window; buffer = 4)
+    return Iterators.filter(@view sim.cell_ids[slices...]) do id
+        return (
+            id != 0 &&
+            _in_window(cells[id], window...) &&
+            is_cell_contained_by(cells[id], poly)
+        )
+    end
+end
+
+"""
+    all_cells_overlapping(poly, sim; padding=nothing)
+
+Get all of the cell IDs from `sim` that are overlapping `poly` but not contained by `poly`. 
+Will compute the window size automatically if `padding` is `nothing`.
+"""
+function all_cells_overlapping(poly, sim; padding = nothing)
+    bbox_x = extrema(p -> p[1], edge_starts(poly))
+    bbox_y = extrema(p -> p[2], edge_starts(poly))
+    window = if isnothing(padding)
+        dx, dy = minimum_cell_size(sim)
+        (bbox_x .+ (-dx, dx), bbox_y .+ (-dy, dy))
+    else
+        (bbox_x .+ (-padding[1], padding[2]), bbox_y .+ (-padding[2], padding[2]))
+    end
+    _, cells = nth_step(sim, 1)
+    slices = _cell_ids_view_from_window(cell_centers(sim), window; buffer = 8)
+    return Iterators.filter(@view sim.cell_ids[slices...]) do id
+        return (
+            id != 0 &&
+            _in_window(cells[id], window...) &&
+            is_cell_overlapping(cells[id], poly)
+        )
+    end
+end
+
+"""
+    total_mass_contained_by(poly, sim, tstep)
+
+Get the TOTAL `(mass, momentum, energy)` contained inside of `poly` at timestep `tstep`. 
+"""
+function total_mass_contained_by(
+    poly,
+    sim::CellBasedEulerSim{T,TangentQuadCell{T,NSEEDS,NP}},
+    tstep;
+    poly_bbox_padding = nothing,
+) where {T,NSEEDS,NP}
+    contained = all_cells_contained_by(poly, sim; padding = poly_bbox_padding)
+    overlapping = all_cells_overlapping(poly, sim; padding = poly_bbox_padding)
+    _, cells = nth_step(sim, tstep)
+    U_zero = zero(SVector{4,Float64})
+    Udot_zero = zero(SMatrix{4,NSEEDS,T,NP})
+    U_contained, Udot_contained =
+        mapreduce((a, b) -> a .+ b, contained; init = (U_zero, Udot_zero)) do id
+            A = cell_volume(cells[id])
+            return A .* (cells[id].u, cells[id].u̇)
+        end
+
+    U_overlap, Udot_overlap =
+        mapreduce((a, b) -> a .+ b, overlapping; init = (U_zero, Udot_zero)) do id
+            A = overlapping_cell_area(cells[id], poly)
+            return A .* (cells[id].u, cells[id].u̇)
+        end
+
+    return U_contained + U_overlap, Udot_contained + Udot_overlap
+end
 
 """
 Take the tape data stream and return a channel where simulation state can be queued then pushed.
@@ -362,9 +545,9 @@ function simulate_euler_equations_cells(
     cell_ifaces = [range(b...; length = n + 1) for (b, n) ∈ zip(bounds, ncells)]
 
     global_cells, global_cell_ids = if mode == PRIMAL
-        primal_quadcell_list_and_id_grid(u0, params, bounds, ncells, scale, obstacles)
+        primal_cell_list_and_id_grid(u0, params, bounds, ncells, scale, obstacles)
     else
-        tangent_quadcell_list_and_id_grid(u0, params, bounds, ncells, scale, obstacles)
+        tangent_cell_list_and_id_grid(u0, params, bounds, ncells, scale, obstacles)
     end
     n_global_cells = length(global_cells)
     # do the partitioning

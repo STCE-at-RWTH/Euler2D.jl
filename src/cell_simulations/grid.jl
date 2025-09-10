@@ -1,206 +1,3 @@
-# I always think in "north south east west"... who knows why.
-#   anyway
-@enum CellBoundaries::UInt8 begin
-    NORTH_BOUNDARY = 1
-    SOUTH_BOUNDARY = 2
-    EAST_BOUNDARY = 3
-    WEST_BOUNDARY = 4
-    INTERNAL_STRONGWALL = 5
-end
-
-@enum CellNeighboring::UInt8 begin
-    OTHER_QUADCELL
-    BOUNDARY_CONDITION
-    IS_PHANTOM
-end
-
-"""
-    QuadCell
-
-Abstract data type for all cells in a Cartesian grid.
-
-All QuadCells _must_ provide the following methods:
-
- - `numeric_dtype(::QuadCell)`
- - `update_dtype(::QuadCell)`
-"""
-abstract type QuadCell end
-
-"""
-    PrimalQuadCell{T} <: QuadCell
-
-QuadCell data type for a primal computation.
-
-Type Parameters
----
- - `T`: Numeric data type.
-
-Fields
----
- - `id`: Which quad cell is this?
- - `idx`: Which grid cell does this data represent?
- - `center`: Where is the center of this quad cell?
- - `extent`: How large is this quad cell?
- - `u`: What are the cell-averaged non-dimensionalized conserved properties in this cell?
- - `neighbors`: What are this cell's neighbors?
-"""
-struct PrimalQuadCell{T} <: QuadCell
-    id::Int
-    idx::CartesianIndex{2}
-    center::SVector{2,T}
-    extent::SVector{2,T}
-    u::SVector{4,T}
-    # either (:boundary, :cell)
-    # and then the ID of the appropriate boundary
-    neighbors::NamedTuple{
-        (:north, :south, :east, :west),
-        NTuple{4,Tuple{CellNeighboring,Int}},
-    }
-end
-
-"""
-    TangentQuadCell{T, NSEEDS,PARAMCOUNT} <: QuadCell
-
-QuadCell data type for a primal computation. Pushes forward `NSEEDS` seed values through the JVP of the flux function.
-`PARAMCOUNT` determines the "length" of the underlying `SMatrix` for `u̇`.
-
-Fields
----
- - `id`: Which quad cell is this?
- - `idx`: Which grid cell does this data represent?
- - `center`: Where is the center of this quad cell?
- - `extent`: How large is this quad cell?
- - `u`: What are the cell-averaged non-dimensionalized conserved properties in this cell?
- - `u̇`: What are the cell-averaged pushforwards in this cell?
- - `neighbors`: What are this cell's neighbors?
-"""
-struct TangentQuadCell{T,NSEEDS,PARAMCOUNT} <: QuadCell
-    id::Int
-    idx::CartesianIndex{2}
-    center::SVector{2,T}
-    extent::SVector{2,T}
-    u::SVector{4,T}
-    u̇::SMatrix{4,NSEEDS,T,PARAMCOUNT}
-    neighbors::NamedTuple{
-        (:north, :south, :east, :west),
-        NTuple{4,Tuple{CellNeighboring,Int}},
-    }
-end
-
-numeric_dtype(::PrimalQuadCell{T}) where {T} = T
-numeric_dtype(::Type{PrimalQuadCell{T}}) where {T} = T
-
-numeric_dtype(::TangentQuadCell{T,N,P}) where {T,N,P} = T
-numeric_dtype(::Type{TangentQuadCell{T,N,P}}) where {T,N,P} = T
-n_seeds(::TangentQuadCell{T,N,P}) where {T,N,P} = N
-n_seeds(::Type{TangentQuadCell{T,N,P}}) where {T,N,P} = N
-
-@doc """
-        numeric_dtype(cell)
-        numeric_dtype(::Type{CELL_TYPE})
-
-    Get the numeric data type associated with this cell.
-    """ numeric_dtype
-
-update_dtype(::Type{T}) where {T<:PrimalQuadCell} = NTuple{2,SVector{4,numeric_dtype(T)}}
-function update_dtype(::Type{TangentQuadCell{T,N,P}}) where {T,N,P}
-    return Tuple{SVector{4,T},SVector{4,T},SMatrix{4,N,T,P},SMatrix{4,N,T,P}}
-end
-
-@doc """
-    update_dtype(::Type{T<:QuadCell})
-
-Get the tuple of update data types that must be enforced upon fetch-ing results out of the worker tasks.
-""" update_dtype
-
-function inward_normals(T::DataType)
-    return (
-        north = SVector((zero(T), -one(T))...),
-        south = SVector((zero(T), one(T))...),
-        east = SVector((-one(T), zero(T))...),
-        west = SVector((one(T), zero(T))...),
-    )
-end
-
-function outward_normals(T::DataType)
-    return (
-        north = SVector((zero(T), one(T))...),
-        south = SVector((zero(T), -one(T))...),
-        east = SVector((one(T), zero(T))...),
-        west = SVector((-one(T), zero(T))...),
-    )
-end
-
-inward_normals(cell) = inward_normals(numeric_dtype(cell))
-outward_normals(cell) = outward_normals(numeric_dtype(cell))
-
-cell_volume(cell) = *(cell.extent...)
-
-function phantom_neighbor(cell::PrimalQuadCell, dir, bc, gas)
-    # HACK use nneighbors as intended.
-    @assert dir ∈ (:north, :south, :east, :west) "dir is not a cardinal direction..."
-    @assert nneighbors(bc) == 1 "dirty hack alert, this function needs to be extended for bcs with more neighbors"
-    phantom = @set cell.id = 0
-
-    @inbounds begin
-        reverse_phantom = _dirs_bc_is_reversed[dir] && reverse_right_edge(bc)
-        @reset phantom.center = cell.center + outward_normals(cell)[dir] .* cell.extent
-        @reset phantom.neighbors =
-            NamedTuple{(:north, :south, :east, :west)}(ntuple(Returns((IS_PHANTOM, 0)), 4))
-
-        u = if _dirs_bc_is_reversed[dir]
-            flip_velocity(cell.u, _dirs_dim[dir])
-        else
-            cell.u
-        end
-        phantom_u = phantom_cell(bc, u, _dirs_dim[dir], gas)
-        if reverse_phantom
-            @reset phantom.u = flip_velocity(phantom_u, _dirs_dim[dir])
-        else
-            @reset phantom.u = phantom_u
-        end
-    end
-    return phantom
-end
-
-function phantom_neighbor(
-    cell::TangentQuadCell{T,NSEEDS,PARAMCOUNT},
-    dir,
-    bc,
-    gas,
-) where {T,NSEEDS,PARAMCOUNT}
-    # HACK use nneighbors as intended.
-    @assert dir ∈ (:north, :south, :east, :west) "dir is not a cardinal direction..."
-    @assert nneighbors(bc) == 1 "dirty hack alert, this function needs to be extended for bcs with more neighbors"
-    phantom = @set cell.id = 0
-
-    @inbounds begin
-        reverse_phantom = _dirs_bc_is_reversed[dir] && reverse_right_edge(bc)
-        @reset phantom.center = cell.center + outward_normals(cell)[dir] .* cell.extent
-        @reset phantom.neighbors =
-            NamedTuple{(:north, :south, :east, :west)}(ntuple(Returns((IS_PHANTOM, 0)), 4))
-
-        # TODO there must be a way to do this with Accessors.jl and "lenses" that makes sense
-        # HACK is this utter nonsense????? I do not know. 
-        dim = _dirs_dim[dir]
-        u = _dirs_bc_is_reversed[dir] ? flip_velocity(cell.u, dim) : cell.u
-        u̇ = _dirs_bc_is_reversed[dir] ? flip_velocity(cell.u̇, dim) : cell.u̇
-        phantom_u = phantom_cell(bc, u, _dirs_dim[dir], gas)
-        J_phantom = ForwardDiff.jacobian(u) do u
-            phantom_cell(bc, u, _dirs_dim[dir], gas)
-        end
-        phantom_u̇ = J_phantom * u̇
-        if reverse_phantom
-            @reset phantom.u = flip_velocity(phantom_u, _dirs_dim[dir])
-            @reset phantom.u̇ = flip_velocity(phantom_u̇, _dirs_dim[dir])
-        else
-            @reset phantom.u = phantom_u
-            @reset phantom.u̇ = phantom_u̇
-        end
-    end
-    return phantom
-end
-
 """
     neighbor_cells(cell, active_cells, boundary_conditions, gas)
 
@@ -301,7 +98,7 @@ struct CellGridPartition{T,U} <: AbstractCellGridPartition{T,U}
         cells_copied_ids,
         cells_map::Dict{Int,T},
         cells_update::Dict{Int},
-    ) where {T<:QuadCell}
+    ) where {T<:FVMCell}
         return new{T,update_dtype(T)}(
             id,
             global_extent,
@@ -596,7 +393,7 @@ function collect_cell_partitions(cell_partitions, n_active_cells)
     return u_global
 end
 
-function _iface_speed(iface::Tuple{Int,T,T}, gas) where {T<:QuadCell}
+function _iface_speed(iface::Tuple{Int,T,T}, gas) where {T<:FVMCell}
     return max(abs.(interface_signal_speeds(iface[2].u, iface[3].u, iface[1], gas))...)
 end
 
@@ -903,12 +700,12 @@ function cell_neighbor_status(i, cell_ids)
 end
 
 """
-    primal_quadcell_list_and_id_grid(u0, bounds, ncells, obstacles)
+    primal_cell_list_and_id_grid(u0, bounds, ncells, obstacles)
 
 Computes a collection of active cells and their locations in a grid determined by `bounds` and `ncells`.
 `Obstacles` can be placed into the simulation grid.
 """
-function primal_quadcell_list_and_id_grid(u0, params, bounds, ncells, scaling, obstacles)
+function primal_cell_list_and_id_grid(u0, params, bounds, ncells, scaling, obstacles)
     centers = map(zip(bounds, ncells)) do (b, n)
         v = range(b...; length = n + 1)
         return v[1:end-1] .+ step(v) / 2
@@ -939,12 +736,12 @@ function primal_quadcell_list_and_id_grid(u0, params, bounds, ncells, scaling, o
 end
 
 """
-    tangent_quadcell_list_and_id_grid(u0, bounds, ncells, obstacles)
+    tangent_cell_list_and_id_grid(u0, bounds, ncells, obstacles)
 
 Computes a collection of active cells and their locations in a grid determined by `bounds` and `ncells`.
 `Obstacles` can be placed into the simulation grid.
 """
-function tangent_quadcell_list_and_id_grid(u0, params, bounds, ncells, scaling, obstacles)
+function tangent_cell_list_and_id_grid(u0, params, bounds, ncells, scaling, obstacles)
     centers = map(zip(bounds, ncells)) do (b, n)
         v = range(b...; length = n + 1)
         return v[1:end-1] .+ step(v) / 2
