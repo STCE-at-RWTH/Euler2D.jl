@@ -23,22 +23,6 @@ using Unitful
 using Unitful: 𝐋, 𝐓, 𝐌, 𝚯, 𝐍
 using Unitful: @derived_dimension, Density, Pressure, Velocity
 
-include("utils.jl")
-include("nondimensionalization.jl")
-include("transport.jl")
-include("boundary_conditions.jl")
-include("riemann_solver/approximate_riemann_solver.jl")
-include("riemann_solver/exact_riemann_solver.jl")
-include("array_simulations/fvm.jl")
-include("array_simulations/array_simulations.jl")
-include("cell_simulations/cells.jl")
-include("cell_simulations/obstacle.jl")
-include("cell_simulations/grid.jl")
-include("cell_simulations/simulations.jl")
-include("postprocessing/canny_rh_filter.jl")
-include("postprocessing/local_pseudoinversion.jl")
-
-const _SI_DEFAULT_SCALE = EulerEqnsScaling(1.0u"m", 1.0u"kg/m^3", 1.0u"m/s")
 const fdiff_backend = AutoForwardDiff()
 
 # reexport
@@ -81,6 +65,28 @@ export grid_size, n_data_dims, n_space_dims, n_tsteps
 export cell_volume, cell_boundary_polygon, minimum_cell_size, maximum_cell_size
 export Obstacle, TriangularObstacle, RectangularObstacle, CircularObstacle
 export load_cell_sim
+
+# All sim methods
+export pressure_field, density_field, velocity_field
+export mach_number_field, total_internal_energy_density_field
+export ∇u_at
+
+include("utils.jl")
+include("nondimensionalization.jl")
+include("transport.jl")
+include("boundary_conditions.jl")
+include("riemann_solver/approximate_riemann_solver.jl")
+include("riemann_solver/exact_riemann_solver.jl")
+include("array_simulations/fvm.jl")
+include("array_simulations/array_simulations.jl")
+include("cell_simulations/cells.jl")
+include("cell_simulations/obstacle.jl")
+include("cell_simulations/grid.jl")
+include("cell_simulations/simulations.jl")
+include("postprocessing/canny_rh_filter.jl")
+include("postprocessing/local_pseudoinversion.jl")
+
+const _SI_DEFAULT_SCALE = EulerEqnsScaling(1.0u"m", 1.0u"kg/m^3", 1.0u"m/s")
 
 function _interpolate_field(fieldfn, sim, t, args...)
     if t < 0 || t > sim.tsteps[end]
@@ -130,10 +136,5 @@ for f ∈ _field_methods_nogas
         return _interpolate_field($f, sim, t, scale)
     end
 end
-
-# All sim methods
-export pressure_field, density_field, velocity_field
-export mach_number_field, total_internal_energy_density_field
-export ∇u_at
 
 end
