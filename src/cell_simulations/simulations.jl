@@ -344,7 +344,7 @@ function ∇u_at(sim, n, x, y, boundary_conditions, gas; padding = nothing)
     end
     _, cells = nth_step(sim, n)
     slices = _cell_ids_view_from_window(cell_centers(sim), window; buffer = 8)
-    contains_point = Iterators.filter(sim.cell_ids[slices...]) do id
+    contains_point = Iterators.filter(@view sim.cell_ids[slices...]) do id
         return (
             id != 0 &&
             PlanePolygons.point_inside(cell_boundary_polygon(cells[id]), Point(x, y))
