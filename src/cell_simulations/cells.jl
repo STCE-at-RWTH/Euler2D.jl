@@ -40,9 +40,16 @@ cell_volume(cell::FVMCell) = poly_area(cell_boundary_polygon(cell))
 Does `cell2` (or `poly`) contain `cell1`?
 """
 function is_cell_contained_by(cell1, poly)
-    cell_polys = cell_boundary_polygon(cell1)
-    return all(edge_starts(cell_polys)) do pt
-        return PlanePolygons.point_inside_strict(poly, pt)
+    cell_poly = cell_boundary_polygon(cell1)
+    if cell_poly isa PlanePolygons.SizedClockwiseOrientedPolygon
+        # help inference out a bit here
+        return all(Tuple(edge_starts(cell_poly))) do pt
+            return PlanePolygons.point_inside_strict(poly, pt)
+        end
+    else
+        return all(edge_starts(cell_poly)) do pt
+            return PlanePolygons.point_inside_strict(poly, pt)
+        end
     end
 end
 
