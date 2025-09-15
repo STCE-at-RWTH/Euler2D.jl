@@ -132,12 +132,3 @@ end
 function dimensionless_ΔS_density(u_star, gas::CaloricallyPerfectGas, scale)
     return dimensionless_ΔS_density(u_star, nondimensionalize(gas, scale))
 end
-
-function shift_velocity_coordinates(u_star, v0)
-    ρ = u_star[begin]
-    v_star = dimensionless_velocity(u_star)
-    v = v_star - v0
-    ρe = dimensionless_internal_energy_density(u_star)
-    ρv = ρ * v
-    return SVector(ρ, ρv..., ρe + ρv ⋅ v / 2)
-end

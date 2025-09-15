@@ -13,7 +13,7 @@ using StaticArrays
 using Tullio
 
 using Euler2D
-using Euler2D: CellBasedEulerSim, select_middle
+using Euler2D: shift_velocity_coordinates
 using PlanePolygons
 using ShockwaveProperties
 
