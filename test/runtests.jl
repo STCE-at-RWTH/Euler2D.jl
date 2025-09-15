@@ -7,8 +7,10 @@ using Unitful
 
 @testset "Euler2D" verbose = true begin
     @testset "Utilities" begin
-        using Euler2D:
-            orthonormal_basis, change_of_basis_matrix, change_basis, apply_coordinate_tform
+        using PlanePolygons
+        using PlanePolygons: orthonormal_basis
+        using Euler2D: scale_velocity_coordinates
+
         v = @SVector [2.0, 1.0, 1.0, 2.0]
 
         n1 = SVector(sqrt(2.0) / 2, sqrt(2.0) / 2)
@@ -16,12 +18,12 @@ using Unitful
         to_B = change_of_basis_matrix(I, B)
         @test isapprox(B[:, 1] ⋅ B[:, 2], 0.0; atol = 1.0e-12)
 
-        v_prime = apply_coordinate_tform(v, to_B)
+        v_prime = scale_velocity_coordinates(v, to_B)
         @test v_prime isa SVector
         @test v_prime[3] == 0
         @test all(
             tpl -> isapprox(tpl...; atol = 1.0e-12),
-            zip(v, apply_coordinate_tform(v_prime, B)),
+            zip(v, scale_velocity_coordinates(v_prime, B)),
         )
     end
 
@@ -92,7 +94,6 @@ using Unitful
             @test data_pack[1] == !one_wave
             @test data_pack[6] == !three_wave
             # speeds should be increasing left-to-right!
-            @show one_wave, three_wave
             @test data_pack[2][1] ≤
                   data_pack[2][2] ≤
                   data_pack[5] ≤

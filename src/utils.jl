@@ -12,18 +12,43 @@ function vcat_ρ_ρv_ρE_preserve_static(u1, u2::SVector{S,T}, u3) where {S,T}
     return SVector{S + 2}(u1, u2..., u3)
 end
 
-### RIPPED FROM PLANEPOLYGONS
-### IF THE CUT-CELLS METHOD EVER GETS IMPLEMENTED
-### MAYBE WE CAN EXPAND THE INTERFACE IN THE OTHER PACKAGE
+### CHANGE COORDINATE VECTORS FOR VELOCITY SPACE
 
 """
-  apply_coordinate_tform(u, T)
+    scale_velocity_coordinates(u, T)
 
 Multiply the momentum vector of the state `u=[ρ, ρv..., ρE]` by T.
 """
-function apply_coordinate_tform(u, T)
+function scale_velocity_coordinates(u, T)
     ρv_new = T * select_middle(u)
-    return vcat_ρ_ρv_ρE_preserve_static(u[1], ρv_new, u[end])
+    return vcat_ρ_ρv_ρE_preserve_static(u[begin], ρv_new, u[end])
+end
+
+"""
+    shift_velocity_coordinates(u_star, v0)
+
+Shift the velocity coordinates to a frame moving at `v0`.
+Total energy will change due to the new kinetic energy in the new frame.
+"""
+function shift_velocity_coordinates(u_star, v0)
+    ρ = u_star[begin]
+    v_star = dimensionless_velocity(u_star)
+    v = v_star - v0
+    ρe = dimensionless_internal_energy_density(u_star)
+    ρv = ρ * v
+    return vcat_ρ_ρv_ρE_preserve_static(ρ, ρv, ρe + ρv ⋅ v / 2)
+end
+
+"""
+    change_velocity_coordinates(u_star, T, v0)
+
+Switch to a new coordinate space for velocity by
+switching to a frame moving at `v0` and scaling by `T`.
+"""
+function change_velocity_coordinates(u_star, T, v0)
+    # scale then shift, I think
+    u1 = shift_velocity_coordinates(u_star, v0)
+    return scale_velocity_coordinates(u1, T)
 end
 
 ### END OF BASES
