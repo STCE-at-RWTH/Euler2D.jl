@@ -341,13 +341,6 @@ cell_type(::Type{AbstractCellGridPartition{T,U}}) where {T,U} = T
 update_dtype(::AbstractCellGridPartition{T,U}) where {T,U} = U
 update_dtype(::Type{AbstractCellGridPartition{T,U}}) where {T,U} = U
 
-function _computation_region_indices(cell_partition)
-    return (
-        range(cell_partition.computation_indices[1]...),
-        range(cell_partition.computation_indices[2]...),
-    )
-end
-
 """
    owned_cell_ids(partition)
 
@@ -377,7 +370,7 @@ owns_cell(p::FastCellGridPartition, id) = haskey(p.owned_cells, id)
 Test if the partition `partition` will need the update from cell `id` to perform the update step.
 """
 function has_cell_as_neighbor(p::CellGridPartition, id)
-    # this is bad
+    # this is slow
     return haskey(p.cells_map, id) && !owns_cell(p, id)
 end
 has_cell_as_neighbor(p::FastCellGridPartition, id) = haskey(p.neighbor_cells, id)
@@ -385,7 +378,7 @@ has_cell_as_neighbor(p::FastCellGridPartition, id) = haskey(p.neighbor_cells, id
 """
     copied_cells(partition)
 
-Get a `id=>cell` map of all cells that this partition needs to compute an update step. 
+Get a `id=>cell` map of all cells that this partition needs in order to compute an update step. 
 """
 copied_cells(partition::CellGridPartition) = partition.cells_map
 function copied_cells(partition::FastCellGridPartition)
@@ -556,7 +549,6 @@ function fast_partition_cell_list(
             partition_shared_cells_updates,
         )
     end
-
     @assert _verify_fastpartitioning(partitions, global_active_cells)
     return partitions
 end
@@ -605,6 +597,12 @@ function collect_cell_partition!(global_cells, partition::FastCellGridPartition)
     merge!(global_cells, partition.owned_cells)
 end
 
+"""
+    collect_cell_partitions!(global_cells, partitions)
+
+Merges all of the updates for a collection of partitions into one dict for shared lookup.
+Takes an existing dict and returns it after updating its contents.
+"""
 function collect_cell_partitions!(global_cells, partitions)
     foreach(partitions) do p
         collect_cell_partition!(global_cells, p)
@@ -612,10 +610,50 @@ function collect_cell_partitions!(global_cells, partitions)
     return global_cells
 end
 
+"""
+    collect_cell_partitions(cell_partitions, n_active_cells)
+
+Merges a collection of partitions into one dict for shared lookup.
+"""
 function collect_cell_partitions(cell_partitions, n_active_cells)
     u_global = Dict{Int64,cell_type(first(cell_partitions))}()
     sizehint!(u_global, n_active_cells)
     return collect_cell_partitions!(u_global, cell_partitions)
+end
+
+function collect_cell_partition_update!(Δu_global, partition::CellGridPartition)
+    data_region = owned_cell_ids(partition)
+    for id ∈ data_region
+        Δu_global[id] = partition.cells_update[id]
+    end
+end
+
+function collect_cell_partition_update!(Δu_global, partition::FastCellGridPartition)
+    merge!(Δu_global, partition.owned_update)
+end
+
+"""
+    collect_cell_partition_updates!(Δu_global, n_active_cells)
+
+Merges all of the updates for a collection of partitions into one dict for shared lookup.
+Takes an existing dict and returns it after updating its contents.
+"""
+function collect_cell_partition_updates!(Δu_global, cell_partitions)
+    foreach(cell_partitions) do p
+        collect_cell_partition_update!(Δu_global, p)
+    end
+    return Δu_global
+end
+
+"""
+    collect_cell_partition_updates(cell_paritions, n_active_cells)
+
+Merges all of the updates for a collection of partitions into one dict for shared lookup.
+"""
+function collect_cell_partition_updates(cell_partitions, n_active_cells)
+    Δu_global = Dict{Int64,update_dtype(first(cell_partitions))}()
+    sizehint!(Δu_global, n_active_cells)
+    return collect_cell_partition_updates!(Δu_global, cell_partitions)
 end
 
 function _iface_speed(iface::Tuple{Int,T,T}, gas) where {T<:QuadCell}
@@ -627,7 +665,7 @@ function maximum_cell_signal_speeds(
     gas::CaloricallyPerfectGas,
 )
     # doing this with map allocated?!
-    return SVector(
+    return (
         max(_iface_speed(interfaces.north, gas), _iface_speed(interfaces.south, gas)),
         max(_iface_speed(interfaces.east, gas), _iface_speed(interfaces.west, gas)),
     )
@@ -702,11 +740,9 @@ function compute_cell_update_and_max_Δt(
     ϕ_jvp = map(ifaces) do (dim, cell_L, cell_R)
         return ϕ_hll_jvp(cell_L.u, cell_L.u̇, cell_R.u, cell_R.u̇, dim, gas)
     end
-
     Δx = map(ifaces) do (dim, cell_L, cell_R)
         (cell_L.extent[dim] + cell_R.extent[dim]) / 2
     end
-
     RESULT_DTYPE = update_dtype(typeof(cell))
     Δu::RESULT_DTYPE = (
         (inv(Δx.west) * ϕ.west) - (inv(Δx.east) * ϕ.east),
@@ -718,7 +754,7 @@ function compute_cell_update_and_max_Δt(
 end
 
 function compute_partition_update_and_max_Δt!(
-    partition,
+    partition::AbstractCellGridPartition,
     boundary_conditions,
     gas::CaloricallyPerfectGas,
 )
@@ -733,7 +769,6 @@ function compute_partition_update_and_max_Δt!(
         Δt_max = min(Δt_max, cell_Δt_max)
         store_cell_update!(partition, cell_id, cell_Δu)
     end
-
     return Δt_max
 end
 
