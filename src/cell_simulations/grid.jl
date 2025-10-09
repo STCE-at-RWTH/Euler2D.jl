@@ -614,12 +614,9 @@ function _update_cell(cell::TangentQuadCell, Δu, Δt, dim)
     return @set cell.u̇ = cell.u̇ + Δt * Δu[2+dim]
 end
 
-# zeroing out the update is not technically necessary, but it's also very cheap
-# ( I hope )
 function apply_partition_update!(partition::CellGridPartition, dim, Δt)
     for (k, v) ∈ partition.cells_update
         partition.cells_map[k] = _update_cell(partition.cells_map[k], v, Δt, dim)
-        partition.cells_update[k] = zero.(fieldtypes(update_dtype(partition)))
     end
 end
 
@@ -627,13 +624,11 @@ function apply_partition_update!(partition::FastCellGridPartition, dim, Δt)
     for id ∈ partition.owned_ids
         Δu = partition.owned_update[id]
         partition.owned_cells[id] = _update_cell(partition.owned_cells[id], Δu, Δt, dim)
-        partition.owned_update[id] = zero.(fieldtypes(update_dtype(partition)))
     end
     for id ∈ partition.neighbor_ids
         Δu = partition.neighbors_update[id]
         partition.neighbor_cells[id] =
             _update_cell(partition.neighbor_cells[id], Δu, Δt, dim)
-        partition.neighbors_update[id] = zero.(fieldtypes(update_dtype(partition)))
     end
 end
 
