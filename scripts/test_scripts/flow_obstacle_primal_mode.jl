@@ -15,14 +15,14 @@ using Unitful
 
 bcs = (
     ExtrapolateToPhantom(), # north 
-    ExtrapolateToPhantom(), # south
+    StrongWall(), # south
     ExtrapolateToPhantom(), # east
     ExtrapolateToPhantom(), # west
     StrongWall(), # walls
 )
-bounds = ((-2.0, 0.0), (-1.5, 1.5))
+bounds = ((-1.5, 0.0), (0.0, 2.0))
 just_circle = [CircularObstacle((0.0, 0.0), 0.75)]
-ncells = (225, 300)
+ncells = (540, 540 * 4 ÷ 3)
 
 starting_parameters = SVector(0.662, 4.0, 220.0)
 
@@ -49,7 +49,7 @@ global_cells, global_ids = primal_quadcell_list_and_id_grid(
     scale,
     just_circle,
 );
-cell_partitions = partition_cell_list(global_cells, global_ids, 4; show_info = true);
+cell_partitions = partition_cell_list(global_cells, global_ids, 8; show_info = true);
 
 using Euler2D: fast_partition_cell_list
 fast_cell_partitions = fast_partition_cell_list(global_cells, global_ids, 4)

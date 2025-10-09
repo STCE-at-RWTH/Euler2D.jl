@@ -449,10 +449,10 @@ end
 """
 Take the tape data stream and return a channel where simulation state can be queued then pushed.
 """
-function _initialize_writer_task(channel_size, time_type, cells_type, data_stream)
+function _start_output_task(buffer_size, tstep_type, data_stream, empty_buffer_channel)
     taskref = Ref{Task}()
-    ch = Channel{Union{Symbol,Tuple{time_type,cells_type}}}(
-        channel_size;
+    ch = Channel{Union{Symbol,tstep_type}}(
+        buffer_size;
         taskref = taskref,
         spawn = true,
     ) do ch
@@ -461,7 +461,10 @@ function _initialize_writer_task(channel_size, time_type, cells_type, data_strea
             if val == :stop
                 break
             end
-            write_tstep_to_stream(data_stream, val...)
+            (t, cells) = val
+            write_tstep_to_stream(data_stream, t, cells)
+            # return the cell buffer so that the main loop can use it
+            put!(empty_buffer_channel, cells)
         end
     end
     return taskref, ch
@@ -549,7 +552,9 @@ function simulate_euler_equations_cells(
     else
         tangent_cell_list_and_id_grid(u0, params, bounds, ncells, scale, obstacles)
     end
+
     n_global_cells = length(global_cells)
+    OUTPUT_BUFFER_TYPE = typeof(global_cells)
     # do the partitioning
     cell_partitions = fast_partition_cell_list(
         global_cells,
@@ -594,12 +599,20 @@ function simulate_euler_equations_cells(
             write(tape_stream, b...)
         end
         write(tape_stream, global_cell_ids)
-        writer_taskref, writer_channel = _initialize_writer_task(
+
+        idle_buffer_channel = Channel{OUTPUT_BUFFER_TYPE}(output_channel_size)
+        for _ = 2:output_channel_size
+            d = OUTPUT_BUFFER_TYPE()
+            sizehint!(d, n_global_cells)
+            put!(idle_buffer_channel, d)
+        end
+        writer_taskref, writer_channel = _start_output_task(
             output_channel_size,
-            T,
-            typeof(global_cells),
+            Tuple{T,OUTPUT_BUFFER_TYPE},
             tape_stream,
+            idle_buffer_channel,
         )
+        # sacrifice the global_cells buffer ;)
         put!(writer_channel, (t, global_cells))
     end
 
@@ -641,7 +654,7 @@ function simulate_euler_equations_cells(
         if (write_result && ((n_tsteps - 1) % write_frequency == 0))
             put!(
                 writer_channel,
-                (t, collect_cell_partitions(cell_partitions, n_global_cells)),
+                (t, collect_cell_partitions!(take!(idle_buffer_channel), cell_partitions)),
             )
             n_written_tsteps += 1
             if show_info
@@ -656,7 +669,7 @@ function simulate_euler_equations_cells(
         if ((n_tsteps - 1) % write_frequency != 0)
             put!(
                 writer_channel,
-                (t, collect_cell_partitions(cell_partitions, n_global_cells)),
+                (t, collect_cell_partitions!(take!(idle_buffer_channel), cell_partitions)),
             )
             n_written_tsteps += 1
         end
