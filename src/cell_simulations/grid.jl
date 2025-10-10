@@ -130,13 +130,13 @@ end
 Underlying numeric data type of this partition.
 """
 numeric_dtype(::AbstractCellGridPartition{T,U}) where {T,U} = numeric_dtype(T)
-numeric_dtype(::Type{AbstractCellGridPartition{T,U}}) where {T,U} = numeric_dtype(T)
+numeric_dtype(::Type{<:AbstractCellGridPartition{T,U}}) where {T,U} = numeric_dtype(T)
 
 cell_type(::AbstractCellGridPartition{T,U}) where {T,U} = T
-cell_type(::Type{AbstractCellGridPartition{T,U}}) where {T,U} = T
+cell_type(::Type{<:AbstractCellGridPartition{T,U}}) where {T,U} = T
 
 update_dtype(::AbstractCellGridPartition{T,U}) where {T,U} = U
-update_dtype(::Type{AbstractCellGridPartition{T,U}}) where {T,U} = U
+update_dtype(::Type{<:AbstractCellGridPartition{T,U}}) where {T,U} = U
 
 """
    owned_cell_ids(partition)
@@ -659,7 +659,7 @@ end
 
 Advance the simulation that has been partitioned into `cell_partitions` one time step, limited by `Δt_maximum` and `cfl_limit`.
 Requires a dict of `id=>idx` for partitions that share neighbor cells.
-Returns the time step size and an esimate of the average update size.
+Returns the time step size and the maximum update size in each dimension.
 """
 function step_cell_simulation!(
     cell_partitions,
@@ -669,7 +669,7 @@ function step_cell_simulation!(
     cfl_limit,
     gas::CaloricallyPerfectGas,
 )
-    T = numeric_dtype(first(cell_partitions))
+    T = numeric_dtype(eltype(cell_partitions))
     # 1. Calculate updates
     # 2. Share update
     # 3. apply update with appropriate time step

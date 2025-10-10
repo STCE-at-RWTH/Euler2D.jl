@@ -179,7 +179,7 @@ function update_dtype(::Type{TangentQuadCell{T,N,P}}) where {T,N,P}
 end
 
 @doc """
-    update_dtype(::Type{T<:QuadCell})
+    update_dtype(::Type{T<:FVMCell})
 
 Get the tuple of update data types that must be enforced upon fetch-ing results out of the worker tasks.
 """ update_dtype
