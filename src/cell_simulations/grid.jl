@@ -383,6 +383,21 @@ function _verify_fastpartitioning(p, global_cells)
     return no_overlap && (computed_cells == keys(global_cells))
 end
 
+"""
+    partition_neighbor_map(partitions)
+
+Returns a `partition id => list of neighboring partition indices` given a vector of partitions.
+"""
+function partition_neighbor_map(partitions)
+    return Dict([
+        p.id => [
+            p2.id for p2 ∈ Iterators.filter(partitions) do other
+                return any(cell_id -> owns_cell(p, cell_id), other.neighbor_ids)
+            end
+        ] for p ∈ partitions
+    ])
+end
+
 function collect_cell_partition!(global_cells, partition::CellGridPartition)
     data_region = owned_cell_ids(partition)
     for id ∈ data_region
@@ -635,6 +650,7 @@ end
 """
     function step_cell_simulation!(
        cell_partitions,
+       partition_neighboring,
        Δt_maximum,
        boundary_conditions,
        cfl_limit,
@@ -642,24 +658,18 @@ end
     )
 
 Advance the simulation that has been partitioned into `cell_partitions` one time step, limited by `Δt_maximum` and `cfl_limit`.
-
+Requires a dict of `id=>idx` for partitions that share neighbor cells.
 Returns the time step size and an esimate of the average update size.
 """
 function step_cell_simulation!(
     cell_partitions,
+    partition_neighboring,
     Δt_maximum,
     boundary_conditions,
     cfl_limit,
     gas::CaloricallyPerfectGas,
 )
     T = numeric_dtype(first(cell_partitions))
-    partition_neighboring = Dict([
-        p.id => [
-            p2.id for p2 ∈ Iterators.filter(cell_partitions) do other
-                return any(cell_id -> owns_cell(p, cell_id), other.neighbor_ids)
-            end
-        ] for p ∈ cell_partitions
-    ])
     # 1. Calculate updates
     # 2. Share update
     # 3. apply update with appropriate time step
@@ -682,11 +692,8 @@ function step_cell_simulation!(
         for src_idx ∈ partition_neighboring[p.id]
             propagate_updates_to!(p, cell_partitions[src_idx])
         end
-    end
-    tforeach(cell_partitions) do p
         apply_partition_update!(p, 1, Δt / 2)
     end
-
     # then in y
     tforeach(cell_partitions) do cell_partition
         compute_partition_update_and_max_Δt!(cell_partition, boundary_conditions, gas)
@@ -695,8 +702,6 @@ function step_cell_simulation!(
         for src_idx ∈ partition_neighboring[p.id]
             propagate_updates_to!(p, cell_partitions[src_idx])
         end
-    end
-    tforeach(cell_partitions) do p
         apply_partition_update!(p, 2, Δt)
     end
     # then in x again
@@ -707,8 +712,6 @@ function step_cell_simulation!(
         for src_idx ∈ partition_neighboring[p.id]
             propagate_updates_to!(p, cell_partitions[src_idx])
         end
-    end
-    tforeach(cell_partitions) do p
         apply_partition_update!(p, 1, Δt / 2)
     end
 

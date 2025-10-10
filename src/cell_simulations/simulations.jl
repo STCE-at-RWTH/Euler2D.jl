@@ -562,6 +562,7 @@ function simulate_euler_equations_cells(
         tasks_per_axis;
         show_info = show_detailed_info,
     )
+    partition_neighboring = partition_neighbor_map(cell_partitions)
     # if we are writing the result we should make sure there is a file available.
     if write_result
         tape_file = joinpath(pwd(), "data", output_tag * ".celltape")
@@ -622,6 +623,7 @@ function simulate_euler_equations_cells(
         # figure out what the time step size was (after doing it)
         Δt = step_cell_simulation!(
             cell_partitions,
+            partition_neighboring,
             T_end - t,
             boundary_conditions,
             cfl_limit,
