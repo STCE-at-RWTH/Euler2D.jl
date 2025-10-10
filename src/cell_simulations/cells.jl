@@ -29,7 +29,7 @@ All FVMCells _must_ provide the following methods:
 abstract type FVMCell{T} end
 
 numeric_dtype(::FVMCell{T}) where {T} = T
-numeric_dtype(::Type{FVMCell{T}}) where {T} = T
+numeric_dtype(::Type{<:FVMCell{T}}) where {T} = T
 
 cell_volume(cell::FVMCell) = poly_area(cell_boundary_polygon(cell))
 

@@ -715,10 +715,6 @@ function step_cell_simulation!(
     return Δt
 end
 
-# TODO we should actually be more serious about compting these overlaps
-#  and then computing volume-averaged quantities
-point_inside(s::Obstacle, q) = point_inside(s, q.center)
-
 function active_cell_mask(cell_centers_x, cell_centers_y, obstacles)
     return map(Iterators.product(cell_centers_x, cell_centers_y)) do (x, y)
         p = SVector{2}(x, y)
