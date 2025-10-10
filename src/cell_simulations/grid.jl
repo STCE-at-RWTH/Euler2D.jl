@@ -632,6 +632,19 @@ function apply_partition_update!(partition::FastCellGridPartition, dim, Δt)
     end
 end
 
+"""
+    function step_cell_simulation!(
+       cell_partitions,
+       Δt_maximum,
+       boundary_conditions,
+       cfl_limit,
+       gas::CaloricallyPerfectGas,
+    )
+
+Advance the simulation that has been partitioned into `cell_partitions` one time step, limited by `Δt_maximum` and `cfl_limit`.
+
+Returns the time step size and an esimate of the average update size.
+"""
 function step_cell_simulation!(
     cell_partitions,
     Δt_maximum,
@@ -647,7 +660,6 @@ function step_cell_simulation!(
             end
         ] for p ∈ cell_partitions
     ])
-    nchunks_compute_update = length(cell_partitions)
     # 1. Calculate updates
     # 2. Share update
     # 3. apply update with appropriate time step

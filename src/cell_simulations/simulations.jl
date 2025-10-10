@@ -562,11 +562,7 @@ function simulate_euler_equations_cells(
         tasks_per_axis;
         show_info = show_detailed_info,
     )
-
-    # initialize counters and timer
-    n_tsteps = 1
-    n_written_tsteps = 1
-    t = zero(T)
+    # if we are writing the result we should make sure there is a file available.
     if write_result
         tape_file = joinpath(pwd(), "data", output_tag * ".celltape")
         tape_path = dirname(tape_file)
@@ -575,10 +571,13 @@ function simulate_euler_equations_cells(
             @info "Creating data directory/ies at $tape_path"
             mkpath(tape_path)
         end
-    end
-    if !write_result
+    else
         @info "Only the final value of the simulation will be available." T_end
     end
+    # initialize counters and timer
+    n_tsteps = 1
+    n_written_tsteps = 1
+    t = zero(T)
     wall_clock_start_time = Dates.now()
     previous_tstep_wall_clock = wall_clock_start_time
     avg_duration = (previous_tstep_wall_clock - wall_clock_start_time) ÷ 2
@@ -616,9 +615,11 @@ function simulate_euler_equations_cells(
         put!(writer_channel, (t, global_cells))
     end
 
+    # status flag; 0 is "continue"
     time_stepping_status = 0
     # do the time stepping
     while time_stepping_status == 0
+        # figure out what the time step size was (after doing it)
         Δt = step_cell_simulation!(
             cell_partitions,
             T_end - t,
@@ -626,6 +627,7 @@ function simulate_euler_equations_cells(
             cfl_limit,
             gas,
         )
+
         current_tstep_wall_clock = Dates.now()
         avg_duration = (current_tstep_wall_clock - wall_clock_start_time) ÷ n_tsteps
         if show_info && ((n_tsteps - 1) % info_frequency == 0)
@@ -644,14 +646,23 @@ function simulate_euler_equations_cells(
         t += Δt
 
         if t > T_end || t ≈ T_end
+            # exit status 1 for "finished at t=T"
             time_stepping_status = 1
         elseif n_tsteps >= max_tsteps
+            # exit status 2 for "finished at Nt=Nmax"
             time_stepping_status = 2
         elseif (n_tsteps + 4) * avg_duration > maximum_wall_duration
+            # exit status 3 for "out of wall clock time"
             time_stepping_status = 3
         end
         # push output to the writer task
-        if (write_result && ((n_tsteps - 1) % write_frequency == 0))
+        # if we are writing ther result AND
+        # the number of time steps is 1 mod write frequency OR
+        # time stepping will stop this iteration
+        if (
+            write_result &&
+            (((n_tsteps - 1) % write_frequency == 0) || time_stepping_status != 0)
+        )
             put!(
                 writer_channel,
                 (t, collect_cell_partitions!(take!(idle_buffer_channel), cell_partitions)),
@@ -663,16 +674,8 @@ function simulate_euler_equations_cells(
             end
         end
     end
-
+    # stop writing and clean up the output stream
     if write_result
-        # only write the current state if we haven't already
-        if ((n_tsteps - 1) % write_frequency != 0)
-            put!(
-                writer_channel,
-                (t, collect_cell_partitions!(take!(idle_buffer_channel), cell_partitions)),
-            )
-            n_written_tsteps += 1
-        end
         put!(writer_channel, :stop)
         wait(writer_taskref[])
 
