@@ -1,3 +1,4 @@
+# does not allocate as of now
 """
     neighbor_cells(cell, active_cells, boundary_conditions, gas)
 

@@ -244,7 +244,7 @@ n_seeds(::Type{TangentQuadCell{T,N,P}}) where {T,N,P} = N
     """ numeric_dtype
 
 function update_dtype(::Type{PrimalQuadCell{T}}) where {T}
-    return PrimalQuadCellStrangUpdate{numeric_dtype(T)}
+    return PrimalQuadCellStrangUpdate{T}
 end
 
 function update_dtype(::Type{TangentQuadCell{T,N,P}}) where {T,N,P}
@@ -389,16 +389,17 @@ function compute_cell_update_and_max_Δt(cell::PrimalQuadCell, dim, neighbors, g
     )
     a = maximum_cell_signal_speeds(ifaces, gas)
     Δt_max = min((cell.extent ./ a)...)
-    # evil constant lookup to get symbols corresponding to the difference we want
-    relevant_ifaces = ifaces[_dims_dirs[dim]]
-    ϕ = map(relevant_ifaces) do (dim, cell_L, cell_R)
+    ϕ = map(ifaces) do (dim, cell_L, cell_R)
         return ϕ_hll(cell_L.u, cell_R.u, dim, gas)
     end
-    Δx = map(relevant_ifaces) do (dim, cell_L, cell_R)
+    Δx = map(ifaces) do (dim, cell_L, cell_R)
         (cell_L.extent[dim] + cell_R.extent[dim]) / 2
     end
-    Δu = inv(Δx[1]) * ϕ[1] - inv(Δx[2]) - ϕ[2]
-    return (Δt_max, Δu)
+    Δu = (
+        inv(Δx.west) * ϕ.west - inv(Δx.east) * ϕ.east,
+        inv(Δx.south) * ϕ.south - inv(Δx.north) * ϕ.north,
+    )
+    return (Δt_max, Δu[dim])
 end
 
 function compute_cell_update_and_max_Δt(
@@ -415,20 +416,20 @@ function compute_cell_update_and_max_Δt(
     )
     a = maximum_cell_signal_speeds(ifaces, gas)
     Δt_max = min((cell.extent ./ a)...)
-    # evil constant lookup to get symbols corresponding to the difference we want
-    relevant_ifaces = ifaces[_dims_dirs[dim]]
-    ϕ = map(relevant_ifaces) do (dim, cell_L, cell_R)
-        return ϕ_hll(cell_L.u, cell_R.u, dim, gas)
+    ϕ_jvp = map(ifaces) do (dim, cell_L, cell_R)
+        value, jvp = ϕ_hll_and_jvp(cell_L.u, cell_L.u̇, cell_R.u, cell_R.u̇, dim, gas)
+        return value, hcat(jvp...)
     end
-    ϕ_jvp = map(relevant_ifaces) do (dim, cell_L, cell_R)
-        return ϕ_hll_jvp(cell_L.u, cell_L.u̇, cell_R.u, cell_R.u̇, dim, gas)
-    end
-    Δx = map(relevant_ifaces) do (dim, cell_L, cell_R)
+    Δx = map(ifaces) do (dim, cell_L, cell_R)
         (cell_L.extent[dim] + cell_R.extent[dim]) / 2
     end
     Δu = (
-        (inv(Δx[1]) * ϕ[1] - inv(Δx[2]) * ϕ[2]),
-        (inv(Δx[1]) * ϕ_jvp[1] - inv(Δx[2]) * ϕ_jvp[2]),
+        inv(Δx.west) * ϕ_jvp.west[1] - inv(Δx.east) * ϕ_jvp.east[1],
+        inv(Δx.south) * ϕ_jvp.south[1] - inv(Δx.north) * ϕ_jvp.north[1],
     )
-    return (Δt_max, Δu)
+    Δu̇ = (
+        inv(Δx.west) * ϕ_jvp.west[2] - inv(Δx.east) * ϕ_jvp.east[2],
+        inv(Δx.south) * ϕ_jvp.south[2] - inv(Δx.north) * ϕ_jvp.north[2],
+    )
+    return (Δt_max, (Δu[dim], Δu̇[dim]))
 end

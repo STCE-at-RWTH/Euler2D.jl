@@ -81,6 +81,7 @@ Compute the HLL numerical flux across the L-R boundary.
 - `uL`, `uR`: States on either side of the boundary
 - `n` : Direction normal to the boundary, points towards uR
 """
+# TODO I no longer know what project_state_to_normal should have done
 function ϕ_hll(uL, uR, n, gas)
     qL = project_state_to_normal(uL, n)
     qR = project_state_to_normal(uR, n)
@@ -96,17 +97,22 @@ end
 Compute the Jacobian-vector product of `ϕ_hll` given seeds `u̇L` and `u̇R`.
 
 `n` may either be an integer, for which `e1, e2, ` or `e3` will be used as the normal vector pointing towards `uR`, or a unit normal vector.
+(I think).
 """
-function ϕ_hll_jvp(uL, u̇L, uR, u̇R, n, gas::CaloricallyPerfectGas)
+function ϕ_hll_and_jvp(uL, u̇L, uR, u̇R, n, gas::CaloricallyPerfectGas)
     u_arg = vcat(uL, uR)
-    # TODO how to seed values into ForwardDiff? We shouldn't have to create and multiply a matrix here.
-    #   Although, multiplying a 4×8 matrix by an 8×1 vector shouldn't be too bad
-    J = jacobian(fdiff_backend, u_arg, Constant(n), Constant(gas)) do u, n, gas
-        # TODO remove svector requirement here.
-        v1, v2 = split_svector(u)
+    u̇_arg = vcat(u̇L, u̇R)
+    res, jvp = DifferentiationInterface.value_and_pushforward(
+        fdiff_backend,
+        u_arg,
+        ntuple(i -> u̇_arg[:, i], size(u̇_arg)[2]),
+        Constant(n),
+        Constant(gas),
+    ) do u_arg, n, gas
+        v1, v2 = split_svector(u_arg)
         return ϕ_hll(v1, v2, n, gas)
     end
-    return J * vcat(u̇L, u̇R)
+    return res, jvp
 end
 
 """
