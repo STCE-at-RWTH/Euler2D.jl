@@ -72,6 +72,7 @@ Subtypes implement:
 - `owns_cell(p, id)`: Test if `p` owns cell `id`.
 - `copied_cells(p)`: Returns a (key,value) map of all cells that the partition has a copy of.
 - `get_cell(p, id)`: Returns the partition `p`'s copy of cell `id`.
+- `get_cell_update(p, id)`: Returns the partition `p`'s copy of the update for cell `id`.
 - `store_owned_cell_update!(p, id, update)`: Store an update for owned cell `id`.
 - ``
 """
@@ -121,6 +122,56 @@ struct FastCellGridPartition{T,U} <: AbstractCellGridPartition{T,U}
     neighbor_ids::Vector{Int}
     neighbor_cells::Dict{Int,T}
     neighbors_update::Dict{Int,U}
+
+    function FastCellGridPartition(
+        id,
+        owned_ids,
+        owned_cells::Dict{Int,T},
+        owned_update,
+        neighbor_ids,
+        neighbor_cells::Dict{Int,T},
+        neighbors_update,
+    ) where {T<:FVMCell}
+        return new{T,update_dtype(T)}(
+            id,
+            owned_ids,
+            owned_cells,
+            owned_update,
+            neighbor_ids,
+            neighbor_cells,
+            neighbors_update,
+        )
+    end
+end
+
+"""
+    FastCellGridPartition(id, owned_cells, neighbor_cells)
+
+Create a partition with fast lookup and initialize the update dictionaries to the appropriate zeros.
+"""
+function FastCellGridPartition(
+    id,
+    owned_cells::Dict{Int,T},
+    neighbor_cells::Dict{Int,T},
+) where {T<:FVMCell}
+    U = update_dtype(T)
+    owned_ids = sort!(collect(keys(owned_cells)))
+    neighbor_ids = sort!(collect(keys(neighbor_cells)))
+    owned_update = Dict{Int,U}()
+    neighbor_update = Dict{Int,U}()
+    sizehint!(owned_update, length(owned_ids))
+    sizehint!(neighbor_update, length(neighbor_ids))
+    foreach(id -> owned_update[id] = zero_cell_update(U), owned_ids)
+    foreach(id -> neighbor_update[id] = zero_cell_update(U), neighbor_ids)
+    return FastCellGridPartition(
+        id,
+        owned_ids,
+        owned_cells,
+        owned_update,
+        neighbor_ids,
+        neighbor_cells,
+        neighbor_update,
+    )
 end
 
 """
@@ -191,9 +242,21 @@ get_cell(partition::CellGridPartition, cell_id) = partition.cells_map[cell_id]
 get_cell(partition::FastCellGridPartition, cell_id) = partition.owned_cells[cell_id]
 
 """
+   get_cell_update(partition, cell_id)
+
+Get the update for cell `cell_id` that this partition owns.
+"""
+get_cell_update(partition::CellGridPartition, cell_id) = partition.cells_update[cell_id]
+get_cell_update(partition::FastCellGridPartition, cell_id) = partition.owned_update[cell_id]
+
+"""
     store_cell_update!(partition, cell_id, cell_update)
 
 Store `cell_update` for `cell_id` after computing it.
+
+    store_cell_update!(partition, cell_id, cell_update, dim, s)
+
+Store `cell_update` for `cell_id` only in dimension `dim` at splitting level `s` after computing it.
 """
 function store_cell_update!(partition::CellGridPartition, id, Δu)
     partition.cells_update[id] = Δu
@@ -308,23 +371,17 @@ function fast_partition_cell_list(
         end
         # cells that this partition is responsible for computing the updates to
         partition_compute_cells = Dict{Int,CELL_TYPE}()
-        partition_compute_cells_updates = Dict{Int,UPDATE_TYPE}()
         sizehint!(partition_compute_cells, owned_active_cells)
-        sizehint!(partition_compute_cells_updates, owned_active_cells)
         # cells that OTHER partitions are responsible for but this partition needs to know about
         partition_shared_cells = Dict{Int,CELL_TYPE}()
-        partition_shared_cells_updates = Dict{Int,UPDATE_TYPE}()
         sizehint!(partition_shared_cells, shared_active_cells)
-        sizehint!(partition_shared_cells_updates, shared_active_cells)
         for i ∈ global_covered_idxs
             id = global_cell_ids[i]
             id == 0 && continue
             if i ∈ global_owned_idxs
                 partition_compute_cells[id] = global_active_cells[id]
-                partition_compute_cells_updates[id] = zero.(fieldtypes(UPDATE_TYPE))
             else
                 partition_shared_cells[id] = global_active_cells[id]
-                partition_shared_cells_updates[id] = zero.(fieldtypes(UPDATE_TYPE))
             end
         end
         if show_info
@@ -332,18 +389,10 @@ function fast_partition_cell_list(
                 global_covered_idxs global_owned_idxs local_compute_idxs =
                 (range(locally_owned_x...), range(local_owned_y...)) owned_active_cells shared_active_cells
         end
-        vector_of_owned_ids = collect(keys(partition_compute_cells))
-        sort!(vector_of_owned_ids)
-        vector_of_neighbor_ids = collect(keys(partition_shared_cells))
-        sort!(vector_of_neighbor_ids)
-        return FastCellGridPartition{CELL_TYPE,UPDATE_TYPE}(
+        return FastCellGridPartition(
             partition_id,
-            vector_of_owned_ids,
             partition_compute_cells,
-            partition_compute_cells_updates,
-            vector_of_neighbor_ids,
             partition_shared_cells,
-            partition_shared_cells_updates,
         )
     end
     @assert _verify_fastpartitioning(partitions, global_active_cells)
@@ -483,103 +532,25 @@ function maximum_cell_signal_speeds(
     )
 end
 
-"""
-    compute_cell_update_and_max_Δt(cell, active_cells, boundary_conditions, gas)
-
-Computes the update (of type `update_dtype(typeof(cell))`) for a given cell.
-
-Arguments
----
-- `cell`
-- `active_cells`: The active cell partition or simulation. Usually a `Dict` that maps `id => typeof(cell)`
-- `boundary_conditions`: The boundary conditions
-- `gas::CaloricallyPerfectGas`: The simulation fluid.
-
-Returns
----
-`(update, Δt_max)`: A tuple of the cell update and the maximum time step size allowed by the CFL condition.
-"""
-function compute_cell_update_and_max_Δt(
-    cell::PrimalQuadCell,
-    active_cells,
-    boundary_conditions,
-    gas,
-)
-    neighbors = neighbor_cells(cell, active_cells, boundary_conditions, gas)
-    ifaces = (
-        north = (2, cell, neighbors.north),
-        south = (2, neighbors.south, cell),
-        east = (1, cell, neighbors.east),
-        west = (1, neighbors.west, cell),
-    )
-    a = maximum_cell_signal_speeds(ifaces, gas)
-    Δt_max = min((cell.extent ./ a)...)
-
-    ϕ = map(ifaces) do (dim, cell_L, cell_R)
-        return ϕ_hll(cell_L.u, cell_R.u, dim, gas)
-    end
-
-    Δx = map(ifaces) do (dim, cell_L, cell_R)
-        (cell_L.extent[dim] + cell_R.extent[dim]) / 2
-    end
-
-    Δu = (
-        inv(Δx.west) * ϕ.west - inv(Δx.east) * ϕ.east,
-        inv(Δx.south) * ϕ.south - inv(Δx.north) * ϕ.north,
-    )
-    return (Δt_max, Δu)
-end
-
-function compute_cell_update_and_max_Δt(
-    cell::TangentQuadCell{T,N,P},
-    active_cells,
-    boundary_conditions,
-    gas,
-) where {T,N,P}
-    neighbors = neighbor_cells(cell, active_cells, boundary_conditions, gas)
-    ifaces = (
-        north = (2, cell, neighbors.north),
-        south = (2, neighbors.south, cell),
-        east = (1, cell, neighbors.east),
-        west = (1, neighbors.west, cell),
-    )
-    a = maximum_cell_signal_speeds(ifaces, gas)
-    Δt_max = min((cell.extent ./ a)...)
-
-    ϕ = map(ifaces) do (dim, cell_L, cell_R)
-        return ϕ_hll(cell_L.u, cell_R.u, dim, gas)
-    end
-    ϕ_jvp = map(ifaces) do (dim, cell_L, cell_R)
-        return ϕ_hll_jvp(cell_L.u, cell_L.u̇, cell_R.u, cell_R.u̇, dim, gas)
-    end
-    Δx = map(ifaces) do (dim, cell_L, cell_R)
-        (cell_L.extent[dim] + cell_R.extent[dim]) / 2
-    end
-    RESULT_DTYPE = update_dtype(typeof(cell))
-    Δu::RESULT_DTYPE = (
-        (inv(Δx.west) * ϕ.west) - (inv(Δx.east) * ϕ.east),
-        (inv(Δx.south) * ϕ.south) - (inv(Δx.north) * ϕ.north),
-        (inv(Δx.west) * ϕ_jvp.west) - (inv(Δx.east) * ϕ_jvp.east),
-        (inv(Δx.south) * ϕ_jvp.south) - (inv(Δx.north) .* ϕ_jvp.north),
-    )
-    return (Δt_max, Δu)
-end
-
 function compute_partition_update_and_max_Δt!(
     partition::AbstractCellGridPartition,
+    dim,
+    splitting_level,
     boundary_conditions,
     gas::CaloricallyPerfectGas,
 )
     Δt_max = typemax(numeric_dtype(partition))
     for cell_id ∈ owned_cell_ids(partition)
-        cell_Δt_max, cell_Δu = compute_cell_update_and_max_Δt(
-            get_cell(partition, cell_id),
-            copied_cells(partition),
-            boundary_conditions,
-            gas,
-        )
+        cell = get_cell(partition, cell_id)
+        nbrs = neighbor_cells(cell, copied_cells(partition), boundary_conditions, gas)
+        cell_Δt_max, cell_Δu = compute_cell_update_and_max_Δt(cell, dim, nbrs, gas)
         Δt_max = min(Δt_max, cell_Δt_max)
-        store_cell_update!(partition, cell_id, cell_Δu)
+        current_update = get_cell_update(partition, cell_id)
+        store_cell_update!(
+            partition,
+            cell_id,
+            partial_cell_update(current_update, cell_Δu, dim, splitting_level),
+        )
     end
     return Δt_max
 end
@@ -620,35 +591,28 @@ function propagate_updates_to!(dest::FastCellGridPartition, src::FastCellGridPar
     return count
 end
 
-function _update_cell(cell::PrimalQuadCell, Δu, Δt, dim)
-    return @set cell.u = cell.u + Δt * Δu[dim]
-end
-
-function _update_cell(cell::TangentQuadCell, Δu, Δt, dim)
-    @reset cell.u = cell.u + Δt * Δu[dim]
-    return @set cell.u̇ = cell.u̇ + Δt * Δu[2+dim]
-end
-
-function apply_partition_update!(partition::CellGridPartition, dim, Δt)
+function apply_partition_update!(partition::CellGridPartition, dim, Δt, split_level)
     for (k, v) ∈ partition.cells_update
-        partition.cells_map[k] = _update_cell(partition.cells_map[k], v, Δt, dim)
+        partition.cells_map[k] =
+            update_cell(partition.cells_map[k], v, Δt, dim, split_level)
     end
 end
 
-function apply_partition_update!(partition::FastCellGridPartition, dim, Δt)
+function apply_partition_update!(partition::FastCellGridPartition, dim, Δt, split_level)
     for id ∈ partition.owned_ids
         Δu = partition.owned_update[id]
-        partition.owned_cells[id] = _update_cell(partition.owned_cells[id], Δu, Δt, dim)
+        partition.owned_cells[id] =
+            update_cell(partition.owned_cells[id], Δu, Δt, dim, split_level)
     end
     for id ∈ partition.neighbor_ids
         Δu = partition.neighbors_update[id]
         partition.neighbor_cells[id] =
-            _update_cell(partition.neighbor_cells[id], Δu, Δt, dim)
+            update_cell(partition.neighbor_cells[id], Δu, Δt, dim, split_level)
     end
 end
 
 """
-    function step_cell_simulation!(
+    function step_cell_simulation_with_strang_splitting!(
        cell_partitions,
        partition_neighboring,
        Δt_maximum,
@@ -659,9 +623,12 @@ end
 
 Advance the simulation that has been partitioned into `cell_partitions` one time step, limited by `Δt_maximum` and `cfl_limit`.
 Requires a dict of `id=>idx` for partitions that share neighbor cells.
+
+Performs the update step via Strang splitting!
+
 Returns the time step size and the maximum update size in each dimension.
 """
-function step_cell_simulation!(
+function step_cell_simulation_with_strang_splitting!(
     cell_partitions,
     partition_neighboring,
     Δt_maximum,
@@ -684,7 +651,13 @@ function step_cell_simulation!(
             outputtype = T,
             init = Δt_maximum,
         ) do cell_partition
-            compute_partition_update_and_max_Δt!(cell_partition, boundary_conditions, gas)
+            compute_partition_update_and_max_Δt!(
+                cell_partition,
+                1,
+                1,
+                boundary_conditions,
+                gas,
+            )
         end
     # propagate between neighboring partitions
     # and apply
@@ -692,27 +665,27 @@ function step_cell_simulation!(
         for src_idx ∈ partition_neighboring[p.id]
             propagate_updates_to!(p, cell_partitions[src_idx])
         end
-        apply_partition_update!(p, 1, Δt / 2)
+        apply_partition_update!(p, 1, Δt / 2, 1)
     end
     # then in y
     tforeach(cell_partitions) do cell_partition
-        compute_partition_update_and_max_Δt!(cell_partition, boundary_conditions, gas)
+        compute_partition_update_and_max_Δt!(cell_partition, 2, 1, boundary_conditions, gas)
     end
     tforeach(cell_partitions) do p
         for src_idx ∈ partition_neighboring[p.id]
             propagate_updates_to!(p, cell_partitions[src_idx])
         end
-        apply_partition_update!(p, 2, Δt)
+        apply_partition_update!(p, 2, Δt, 1)
     end
     # then in x again
     tforeach(cell_partitions) do cell_partition
-        compute_partition_update_and_max_Δt!(cell_partition, boundary_conditions, gas)
+        compute_partition_update_and_max_Δt!(cell_partition, 1, 2, boundary_conditions, gas)
     end
     tforeach(cell_partitions) do p
         for src_idx ∈ partition_neighboring[p.id]
             propagate_updates_to!(p, cell_partitions[src_idx])
         end
-        apply_partition_update!(p, 1, Δt / 2)
+        apply_partition_update!(p, 1, Δt / 2, 2)
     end
 
     return Δt

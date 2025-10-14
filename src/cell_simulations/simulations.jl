@@ -621,7 +621,7 @@ function simulate_euler_equations_cells(
     # do the time stepping
     while time_stepping_status == 0
         # figure out what the time step size was (after doing it)
-        Δt = step_cell_simulation!(
+        Δt = step_cell_simulation_with_strang_splitting!(
             cell_partitions,
             partition_neighboring,
             T_end - t,

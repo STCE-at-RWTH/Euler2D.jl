@@ -14,7 +14,7 @@ using Dates
 using DifferentiationInterface
 using ForwardDiff: ForwardDiff
 using LinearAlgebra
-using OhMyThreads: tforeach, tmap, tmapreduce
+using OhMyThreads: tforeach, tmap, tmapreduce, treduce
 using StaticArrays
 using Tullio
 using Unitful

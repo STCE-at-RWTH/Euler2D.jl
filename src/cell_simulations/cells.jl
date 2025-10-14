@@ -22,14 +22,19 @@ The underlying numeric data type is `T`.
 
 All FVMCells _must_ provide the following methods:
 
- - `update_dtype(::FVMCell)`
+ - `update_dtype(::Type{<:FVMCell})`
  - `cell_boundary_polygon(::FVMCell)`
  - `cell_volume(::FVMCell)` (defaults to `poly_area(cell_boundary_polygon(cell))`)
+ - `phantom_neighbor`
+ - `compute_cell_update_and_maximum_Δt(cell, neighbors, gas)`
+ - `update_cell(cell, Δ, Δt)`
 """
 abstract type FVMCell{T} end
 
 numeric_dtype(::FVMCell{T}) where {T} = T
 numeric_dtype(::Type{<:FVMCell{T}}) where {T} = T
+
+update_dtype(::T) where {T<:FVMCell} = update_dtype(T)
 
 cell_volume(cell::FVMCell) = poly_area(cell_boundary_polygon(cell))
 
@@ -87,10 +92,44 @@ function overlapping_cell_area(cell1, cell2::FVMCell)
     return overlapping_cell_area(cell1, cell_boundary_polygon(cell2))
 end
 
+"""
+    RectangularFVMCell{T}
+
+An FVM cell that is a rectangle.
+Has fields `center` and `extent`.
+"""
 abstract type RectangularFVMCell{T} <: FVMCell{T} end
 
+cell_volume(cell::RectangularFVMCell) = *(cell.extent...)
+
+function cell_boundary_polygon(cell::RectangularFVMCell)
+    c = cell.center
+    dx, dy = cell.extent / 2
+    return SClosedPolygon(
+        c + SVector(dx, -dy),
+        c + SVector(-dx, -dy),
+        c + SVector(-dx, dy),
+        c + SVector(dx, dy),
+    )
+end
+
 """
-    PrimalQuadCell{T} <: FVMCell
+    FVMCellUpdate{T}
+
+The data required to perform the update to an FVMCell.
+
+Subtypes must provide:
+
+- `get_update_info(Δ::FVMCellUpdate, dim)`
+"""
+abstract type FVMCellUpdate{T} end
+
+function zero_cell_update(::T) where {T<:FVMCellUpdate}
+    return zero_cell_update(T)
+end
+
+"""
+    PrimalQuadCell{T}
 
 QuadCell data type for a primal computation.
 
@@ -105,7 +144,7 @@ Fields
  - `center`: Where is the center of this quad cell?
  - `extent`: How large is this quad cell?
  - `u`: What are the cell-averaged non-dimensionalized conserved properties in this cell?
- - `neighbors`: What are this cell's neighbors?
+ - `neighbors`: What are IDs of this cell's neighbors?
 """
 struct PrimalQuadCell{T} <: RectangularFVMCell{T}
     id::Int
@@ -121,8 +160,25 @@ struct PrimalQuadCell{T} <: RectangularFVMCell{T}
     }
 end
 
+struct PrimalQuadCellStrangUpdate{T} <: FVMCellUpdate{T}
+    Δu_x::NTuple{2,SVector{4,T}}
+    Δu_y::SVector{4,T}
+end
+
+function zero_cell_update(::Type{<:PrimalQuadCellStrangUpdate{T}}) where {T}
+    U = SVector{4,T}
+    return PrimalQuadCellStrangUpdate((zero(U), zero(U)), zero(U))
+end
+
+function partial_cell_update(previous_Δu::PrimalQuadCellStrangUpdate, partial_Δu, dim, s)
+    if dim == 1
+        return @set previous_Δu.Δu_x[s] = partial_Δu
+    end
+    return @set previous_Δu.Δu_y = partial_Δu
+end
+
 """
-    TangentQuadCell{T, NSEEDS,PARAMCOUNT} <: FVMCell
+    TangentQuadCell{T, NSEEDS,PARAMCOUNT} 
 
 QuadCell data type for a primal computation. Pushes forward `NSEEDS` seed values through the JVP of the flux function.
 `PARAMCOUNT` determines the "length" of the underlying `SMatrix` for `u̇`.
@@ -135,7 +191,7 @@ Fields
  - `extent`: How large is this quad cell?
  - `u`: What are the cell-averaged non-dimensionalized conserved properties in this cell?
  - `u̇`: What are the cell-averaged pushforwards in this cell?
- - `neighbors`: What are this cell's neighbors?
+ - `neighbors`: What are IDs of this cell's neighbors?
 """
 struct TangentQuadCell{T,NSEEDS,PARAMCOUNT} <: RectangularFVMCell{T}
     id::Int
@@ -150,21 +206,35 @@ struct TangentQuadCell{T,NSEEDS,PARAMCOUNT} <: RectangularFVMCell{T}
     }
 end
 
-n_seeds(::TangentQuadCell{T,N,P}) where {T,N,P} = N
-n_seeds(::Type{TangentQuadCell{T,N,P}}) where {T,N,P} = N
+struct TangentQuadCellStrangUpdate{T,NSEEDS,NPARAMS}
+    Δu_x::NTuple{2,SVector{4,T}}
+    Δu_y::SVector{4,T}
+    Δu̇_x::NTuple{2,SMatrix{4,NSEEDS,T,NPARAMS}}
+    Δu̇_y::SMatrix{4,NSEEDS,T,NPARAMS}
+end
 
-cell_volume(cell::RectangularFVMCell) = *(cell.extent...)
-
-function cell_boundary_polygon(cell::RectangularFVMCell)
-    c = cell.center
-    dx, dy = cell.extent / 2
-    return SClosedPolygon(
-        c + SVector(dx, -dy),
-        c + SVector(-dx, -dy),
-        c + SVector(-dx, dy),
-        c + SVector(dx, dy),
+function zero_cell_update(::Type{<:TangentQuadCellStrangUpdate{T,NS,NP}}) where {T,NS,NP}
+    U = SVector{4,T}
+    V = SMatrix{4,NS,T,NP}
+    return TangentQuadCellStrangUpdate(
+        (zero(U), zero(U)),
+        zero(U),
+        (zero(V), zero(V)),
+        zero(V),
     )
 end
+
+function partial_cell_update(previous_Δu::TangentQuadCellStrangUpdate, partial_Δu, dim, s)
+    if dim == 1
+        @reset previous_Δu.Δu_x[s] = partial_Δu[1]
+        return @set previous_Δu.Δu̇_x[s] = partial_Δu[2]
+    end
+    @reset previous_Δu.Δu_y = partial_Δu[1]
+    return @set previous_Δu.Δu̇_y = partial_Δu[2]
+end
+
+n_seeds(::TangentQuadCell{T,N,P}) where {T,N,P} = N
+n_seeds(::Type{TangentQuadCell{T,N,P}}) where {T,N,P} = N
 
 @doc """
         numeric_dtype(cell)
@@ -173,16 +243,41 @@ end
     Get the numeric data type associated with this cell.
     """ numeric_dtype
 
-update_dtype(::Type{T}) where {T<:PrimalQuadCell} = NTuple{2,SVector{4,numeric_dtype(T)}}
+function update_dtype(::Type{PrimalQuadCell{T}}) where {T}
+    return PrimalQuadCellStrangUpdate{numeric_dtype(T)}
+end
+
 function update_dtype(::Type{TangentQuadCell{T,N,P}}) where {T,N,P}
-    return Tuple{SVector{4,T},SVector{4,T},SMatrix{4,N,T,P},SMatrix{4,N,T,P}}
+    return TangentQuadCellStrangUpdate{T,N,P}
 end
 
 @doc """
     update_dtype(::Type{T<:FVMCell})
 
-Get the tuple of update data types that must be enforced upon fetch-ing results out of the worker tasks.
+Get the cell update data type that must be enforced upon fetching the result of the computation tasks.
 """ update_dtype
+
+function update_cell(cell::PrimalQuadCell, Δu::PrimalQuadCellStrangUpdate, Δt, dim, s)
+    if dim == 1 # x
+        return @set cell.u = cell.u + Δt * Δu.Δu_x[s]
+    end
+    return @set cell.u = cell.u + Δt * Δu.Δu_y
+end
+
+function update_cell(cell::TangentQuadCell, Δu::TangentQuadCellStrangUpdate, Δt, dim, s)
+    if dim == 1
+        @reset cell.u = cell.u + Δt * Δu.Δu_x[s]
+        return @set cell.u̇ = cell.u̇ + Δt * Δu.Δu̇_x[s]
+    end
+    @reset cell.u = cell.u + Δt * Δu.Δu_y
+    return @set cell.u̇ = cell.u̇ + Δt * Δu.Δu̇_y
+end
+
+@doc """
+    update_cell(cell, Δu, Δt, dim, s)
+
+Apply the update `Δu` in dimension `dim` at splitting level 's' (Strang splitting has 2 `x`-axis levels and 1 `y`-axis level)
+""" update_cell
 
 function inward_normals(T::DataType)
     return (
@@ -268,4 +363,72 @@ function phantom_neighbor(
         end
     end
     return phantom
+end
+
+"""
+    compute_cell_update_and_max_Δt(cell, dim, boundary_conditions, gas)
+
+Computes the update (of type `update_dtype(typeof(cell))`) for a given cell.
+
+Arguments
+---
+- `cell`
+- `nbrs`: A `NamedTuple{(:north, :south, :east, :west)}` of (phantom) neighbors to `cell`
+- `dim`: The dimension to compute the update in.
+
+Returns
+---
+`(update, Δt_max)`: A tuple of the cell update in direction `dim` and the maximum time step size allowed by the CFL condition.
+"""
+function compute_cell_update_and_max_Δt(cell::PrimalQuadCell, dim, neighbors, gas)
+    ifaces = (
+        north = (2, cell, neighbors.north),
+        south = (2, neighbors.south, cell),
+        east = (1, cell, neighbors.east),
+        west = (1, neighbors.west, cell),
+    )
+    a = maximum_cell_signal_speeds(ifaces, gas)
+    Δt_max = min((cell.extent ./ a)...)
+    # evil constant lookup to get symbols corresponding to the difference we want
+    relevant_ifaces = ifaces[_dims_dirs[dim]]
+    ϕ = map(relevant_ifaces) do (dim, cell_L, cell_R)
+        return ϕ_hll(cell_L.u, cell_R.u, dim, gas)
+    end
+    Δx = map(relevant_ifaces) do (dim, cell_L, cell_R)
+        (cell_L.extent[dim] + cell_R.extent[dim]) / 2
+    end
+    Δu = inv(Δx[1]) * ϕ[1] - inv(Δx[2]) - ϕ[2]
+    return (Δt_max, Δu)
+end
+
+function compute_cell_update_and_max_Δt(
+    cell::TangentQuadCell{T,N,P},
+    dim,
+    neighbors,
+    gas,
+) where {T,N,P}
+    ifaces = (
+        north = (2, cell, neighbors.north),
+        south = (2, neighbors.south, cell),
+        east = (1, cell, neighbors.east),
+        west = (1, neighbors.west, cell),
+    )
+    a = maximum_cell_signal_speeds(ifaces, gas)
+    Δt_max = min((cell.extent ./ a)...)
+    # evil constant lookup to get symbols corresponding to the difference we want
+    relevant_ifaces = ifaces[_dims_dirs[dim]]
+    ϕ = map(relevant_ifaces) do (dim, cell_L, cell_R)
+        return ϕ_hll(cell_L.u, cell_R.u, dim, gas)
+    end
+    ϕ_jvp = map(relevant_ifaces) do (dim, cell_L, cell_R)
+        return ϕ_hll_jvp(cell_L.u, cell_L.u̇, cell_R.u, cell_R.u̇, dim, gas)
+    end
+    Δx = map(relevant_ifaces) do (dim, cell_L, cell_R)
+        (cell_L.extent[dim] + cell_R.extent[dim]) / 2
+    end
+    Δu = (
+        (inv(Δx[1]) * ϕ[1] - inv(Δx[2]) * ϕ[2]),
+        (inv(Δx[1]) * ϕ_jvp[1] - inv(Δx[2]) * ϕ_jvp[2]),
+    )
+    return (Δt_max, Δu)
 end

@@ -1,5 +1,3 @@
-using Revise
-
 using BenchmarkTools
 using Euler2D
 using Euler2D: tangent_quadcell_list_and_id_grid, primal_quadcell_list_and_id_grid
