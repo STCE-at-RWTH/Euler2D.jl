@@ -273,6 +273,19 @@ function update_cell(cell::TangentQuadCell, Δu::TangentQuadCellStrangUpdate, Δ
     return @set cell.u̇ = cell.u̇ + Δt * Δu.Δu̇_y
 end
 
+"""
+    total_update(Δu)
+
+Sum together all of the subcomponents of an update and return them as one value.
+"""
+function total_update(Δu::PrimalQuadCellStrangUpdate)
+    return (sum(Δu.Δu_x) + Δu.Δu_y,)
+end
+
+function total_update(Δu::TangentQuadCellStrangUpdate)
+    return (sum(Δu.Δu_x) + Δu.Δu_y, sum(Δu.Δu̇_x) + Δu.Δu̇_y)
+end
+
 @doc """
     update_cell(cell, Δu, Δt, dim, s)
 

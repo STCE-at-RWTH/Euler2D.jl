@@ -612,6 +612,32 @@ function apply_partition_update!(partition::FastCellGridPartition, dim, Δt, spl
     end
 end
 
+function compute_partition_convergence_measure(
+    partition::AbstractCellGridPartition{T,U},
+) where {T,U<:PrimalQuadCellStrangUpdate}
+    return mapreduce(bcast_max, owned_cell_ids(partition)) do id
+        # only track the primal for now
+        # TODO how to measure tangent convergence
+        (Δu,) = total_update(get_cell_update(partition, id))
+        relative_Δu = Δu ./ get_cell(partition, id).u
+        return relative_Δu
+    end
+end
+
+function compute_partition_convergence_measure(
+    partition::AbstractCellGridPartition{TangentQuadCell{T, NS, NP},U},
+) where {T, NS, NP,U<:TangentQuadCellStrangUpdate}
+    _op(a, b) = (bcast_max(a[1], b[1]), bcast_max(a[2], b[2]))
+    return mapreduce(_op, owned_cell_ids(partition); init=(zero(SVector{4,T}), zero(SMatrix{4, NS, T, NP}))) do id
+        # only track the primal for now
+        # TODO how to measure tangent convergence
+        (Δu, Δu̇) = total_update(get_cell_update(partition, id))
+        relative_Δu = Δu ./ get_cell(partition, id).u
+        relative_Δu̇ = Δu̇ ./ get_cell(partition, id).u̇
+        return (relative_Δu, relative_Δu̇)
+    end
+end
+
 """
     function step_cell_simulation_with_strang_splitting!(
        cell_partitions,
@@ -682,14 +708,15 @@ function step_cell_simulation_with_strang_splitting!(
     tforeach(cell_partitions) do cell_partition
         compute_partition_update_and_max_Δt!(cell_partition, 1, 2, boundary_conditions, gas)
     end
-    tforeach(cell_partitions) do p
+    maximum_relative_change = tmapreduce(bcast_max, cell_partitions) do p
         for src_idx ∈ partition_neighboring[p.id]
             propagate_updates_to!(p, cell_partitions[src_idx])
         end
         apply_partition_update!(p, 1, Δt / 2, 2)
+        compute_partition_convergence_measure(p)[1]
     end
 
-    return Δt
+    return Δt, maximum_relative_change
 end
 
 function active_cell_mask(cell_centers_x, cell_centers_y, obstacles)
