@@ -621,7 +621,7 @@ function simulate_euler_equations_cells(
     # do the time stepping
     while time_stepping_status == 0
         # figure out what the time step size was (after doing it)
-        Δt, maximum_relative_Δu = step_cell_simulation_with_strang_splitting!(
+        Δt = step_cell_simulation_with_strang_splitting!(
             cell_partitions,
             partition_neighboring,
             T_end - t,
@@ -641,9 +641,10 @@ function simulate_euler_equations_cells(
                 remaining.periods[1:max(1, length(remaining.periods) - 2)],
             )
             @info "Time step $n_tsteps (duration $d, avg. $avg_duration, remaining wall clock $remaining)" cur_t =
-                t del_t = Δt nex_t = t + Δt del_u = maximum_relative_Δu
+                t del_t = Δt nex_t = t + Δt
         end
         previous_tstep_wall_clock = current_tstep_wall_clock
+
         n_tsteps += 1
         t += Δt
 

@@ -1,61 +1,3 @@
-# does not allocate as of now
-"""
-    neighbor_cells(cell, active_cells, boundary_conditions, gas)
-
-Extract the states of the neighboring cells to `cell` from `active_cells`. 
-Will compute phantoms as necessary from `boundary_conditions` and `gas`.
-"""
-function neighbor_cells(cell, active_cells, boundary_conditions, gas)
-    neighbors = cell.neighbors
-    map((ntuple(i -> ((keys(neighbors)[i], neighbors[i])), 4))) do (dir, (kind, id))
-        res = if kind == BOUNDARY_CONDITION
-            @inbounds phantom_neighbor(cell, dir, boundary_conditions[id], gas)
-        else
-            active_cells[id]
-        end
-        return res
-    end |> NamedTuple{(:north, :south, :east, :west)}
-end
-
-function split_axis(len, n)
-    l = len ÷ n
-    rem = len - (n * l)
-    tpl_ranges = [(i * l + 1, (i + 1) * l) for i = 0:(n-1)]
-    if rem > 0
-        tpl_ranges[end] = (l * (n - 1) + 1, len)
-    end
-    return tpl_ranges
-end
-
-"""
-Takes a range `[a, b]` and an axis size `n`, and
-tries to expand the range to `[a-1, b+1]`. 
-
-Will clamp `a-1` to `1` and`b+1` to `n`.
-
-Returns `(c, d) = (max(1,a-1), min(n, b+1)` (the cells needed to copy into a partition) 
-and `(e,f)` (the cells that a partition will be responsible for updating.
-"""
-function expand_to_neighbors(left_idx, right_idx, axis_size)
-    len = right_idx - left_idx + 1
-    if left_idx > 1
-        new_l = left_idx - 1
-        left_idx = 2
-    else
-        new_l = 1
-        left_idx = 1
-    end
-
-    if right_idx < axis_size
-        new_r = right_idx + 1
-        right_idx = left_idx + len - 1
-    else
-        new_r = right_idx
-        right_idx = left_idx + len - 1
-    end
-    return (new_l, new_r), (left_idx, right_idx)
-end
-
 # TODO could we speed up the broadcast operation by splitting the dictionaries that the "owned" cells and the "required" cells are in?
 """
   AbstractCellGridPartition{T, U}
@@ -265,6 +207,45 @@ end
 
 function store_cell_update!(partition::FastCellGridPartition, id, Δu)
     partition.owned_update[id] = Δu
+end
+
+function split_axis(len, n)
+    l = len ÷ n
+    rem = len - (n * l)
+    tpl_ranges = [(i * l + 1, (i + 1) * l) for i = 0:(n-1)]
+    if rem > 0
+        tpl_ranges[end] = (l * (n - 1) + 1, len)
+    end
+    return tpl_ranges
+end
+
+"""
+Takes a range `[a, b]` and an axis size `n`, and
+tries to expand the range to `[a-1, b+1]`. 
+
+Will clamp `a-1` to `1` and`b+1` to `n`.
+
+Returns `(c, d) = (max(1,a-1), min(n, b+1)` (the cells needed to copy into a partition) 
+and `(e,f)` (the cells that a partition will be responsible for updating.
+"""
+function expand_to_neighbors(left_idx, right_idx, axis_size)
+    len = right_idx - left_idx + 1
+    if left_idx > 1
+        new_l = left_idx - 1
+        left_idx = 2
+    else
+        new_l = 1
+        left_idx = 1
+    end
+
+    if right_idx < axis_size
+        new_r = right_idx + 1
+        right_idx = left_idx + len - 1
+    else
+        new_r = right_idx
+        right_idx = left_idx + len - 1
+    end
+    return (new_l, new_r), (left_idx, right_idx)
 end
 
 # TODO if we want to move beyond a structured grid, we have to redo this method. I have no idea how to do this.
@@ -533,6 +514,25 @@ function maximum_cell_signal_speeds(
     )
 end
 
+# does not allocate as of now
+"""
+    neighbor_cells(cell, active_cells, boundary_conditions, gas)
+
+Extract the states of the neighboring cells to `cell` from `active_cells`. 
+Will compute phantoms as necessary from `boundary_conditions` and `gas`.
+"""
+function neighbor_cells(cell, active_cells, boundary_conditions, gas)
+    neighbors = cell.neighbors
+    map((ntuple(i -> ((keys(neighbors)[i], neighbors[i])), 4))) do (dir, (kind, id))
+        res = if kind == BOUNDARY_CONDITION
+            @inbounds phantom_neighbor(cell, dir, boundary_conditions[id], gas)
+        else
+            active_cells[id]
+        end
+        return res
+    end |> NamedTuple{(:north, :south, :east, :west)}
+end
+
 function compute_partition_update_and_max_Δt!(
     partition::AbstractCellGridPartition,
     dim,
@@ -625,10 +625,14 @@ function compute_partition_convergence_measure(
 end
 
 function compute_partition_convergence_measure(
-    partition::AbstractCellGridPartition{TangentQuadCell{T, NS, NP},U},
-) where {T, NS, NP,U<:TangentQuadCellStrangUpdate}
+    partition::AbstractCellGridPartition{TangentQuadCell{T,NS,NP},U},
+) where {T,NS,NP,U<:TangentQuadCellStrangUpdate}
     _op(a, b) = (bcast_max(a[1], b[1]), bcast_max(a[2], b[2]))
-    return mapreduce(_op, owned_cell_ids(partition); init=(zero(SVector{4,T}), zero(SMatrix{4, NS, T, NP}))) do id
+    return mapreduce(
+        _op,
+        owned_cell_ids(partition);
+        init = (zero(SVector{4,T}), zero(SMatrix{4,NS,T,NP})),
+    ) do id
         # only track the primal for now
         # TODO how to measure tangent convergence
         (Δu, Δu̇) = total_update(get_cell_update(partition, id))
@@ -708,15 +712,13 @@ function step_cell_simulation_with_strang_splitting!(
     tforeach(cell_partitions) do cell_partition
         compute_partition_update_and_max_Δt!(cell_partition, 1, 2, boundary_conditions, gas)
     end
-    maximum_relative_change = tmapreduce(bcast_max, cell_partitions) do p
+    tforeach(cell_partitions) do p
         for src_idx ∈ partition_neighboring[p.id]
             propagate_updates_to!(p, cell_partitions[src_idx])
         end
         apply_partition_update!(p, 1, Δt / 2, 2)
-        compute_partition_convergence_measure(p)[1]
     end
-
-    return Δt, maximum_relative_change
+    return Δt
 end
 
 function active_cell_mask(cell_centers_x, cell_centers_y, obstacles)
