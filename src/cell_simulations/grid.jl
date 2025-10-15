@@ -499,21 +499,6 @@ function collect_cell_partition_updates(cell_partitions, n_active_cells)
     return collect_cell_partition_updates!(Δu_global, cell_partitions)
 end
 
-function _iface_speed(iface::Tuple{Int,T,T}, gas) where {T<:FVMCell}
-    return max(abs.(interface_signal_speeds(iface[2].u, iface[3].u, iface[1], gas))...)
-end
-
-function maximum_cell_signal_speeds(
-    interfaces::NamedTuple{(:north, :south, :east, :west)},
-    gas::CaloricallyPerfectGas,
-)
-    # doing this with map allocated?!
-    return (
-        max(_iface_speed(interfaces.north, gas), _iface_speed(interfaces.south, gas)),
-        max(_iface_speed(interfaces.east, gas), _iface_speed(interfaces.west, gas)),
-    )
-end
-
 # does not allocate as of now
 """
     neighbor_cells(cell, active_cells, boundary_conditions, gas)
