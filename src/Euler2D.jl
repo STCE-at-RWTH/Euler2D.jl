@@ -6,14 +6,17 @@ module Euler2D
     read(path, String)
 end Euler2D
 
+# standard library
+using Dates
+using LinearAlgebra
+using Statistics
+
 # Load before Tullio
 using LoopVectorization
 
 using Accessors: @set, @reset
-using Dates
 using DifferentiationInterface
 using ForwardDiff: ForwardDiff
-using LinearAlgebra
 using OhMyThreads: tforeach, tmap, tmapreduce, treduce
 using StaticArrays
 using Tullio
