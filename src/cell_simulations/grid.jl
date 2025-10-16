@@ -132,6 +132,8 @@ cell_type(::Type{<:AbstractCellGridPartition{T,U}}) where {T,U} = T
 update_dtype(::AbstractCellGridPartition{T,U}) where {T,U} = U
 update_dtype(::Type{<:AbstractCellGridPartition{T,U}}) where {T,U} = U
 
+owned_cell_count(p::AbstractCellGridPartition) = count(≠(0), owned_cell_ids(p))
+
 """
    owned_cell_ids(partition)
 
