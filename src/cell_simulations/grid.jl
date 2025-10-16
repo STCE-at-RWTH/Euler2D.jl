@@ -599,36 +599,6 @@ function apply_partition_update!(partition::FastCellGridPartition, dim, Δt, spl
     end
 end
 
-function compute_partition_convergence_measure(
-    partition::AbstractCellGridPartition{T,U},
-) where {T,U<:PrimalQuadCellStrangUpdate}
-    return mapreduce(bcast_max, owned_cell_ids(partition)) do id
-        # only track the primal for now
-        # TODO how to measure tangent convergence
-        (Δu,) = total_update(get_cell_update(partition, id))
-        relative_Δu = Δu ./ get_cell(partition, id).u
-        return relative_Δu
-    end
-end
-
-function compute_partition_convergence_measure(
-    partition::AbstractCellGridPartition{TangentQuadCell{T,NS,NP},U},
-) where {T,NS,NP,U<:TangentQuadCellStrangUpdate}
-    _op(a, b) = (bcast_max(a[1], b[1]), bcast_max(a[2], b[2]))
-    return mapreduce(
-        _op,
-        owned_cell_ids(partition);
-        init = (zero(SVector{4,T}), zero(SMatrix{4,NS,T,NP})),
-    ) do id
-        # only track the primal for now
-        # TODO how to measure tangent convergence
-        (Δu, Δu̇) = total_update(get_cell_update(partition, id))
-        relative_Δu = Δu ./ get_cell(partition, id).u
-        relative_Δu̇ = Δu̇ ./ get_cell(partition, id).u̇
-        return (relative_Δu, relative_Δu̇)
-    end
-end
-
 """
     function step_cell_simulation_with_strang_splitting!(
        cell_partitions,
@@ -707,6 +677,49 @@ function step_cell_simulation_with_strang_splitting!(
     end
     return Δt
 end
+
+struct PartitionConvergenceMeta{T}
+    partition_id::Int
+    Δu_relative::NTuple{4,Vector{T}}
+end
+
+function PartitionConvergenceMeta(partition)
+    T = numeric_dtype(partition)
+    ncells = owned_cell_count(partition)
+    bufs = ntuple(Returns(Vector{T}(undef, ncells)), 4)
+    return PartitionConvergenceMeta(partition.id, bufs)
+end
+
+function compute_partition_convergence_measures!(meta, partition, Δt)
+    for (i, id) ∈ enumerate(owned_cell_ids(partition))
+        u = get_cell(partition, id).u
+        Δu = total_update(get_cell_update(partition, id))[1]
+        relative_abs_update = abs.((Δt * Δu) ./ u)
+        for j ∈ 1:4
+            meta.Δu_relative[j][i] = relative_abs_update[j]
+        end
+    end
+    measures = map(meta.Δu_relative) do v
+        sort!(v)
+        i_guess = findfirst(isnan, v)
+        v_notnan = isnothing(i_guess) ? @view(v[begin:end]) : @view(v[begin:i_guess-1])
+        if isempty(v_notnan)
+            return ntuple(Returns(zero(eltype(v))), 2)
+        end
+        mean_upd = mean(v_notnan)
+        max_upd = maximum(v_notnan)
+        return (mean_upd, max_upd)
+    end
+    mean_update = SVector(ntuple(i -> measures[i][1], 4))
+    max_update = SVector(ntuple(i -> measures[i][2], 4))
+    return mean_update, max_update
+end
+
+function test_for_convergence(mean_upd, max_upd)
+    return norm(mean_upd) < 0.0001
+end
+
+##GLOBAL CELL GRID STUFF
 
 function active_cell_mask(cell_centers_x, cell_centers_y, obstacles)
     return map(Iterators.product(cell_centers_x, cell_centers_y)) do (x, y)
