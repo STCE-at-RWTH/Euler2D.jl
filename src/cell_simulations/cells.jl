@@ -279,11 +279,14 @@ end
 Sum together all of the subcomponents of an update and return them as one value.
 """
 function total_update(Δu::PrimalQuadCellStrangUpdate)
-    return (sum(Δu.Δu_x) + Δu.Δu_y,)
+    return (sum(Δu.Δu_x) / length(Δu.Δu_x) + Δu.Δu_y,)
 end
 
 function total_update(Δu::TangentQuadCellStrangUpdate)
-    return (sum(Δu.Δu_x) + Δu.Δu_y, sum(Δu.Δu̇_x) + Δu.Δu̇_y)
+    return (
+        sum(Δu.Δu_x) / length(Δu.Δu_x) + Δu.Δu_y,
+        sum(Δu.Δu̇_x) / length(Δu.Δu̇_x) + Δu.Δu̇_y,
+    )
 end
 
 @doc """

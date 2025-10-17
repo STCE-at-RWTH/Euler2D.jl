@@ -28,6 +28,7 @@ using Unitful: @derived_dimension, Density, Pressure, Velocity
 using PlanePolygons
 using ShockwaveProperties
 using ShockwaveProperties: MomentumDensity, EnergyDensity
+using SimpleIntegration
 
 const fdiff_backend = AutoForwardDiff()
 
