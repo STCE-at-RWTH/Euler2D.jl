@@ -531,8 +531,8 @@ function inform_timing_information(
     current_num_tsteps,
     t,
     Δt,
-    l2_conv,
     l1_conv,
+    l2_conv,
 )
     total_duration = infos.current_wall_time - infos.start_time
     avg_dur = total_duration ÷ current_num_tsteps
@@ -540,7 +540,7 @@ function inform_timing_information(
     r = canonicalize(maximum_wall_clock - total_duration)
     r = Dates.CompoundPeriod(r.periods[1:max(1, length(r.periods) - 2)])
 
-    @info "Time step $n_tsteps (duration $cur_dur, avg. $avg_dur, remaining wall clock $r)" cur_t =
+    @info "Time step $current_num_tsteps (duration $cur_dur, avg. $avg_dur, remaining wall clock $r)" cur_t =
         t del_t = Δt nex_t = t + Δt l1_co = l1_conv l2_co = l2_conv
 
     nothing
@@ -709,8 +709,8 @@ function simulate_euler_equations_cells(
         # compute convergence estimates
         # merge! is fast. probably.
         collect_cell_partition_updates!(updates_buffer, cell_partitions)
-        l2_conv_measure = _l2_convergence_measure(global_cell_ids, updates_buffer, Δt) * dA
         l1_conv_measure = _l1_convergence_measure(global_cell_ids, updates_buffer, Δt) * dA
+        l2_conv_measure = _l2_convergence_measure(global_cell_ids, updates_buffer, Δt) * dA
 
         advance_timing_infos!(timing_infos)
         if show_info && ((n_tsteps - 1) % info_frequency == 0)
@@ -720,8 +720,8 @@ function simulate_euler_equations_cells(
                 n_tsteps,
                 t,
                 Δt,
-                l2_conv_measure,
                 l1_conv_measure,
+                l2_conv_measure,
             )
         end
 
