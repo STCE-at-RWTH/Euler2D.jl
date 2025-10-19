@@ -41,7 +41,7 @@ probe = [
     CircularObstacle((0.0, 0.0), 0.75),
     RectangularObstacle(SVector(1.0, 0.0), SVector(2.0, 1.5)),
 ]
-const ncells = (540, 540 * 4 ÷ 3)
+const ncells = (120, 120 * 4 ÷ 3)
 
 # Profile.init(; n = 10^7, delay = 0.005)
 # Profile.clear()
@@ -49,7 +49,7 @@ const ncells = (540, 540 * 4 ÷ 3)
 Euler2D.simulate_euler_equations_cells(
     u0,
     starting_parameters,
-    20.0,
+    25.0,
     bcs,
     probe,
     bounds,
@@ -58,10 +58,10 @@ Euler2D.simulate_euler_equations_cells(
     gas = DRY_AIR,
     scale = scale,
     show_detailed_info = false,
-    info_frequency = 1,
-    write_frequency = 25,
-    max_tsteps = 200,
-    output_tag = "validate_new_partitioning/validate_update_fusion",
+    info_frequency = 50,
+    write_frequency = 100,
+    max_tsteps = 25000,
+    output_tag = "validate_convergence_checks/tangent_convergence_measures_integration",
     output_channel_size = 2,
-    tasks_per_axis = 16,
+    tasks_per_axis = 8,
 );

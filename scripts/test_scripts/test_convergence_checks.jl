@@ -31,4 +31,12 @@ probe = [
     CircularObstacle((0.0, 0.0), 0.75),
     RectangularObstacle(SVector(1.0, 0.0), SVector(2.0, 1.5)),
 ]
-ncells = (540, 540 * 4 ÷ 3)
+N = 120
+ncells = (N, N * 4 ÷ 3)
+
+using Euler2D: primal_cell_list_and_id_grid, fast_partition_cell_list
+
+global_cells, global_ids =
+    primal_cell_list_and_id_grid(u0, starting_parameters, bounds, ncells, scale, probe);
+
+cell_partitions = fast_partition_cell_list(global_cells, global_ids, 4; show_info = true);
