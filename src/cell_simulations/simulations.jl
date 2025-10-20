@@ -446,13 +446,41 @@ function total_mass_contained_by(
     return U_contained + U_overlap, Udot_contained + Udot_overlap
 end
 
+# POSSIBLE CONVERGENCE MEASURES
+
+function _l2_convergence_measure(cell_ids, cells_updates, Δt)
+    return integrate(axes(cell_ids)...) do i, j
+        id = cell_ids[i, j]
+        id == 0 && return zero(Δt)
+        du = total_update(cells_updates[id])[1]
+        return du' * du
+    end
+end
+
+function _l1_convergence_measure(cell_ids, cells_updates, Δt)
+    return integrate(axes(cell_ids)...) do i, j
+        id = cell_ids[i, j]
+        id == 0 && return zero(Δt)
+        du = total_update(cells_updates[id])[1]
+        return sum(abs, du)
+    end
+end
+
+function _linf_convergence_measure(cell_ids, cells_updates, Δt)
+    return tmapreduce(max, cell_ids) do id
+        cells_updates[id] == 0 && return zero(Δt)
+        du = total_update(cells_updates[id])[1]
+        return maximum(abs, du)
+    end
+end
+
 """
 Take the tape data stream and return a channel where simulation state can be queued then pushed.
 """
-function _initialize_writer_task(channel_size, time_type, cells_type, data_stream)
+function _start_output_task(buffer_size, tstep_type, data_stream, empty_buffer_channel)
     taskref = Ref{Task}()
-    ch = Channel{Union{Symbol,Tuple{time_type,cells_type}}}(
-        channel_size;
+    ch = Channel{Union{Symbol,tstep_type}}(
+        buffer_size;
         taskref = taskref,
         spawn = true,
     ) do ch
@@ -461,7 +489,10 @@ function _initialize_writer_task(channel_size, time_type, cells_type, data_strea
             if val == :stop
                 break
             end
-            write_tstep_to_stream(data_stream, val...)
+            (t, cells) = val
+            write_tstep_to_stream(data_stream, t, cells)
+            # return the cell buffer so that the main loop can use it
+            put!(empty_buffer_channel, cells)
         end
     end
     return taskref, ch
@@ -474,6 +505,51 @@ function write_tstep_to_stream(stream, t, global_cells)
         @assert id == cell.id
         write(stream, Ref(cell))
     end
+end
+
+# for grouping some stuff together.
+mutable struct TimeSteppingInfos
+    start_time::Dates.DateTime
+    previous_wall_time::Dates.DateTime
+    current_wall_time::Dates.DateTime
+end
+
+function TimeSteppingInfos()
+    t = Dates.now()
+    return TimeSteppingInfos(t, t, t)
+end
+
+function advance_timing_infos!(infos)
+    infos.previous_wall_time = infos.current_wall_time
+    infos.current_wall_time = Dates.now()
+    return infos
+end
+
+function inform_timing_information(
+    infos,
+    maximum_wall_clock,
+    current_num_tsteps,
+    t,
+    Δt,
+    l1_conv,
+    l2_conv,
+)
+    total_duration = infos.current_wall_time - infos.start_time
+    avg_dur = total_duration ÷ current_num_tsteps
+    cur_dur = infos.current_wall_time - infos.previous_wall_time
+    r = canonicalize(maximum_wall_clock - total_duration)
+    r = Dates.CompoundPeriod(r.periods[1:max(1, length(r.periods) - 2)])
+
+    @info "Time step $current_num_tsteps (duration $cur_dur, avg. $avg_dur, remaining wall clock $r)" cur_t =
+        t del_t = Δt nex_t = t + Δt l1_co = l1_conv l2_co = l2_conv
+
+    nothing
+end
+
+function simulation_too_slow(infos, maximum_wall_clock, current_num_tsteps)
+    total_duration = infos.current_wall_time - infos.start_time
+    avg_dur = total_duration ÷ current_num_tsteps
+    return (current_num_tsteps + 4) * avg_dur > maximum_wall_clock
 end
 
 """
@@ -503,6 +579,7 @@ Keyword Arguments
 - `scale::EulerEqnsScaling = _SI_DEFAULT_SCALE`: A set of non-dimensionalization parameters.
 - `cfl_limit = 0.75`: The CFL condition to apply to `Δt`. Between zero and one, default `0.75`.
 - `max_tsteps=typemax(Int)`: Maximum number of time steps to take. Defaults to "very large".
+- `convergence_thold=1.0e-10`: Convergence threshold for the L2 norm of the flux
 - `write_result = true`: Should output be written to disk?
 - `output_channel_size = 5`: How many time steps should be buffered during I/O?
 - `write_frequency = 1`: How often should time steps be written out?
@@ -525,6 +602,7 @@ function simulate_euler_equations_cells(
     scale::EulerEqnsScaling = _SI_DEFAULT_SCALE,
     cfl_limit = 0.75,
     max_tsteps = typemax(Int),
+    convergence_thold = 1.0e-10,
     maximum_wall_duration = Hour(167),
     write_result = true,
     output_channel_size = 5,
@@ -549,7 +627,9 @@ function simulate_euler_equations_cells(
     else
         tangent_cell_list_and_id_grid(u0, params, bounds, ncells, scale, obstacles)
     end
+    dA = cell_volume(first(values(global_cells)))
     n_global_cells = length(global_cells)
+    OUTPUT_BUFFER_TYPE = typeof(global_cells)
     # do the partitioning
     cell_partitions = fast_partition_cell_list(
         global_cells,
@@ -557,11 +637,11 @@ function simulate_euler_equations_cells(
         tasks_per_axis;
         show_info = show_detailed_info,
     )
+    partition_neighboring = partition_neighbor_map(cell_partitions)
+    updates_buffer = Dict{Int,update_dtype(first(cell_partitions))}()
+    sizehint!(updates_buffer, n_global_cells)
 
-    # initialize counters and timer
-    n_tsteps = 1
-    n_written_tsteps = 1
-    t = zero(T)
+    # if we are writing the result we should make sure there is a file available.
     if write_result
         tape_file = joinpath(pwd(), "data", output_tag * ".celltape")
         tape_path = dirname(tape_file)
@@ -570,15 +650,16 @@ function simulate_euler_equations_cells(
             @info "Creating data directory/ies at $tape_path"
             mkpath(tape_path)
         end
-    end
-    if !write_result
+    else
         @info "Only the final value of the simulation will be available." T_end
     end
-    wall_clock_start_time = Dates.now()
-    previous_tstep_wall_clock = wall_clock_start_time
-    avg_duration = (previous_tstep_wall_clock - wall_clock_start_time) ÷ 2
+    # initialize counters and timer
+    n_tsteps = 1
+    n_written_tsteps = 1
+    t = zero(T)
+    timing_infos = TimeSteppingInfos()
     if show_info
-        start_str = Dates.format(wall_clock_start_time, "HH:MM:SS.sss")
+        start_str = Dates.format(timing_infos.start_time, "HH:MM:SS.sss")
         @info "Starting simulation at $start_str" ncells = n_global_cells npartitions =
             length(cell_partitions)
     end
@@ -594,54 +675,87 @@ function simulate_euler_equations_cells(
             write(tape_stream, b...)
         end
         write(tape_stream, global_cell_ids)
-        writer_taskref, writer_channel = _initialize_writer_task(
+        # generate some output buffers in case we end up waiting on I/O
+        idle_buffer_channel = Channel{OUTPUT_BUFFER_TYPE}(output_channel_size)
+        for _ = 2:output_channel_size
+            d = OUTPUT_BUFFER_TYPE()
+            sizehint!(d, n_global_cells)
+            put!(idle_buffer_channel, d)
+        end
+        writer_taskref, writer_channel = _start_output_task(
             output_channel_size,
-            T,
-            typeof(global_cells),
+            Tuple{T,OUTPUT_BUFFER_TYPE},
             tape_stream,
+            idle_buffer_channel,
         )
+        # sacrifice the global_cells buffer ;)
         put!(writer_channel, (t, global_cells))
     end
 
+    # status flag; 0 is "continue"
     time_stepping_status = 0
     # do the time stepping
     while time_stepping_status == 0
-        Δt = step_cell_simulation!(
+        # figure out what the time step size was (after doing it)
+        Δt = step_cell_simulation_with_strang_splitting!(
             cell_partitions,
+            partition_neighboring,
             T_end - t,
             boundary_conditions,
             cfl_limit,
             gas,
         )
-        current_tstep_wall_clock = Dates.now()
-        avg_duration = (current_tstep_wall_clock - wall_clock_start_time) ÷ n_tsteps
+
+        # compute convergence estimates
+        # merge! is fast. probably.
+        collect_cell_partition_updates!(updates_buffer, cell_partitions)
+        l1_conv_measure = _l1_convergence_measure(global_cell_ids, updates_buffer, Δt) * dA
+        l2_conv_measure = _l2_convergence_measure(global_cell_ids, updates_buffer, Δt) * dA
+
+        advance_timing_infos!(timing_infos)
         if show_info && ((n_tsteps - 1) % info_frequency == 0)
-            d = current_tstep_wall_clock - previous_tstep_wall_clock
-            remaining = canonicalize(
-                maximum_wall_duration - (current_tstep_wall_clock - wall_clock_start_time),
+            inform_timing_information(
+                timing_infos,
+                maximum_wall_duration,
+                n_tsteps,
+                t,
+                Δt,
+                l1_conv_measure,
+                l2_conv_measure,
             )
-            remaining = Dates.CompoundPeriod(
-                remaining.periods[1:max(1, length(remaining.periods) - 2)],
-            )
-            @info "Time step $n_tsteps (duration $d, avg. $avg_duration, remaining wall clock $remaining)" cur_t =
-                t del_t = Δt nex_t = t + Δt
         end
-        previous_tstep_wall_clock = current_tstep_wall_clock
+
         n_tsteps += 1
         t += Δt
 
         if t > T_end || t ≈ T_end
+            # exit status 1 for "finished at t=T"
             time_stepping_status = 1
         elseif n_tsteps >= max_tsteps
+            # exit status 2 for "finished at Nt=Nmax"
             time_stepping_status = 2
-        elseif (n_tsteps + 4) * avg_duration > maximum_wall_duration
+        elseif simulation_too_slow(timing_infos, maximum_wall_duration, n_tsteps)
+            # exit status 3 for "out of wall clock time"
             time_stepping_status = 3
+        elseif l2_conv_measure <= convergence_thold
+            # exit status 4 for "l2 norm converged"
+            time_stepping_status = 4
+        end
+
+        if show_info && time_stepping_status != 0
+            @info "Terminating." status = time_stepping_status
         end
         # push output to the writer task
-        if (write_result && ((n_tsteps - 1) % write_frequency == 0))
+        # if we are writing ther result AND
+        # the number of time steps is 1 mod write frequency OR
+        # time stepping will stop this iteration
+        if (
+            write_result &&
+            (((n_tsteps - 1) % write_frequency == 0) || time_stepping_status != 0)
+        )
             put!(
                 writer_channel,
-                (t, collect_cell_partitions(cell_partitions, n_global_cells)),
+                (t, collect_cell_partitions!(take!(idle_buffer_channel), cell_partitions)),
             )
             n_written_tsteps += 1
             if show_info
@@ -650,16 +764,8 @@ function simulate_euler_equations_cells(
             end
         end
     end
-
+    # stop writing and clean up the output stream
     if write_result
-        # only write the current state if we haven't already
-        if ((n_tsteps - 1) % write_frequency != 0)
-            put!(
-                writer_channel,
-                (t, collect_cell_partitions(cell_partitions, n_global_cells)),
-            )
-            n_written_tsteps += 1
-        end
         put!(writer_channel, :stop)
         wait(writer_taskref[])
 

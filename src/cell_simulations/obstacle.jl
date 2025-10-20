@@ -24,22 +24,16 @@ function PlanePolygons.point_inside(s::RectangularObstacle, pt)
     return all(abs.(Δx) .<= s.extent / 2)
 end
 
-struct TriangularObstacle{T} <: Obstacle
-    points::NTuple{3,SVector{2,T}}
+struct ConvexPolygonalObstacle{N,T} <: Obstacle
+    boundary::SClosedPolygon{N,T}
 end
 
-"""
-    TriangularObstacle(points)
-
-Create a triangular obstacle from a clockwise-oriented list of its vertices.
-"""
-function TriangularObstacle(pts...)
-    return TriangularObstacle(tuple((SVector{2}(p) for p ∈ pts)...))
+function ConvexPolygonalObstacle(pts...)
+    return ConvexPolygonalObstacle(SClosedPolygon(pts...))
 end
 
-function PlanePolygons.point_inside(s::TriangularObstacle, pt)
-    return all(zip(s.points, s.points[[2, 3, 1]])) do (p1, p2)
-        R = SMatrix{2,2}(0, -1, 1, 0)
-        return (R * (p2 - p1)) ⋅ (pt - p1) > 0 # test if inward normal faces towards the point
-    end
+TriangularObstacle{T} = ConvexPolygonalObstacle{3,T}
+
+function PlanePolygons.point_inside(s::ConvexPolygonalObstacle, pt)
+    return point_inside(s.boundary, pt)
 end

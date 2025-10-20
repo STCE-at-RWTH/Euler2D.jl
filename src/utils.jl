@@ -62,6 +62,7 @@ function fdiff_eps(arg::T) where {T<:Real}
 end
 
 ###
+
 ### HORRIBLE BACKUP DICT THINGY
 """
   BackupDict{K, V}
@@ -79,6 +80,16 @@ function Base.getindex(bdict::BackupDict, key)
 end
 
 ### END HORRIBLE BACKUP DICT THINGY
+
+### ELEMENTWISE MAXIMUM, MINIMUM, AND EXTREMA
+function bcast_max(a, b)
+    return max.(a, b)
+end
+
+function bcast_min(a, b)
+    return min.(a, b)
+end
+###
 
 function free_space_dims(N, d)
     ((i + 1 for i ∈ 1:N if i ≠ d)...,)
@@ -173,12 +184,4 @@ end
 # named constants
 const _dirs_bc_is_reversed = (north = true, south = false, east = false, west = true)
 const _dirs_dim = (north = 2, south = 2, east = 1, west = 1)
-
-function edge_points(center, extent, θ_n)
-    t = extent / 2
-    v = SVector(normal_vec[2], -normal_vec[1])
-
-    # HOW DO I DO THIS
-    # HOW
-
-end
+const _dims_dirs = ((:west, :east), (:south, :north))

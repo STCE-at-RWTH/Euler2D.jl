@@ -6,15 +6,18 @@ module Euler2D
     read(path, String)
 end Euler2D
 
+# standard library
+using Dates
+using LinearAlgebra
+using Statistics
+
 # Load before Tullio
 using LoopVectorization
 
 using Accessors: @set, @reset
-using Dates
 using DifferentiationInterface
 using ForwardDiff: ForwardDiff
-using LinearAlgebra
-using OhMyThreads: tforeach, tmap, tmapreduce
+using OhMyThreads: tforeach, tmap, tmapreduce, treduce
 using StaticArrays
 using Tullio
 using Unitful
@@ -25,6 +28,7 @@ using Unitful: @derived_dimension, Density, Pressure, Velocity
 using PlanePolygons
 using ShockwaveProperties
 using ShockwaveProperties: MomentumDensity, EnergyDensity
+using SimpleIntegration
 
 const fdiff_backend = AutoForwardDiff()
 

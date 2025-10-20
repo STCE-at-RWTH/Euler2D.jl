@@ -1,3 +1,6 @@
+# using Profile
+# using PProf
+
 using Euler2D
 using LinearAlgebra
 using Unitful
@@ -25,7 +28,7 @@ scale = EulerEqnsScaling(x0, ρ0, a0)
 @info "Current nondimensionalization scale is:" x_0 = length_scale(scale) v_0 =
     velocity_scale(scale) ρ_0 = density_scale(scale)
 
-bcs = (
+const bcs = (
     ExtrapolateToPhantom(), # north 
     StrongWall(), # south
     ExtrapolateToPhantom(), # east
@@ -33,17 +36,20 @@ bcs = (
     StrongWall(), # walls
 )
 
-bounds = ((-1.5, 0.5), (0.0, 2.0))
+const bounds = ((-1.5, 0.0), (0.0, 2.0))
 probe = [
     CircularObstacle((0.0, 0.0), 0.75),
     RectangularObstacle(SVector(1.0, 0.0), SVector(2.0, 1.5)),
 ]
-ncells = (400, 400)
+const ncells = (120, 120 * 4 ÷ 3)
+
+# Profile.init(; n = 10^7, delay = 0.005)
+# Profile.clear()
 
 Euler2D.simulate_euler_equations_cells(
     u0,
     starting_parameters,
-    20.0,
+    25.0,
     bcs,
     probe,
     bounds,
@@ -51,11 +57,11 @@ Euler2D.simulate_euler_equations_cells(
     mode = Euler2D.TANGENT,
     gas = DRY_AIR,
     scale = scale,
-    show_detailed_info = true,
-    info_frequency = 5,
-    write_frequency = 25,
-    max_tsteps = 10,
-    output_tag = "validate_new_partition/fast_partitioning_n500nt1000ntasks16",
+    show_detailed_info = false,
+    info_frequency = 50,
+    write_frequency = 100,
+    max_tsteps = 25000,
+    output_tag = "validate_convergence_checks/tangent_convergence_measures_integration",
     output_channel_size = 2,
-    tasks_per_axis = 4,
+    tasks_per_axis = 8,
 );
