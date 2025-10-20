@@ -1,6 +1,6 @@
 name = "Euler2D"
 uuid = "c24a2923-03cb-4692-957a-ccd31f2ad327"
-version = "0.6.2"
+version = "0.6.3"
 authors = ["Sasha Fleming <fleming@stce.rwth-aachen.de>"]
 
 [deps]
