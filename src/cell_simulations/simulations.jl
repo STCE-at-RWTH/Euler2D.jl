@@ -743,6 +743,15 @@ function simulate_euler_equations_cells(
         end
 
         if show_info && time_stepping_status != 0
+            inform_timing_information(
+                timing_infos,
+                maximum_wall_duration,
+                n_tsteps,
+                t,
+                Δt,
+                l1_conv_measure,
+                l2_conv_measure,
+            )
             @info "Terminating." status = time_stepping_status
         end
         # push output to the writer task
