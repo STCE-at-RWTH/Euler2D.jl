@@ -21,7 +21,7 @@ Represents a completed simulation of the Euler equations on a mesh of 2-dimensio
 - `u::Array{ConservedProps{T, Q1, Q2, Q3}, 2}`: Array of cell data in each time step.
 
 ## Methods
-- `n_space_dims`, `n_tsteps``, ``grid_size``
+- `n_space_dims`, `n_tsteps`, `grid_size`
 - `cell_centers`: Get the co-ordinates of cell centers.
 - `cell_boundaries`: Get the co-ordinates of cell faces.
 - `nth_step`: Get the information at time step `n`.
@@ -40,8 +40,41 @@ end
 
 n_space_dims(::CellBasedEulerSim) = 2
 
+"""
+    grid_size(sim)
+
+Size of the spatial axes of this simulation.
+"""
+grid_size(sim) = sim.ncells
+
+"""
+    n_tsteps(sim)
+
+Number of time steps in a CellBasedEulerSim.
+"""
+n_tsteps(sim) = sim.nsteps
+
+"""
+    cell_boundaries(sim, n)
+
+Return `StepRange` of all the cell face positions for the `n`th space dimension in `sim`.
+"""
+function cell_boundaries(sim, dim)
+    return range(sim.bounds[dim]...; length = grid_size(sim)[dim] + 1)
+end
+
 function cell_boundaries(e::CellBasedEulerSim)
     return ntuple(i -> cell_boundaries(e, i), 2)
+end
+
+"""
+    cell_centers(sim, n)
+
+Return `StepRange` of all the cell center positions for the `n`th space dimension in `sim`.
+"""
+function cell_centers(sim, dim)
+    ifaces = cell_boundaries(sim, dim)
+    return ifaces[1:end-1] .+ step(ifaces) / 2
 end
 
 function cell_centers(e::CellBasedEulerSim)
