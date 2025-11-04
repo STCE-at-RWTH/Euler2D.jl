@@ -314,11 +314,12 @@ function mach_number_field(
 end
 
 # for completeness
+# the scaling doesn't actually matter for the mach number
 mach_number_field(
     csim::CellBasedEulerSim,
     n::Integer,
     gas::CaloricallyPerfectGas,
-    scale::EulerEqnsScaling,
+    ::EulerEqnsScaling,
 ) = mach_number_field(csim, n, gas)
 
 function minimum_cell_size(sim::CellBasedEulerSim)
@@ -579,10 +580,111 @@ function inform_timing_information(
     nothing
 end
 
-function simulation_too_slow(infos, maximum_wall_clock, current_num_tsteps)
+function _simulation_too_slow(infos, maximum_wall_clock, current_num_tsteps)
     total_duration = infos.current_wall_time - infos.start_time
     avg_dur = total_duration ÷ current_num_tsteps
     return (current_num_tsteps + 4) * avg_dur > maximum_wall_clock
+end
+
+"""
+    cell_simulation_config(; kwargs...)
+
+Create the config dict for doing a simulation.
+
+Keyword Arguments (and their default values)
+---
+- `mode::EulerSimulationMode = PRIMAL`: `PRIMAL` or `TANGENT` 
+- `gas::CaloricallyPerfectGas = DRY_AIR`: The fluid to be simulated.
+- `scale::EulerEqnsScaling = _SI_DEFAULT_SCALE`: A set of non-dimensionalization parameters.
+- `cfl_limit = 0.75`: The CFL condition to apply to `Δt`. Between zero and one, default `0.75`.
+- `max_tsteps=typemax(Int)`: Maximum number of time steps to take. Defaults to "very large".
+- `convergence_thold=1.0e-10`: Convergence threshold for the L2 norm of the flux
+- `write_result = true`: Should output be written to disk?
+- `output_channel_size = 5`: How many time steps should be buffered during I/O?
+- `write_frequency = 1`: How often should time steps be written out?
+- `history_in_memory = false`: Should we keep whole history in memory?
+- `output_tag = "cell_euler_sim"`: File name for the tape and output summary.
+- `show_info = true` : Should diagnostic information be printed out?
+- `info_frequency = 10`: How often should info be printed?
+- `tasks_per_axis = Threads.nthreads()`: How many partitions should be created on each axis?
+"""
+function cell_simulation_config(; kwargs...)
+    cfg = Dict{Symbol,Any}([
+        :mode => PRIMAL,
+        :gas => DRY_AIR,
+        :scale => _SI_DEFAULT_SCALE,
+        :cfl_limit => 0.75,
+        :max_tsteps => typemax(Int),
+        :convergence_thold => 1.0e-10,
+        :maximum_wall_duration => Hour(167),
+        :write_result => true,
+        :output_channel_size => 5,
+        :write_frequency => 1,
+        :output_tag => "cell_euler_sim",
+        :show_info => true,
+        :show_detailed_info => false,
+        :info_frequency => 10,
+        :tasks_per_axis => Threads.nthreads(),
+    ])
+    merge!(cfg, kwargs)
+    return cfg
+end
+
+function resume_simulation_from_file(file, T_end, config; T = Float64)
+    simulation =
+        load_cell_sim(file; steps = :last, T = T, show_info = config[:show_detailed_info])
+    @assert n_tsteps(simulation) == 1
+
+    t0, cells = nth_step(simulation, 1)
+
+    sim_settings = Dict{Symbol,Any}([
+        :t0 = t0,
+        :T_end = T_end,
+        :bounds = simulation.bounds,
+        :ncells = simulation.ncells,
+        :simulation_numeric_dtype = numeric_dtype(simulation),
+    ])
+
+    settings_and_config = merge(config, sim_settings)
+    return simulate_euler_equations_cells(cells, simulation.cell_ids, settings_and_config)
+end
+
+function start_simulation_from_initial_conditions(
+    u0,
+    params,
+    T_end,
+    boundary_conditions,
+    obstacles,
+    bounds,
+    ncells,
+    config,
+)
+    N = length(ncells)
+    @assert N == 2
+    @assert length(bounds) == 2
+    @assert length(boundary_conditions) == 5
+
+    global_cells, global_cell_ids = if mode == PRIMAL
+        primal_cell_list_and_id_grid(u0, params, bounds, ncells, config[:scale], obstacles)
+    else
+        tangent_cell_list_and_id_grid(u0, params, bounds, ncells, config[:scale], obstacles)
+    end
+
+    sim_settings = Dict{Symbol,Any}([
+        :params = params,
+        :T_end = T_end,
+        :obstacles = obstacles,
+        :bounds = bounds,
+        :ncells = ncells,
+        :simulation_numeric_dtype = typeof(T_end),
+    ])
+    settings_and_config = merge(config, sim_settings)
+
+    return simulate_euler_equations_cells(
+        global_cells,
+        global_cell_ids,
+        settings_and_config,
+    )
 end
 
 """
@@ -605,61 +707,29 @@ Arguments
 - `bounds`: a tuple of extents for each space dimension (tuple of tuples)
 - `ncells`: a tuple of cell counts for each dimension
 
-Keyword Arguments
----
-- `mode::EulerSimulationMode = PRIMAL`: `PRIMAL` or `TANGENT` 
-- `gas::CaloricallyPerfectGas = DRY_AIR`: The fluid to be simulated.
-- `scale::EulerEqnsScaling = _SI_DEFAULT_SCALE`: A set of non-dimensionalization parameters.
-- `cfl_limit = 0.75`: The CFL condition to apply to `Δt`. Between zero and one, default `0.75`.
-- `max_tsteps=typemax(Int)`: Maximum number of time steps to take. Defaults to "very large".
-- `convergence_thold=1.0e-10`: Convergence threshold for the L2 norm of the flux
-- `write_result = true`: Should output be written to disk?
-- `output_channel_size = 5`: How many time steps should be buffered during I/O?
-- `write_frequency = 1`: How often should time steps be written out?
-- `history_in_memory = false`: Should we keep whole history in memory?
-- `output_tag = "cell_euler_sim"`: File name for the tape and output summary.
-- `show_info = true` : Should diagnostic information be printed out?
-- `info_frequency = 10`: How often should info be printed?
-- `tasks_per_axis = Threads.nthreads()`: How many partitions should be created on each axis?
 """
-function simulate_euler_equations_cells(
-    u0,
-    params,
-    T_end,
-    boundary_conditions,
-    obstacles,
-    bounds,
-    ncells;
-    mode::EulerSimulationMode = PRIMAL,
-    gas::CaloricallyPerfectGas = DRY_AIR,
-    scale::EulerEqnsScaling = _SI_DEFAULT_SCALE,
-    cfl_limit = 0.75,
-    max_tsteps = typemax(Int),
-    convergence_thold = 1.0e-10,
-    maximum_wall_duration = Hour(167),
-    write_result = true,
-    output_channel_size = 5,
-    write_frequency = 1,
-    output_tag = "cell_euler_sim",
-    show_info = true,
-    show_detailed_info = false,
-    info_frequency = 10,
-    tasks_per_axis = Threads.nthreads(),
-)
-    N = length(ncells)
-    T = typeof(T_end)
-    @assert N == 2
-    @assert length(bounds) == 2
-    @assert length(boundary_conditions) == 5
-    T_end > 0 && DomainError("T_end = $T_end invalid, T_end must be positive")
-    0 < cfl_limit < 1 || @warn "CFL invalid, must be between 0 and 1 for stabilty" cfl_limit
-    cell_ifaces = [range(b...; length = n + 1) for (b, n) ∈ zip(bounds, ncells)]
+function simulate_euler_equations_cells(global_cells, global_cell_ids, config)
+    T = config[:simulation_numeric_dtype]
+    # set up counters
+    # and start the timers
+    n_tsteps = 1
+    n_written_tsteps = 1
+    t = haskey(config, :t0) ? config[:t0] : zero(T)
+    timing_infos = TimeSteppingInfos()
 
-    global_cells, global_cell_ids = if mode == PRIMAL
-        primal_cell_list_and_id_grid(u0, params, bounds, ncells, scale, obstacles)
-    else
-        tangent_cell_list_and_id_grid(u0, params, bounds, ncells, scale, obstacles)
+    # do some validation here
+    if !(config[:T_end] > t)
+        DomainError(config[:T_end], "T_end must be larger than t_0.")
     end
+    if !(0 < config[:cfl_limit] < 1)
+        DomainError(
+            config[:cfl_limit],
+            "CFL invalid, must be between 0 and 1 for stabilty.",
+        )
+    end
+    cell_ifaces =
+        [range(b...; length = n + 1) for (b, n) ∈ zip(config[:bounds], config[:ncells])]
+
     dA = cell_volume(first(values(global_cells)))
     n_global_cells = length(global_cells)
     OUTPUT_BUFFER_TYPE = typeof(global_cells)
@@ -667,56 +737,53 @@ function simulate_euler_equations_cells(
     cell_partitions = fast_partition_cell_list(
         global_cells,
         global_cell_ids,
-        tasks_per_axis;
-        show_info = show_detailed_info,
+        config[:tasks_per_axis];
+        show_info = config[:show_detailed_info],
     )
     partition_neighboring = partition_neighbor_map(cell_partitions)
     updates_buffer = Dict{Int,update_dtype(first(cell_partitions))}()
     sizehint!(updates_buffer, n_global_cells)
 
     # if we are writing the result we should make sure there is a file available.
-    if write_result
-        tape_file = joinpath(pwd(), "data", output_tag * ".celltape")
+    if config[:write_result]
+        tape_file = joinpath(pwd(), "data", config[:output_tag] * ".celltape")
         tape_path = dirname(tape_file)
-        status_file = joinpath(pwd(), "data", output_tag * ".status")
+        status_file = joinpath(pwd(), "data", config[:output_tag] * ".status")
         if !isdir(tape_path)
             @info "Creating data directory/ies at $tape_path"
             mkpath(tape_path)
         end
     else
-        @info "Only the final value of the simulation will be available." T_end
+        @info "Only the final value of the simulation will be available." T_end =
+            config[:T_end]
     end
     # initialize counters and timer
-    n_tsteps = 1
-    n_written_tsteps = 1
-    t = zero(T)
-    timing_infos = TimeSteppingInfos()
-    if show_info
+    if config[:show_info]
         start_str = Dates.format(timing_infos.start_time, "HH:MM:SS.sss")
         @info "Starting simulation at $start_str" ncells = n_global_cells npartitions =
             length(cell_partitions)
     end
     # open output stream
-    if write_result
+    if config[:write_result]
         tape_stream = open(tape_file, "w+")
         write(tape_stream, zero(Int), mode)
         if mode == TANGENT
             write(tape_stream, n_seeds(valtype(global_cells)))
         end
         write(tape_stream, length(global_cells), length(ncells), ncells...)
-        for b ∈ bounds
+        for b ∈ config[:bounds]
             write(tape_stream, b...)
         end
         write(tape_stream, global_cell_ids)
         # generate some output buffers in case we end up waiting on I/O
-        idle_buffer_channel = Channel{OUTPUT_BUFFER_TYPE}(output_channel_size)
-        for _ = 2:output_channel_size
+        idle_buffer_channel = Channel{OUTPUT_BUFFER_TYPE}(config[:output_channel_size])
+        for _ = 2:config[:output_channel_size]
             d = OUTPUT_BUFFER_TYPE()
             sizehint!(d, n_global_cells)
             put!(idle_buffer_channel, d)
         end
         writer_taskref, writer_channel = _start_output_task(
-            output_channel_size,
+            config[:output_channel_size],
             Tuple{T,OUTPUT_BUFFER_TYPE},
             tape_stream,
             idle_buffer_channel,
@@ -734,9 +801,9 @@ function simulate_euler_equations_cells(
             cell_partitions,
             partition_neighboring,
             T_end - t,
-            boundary_conditions,
-            cfl_limit,
-            gas,
+            config[:boundary_conditions],
+            config[:cfl_limit],
+            config[:gas],
         )
 
         # compute convergence estimates
@@ -746,10 +813,10 @@ function simulate_euler_equations_cells(
         l2_conv_measure = _l2_convergence_measure(global_cell_ids, updates_buffer, Δt) * dA
 
         advance_timing_infos!(timing_infos)
-        if show_info && ((n_tsteps - 1) % info_frequency == 0)
+        if config[:show_info] && ((n_tsteps - 1) % config[:info_frequency] == 0)
             inform_timing_information(
                 timing_infos,
-                maximum_wall_duration,
+                config[:maximum_wall_duration],
                 n_tsteps,
                 t,
                 Δt,
@@ -764,21 +831,21 @@ function simulate_euler_equations_cells(
         if t > T_end || t ≈ T_end
             # exit status 1 for "finished at t=T"
             time_stepping_status = 1
-        elseif n_tsteps >= max_tsteps
+        elseif n_tsteps >= config[:max_tsteps]
             # exit status 2 for "finished at Nt=Nmax"
             time_stepping_status = 2
-        elseif simulation_too_slow(timing_infos, maximum_wall_duration, n_tsteps)
+        elseif _simulation_too_slow(timing_infos, config[:maximum_wall_duration], n_tsteps)
             # exit status 3 for "out of wall clock time"
             time_stepping_status = 3
-        elseif l2_conv_measure <= convergence_thold
+        elseif l2_conv_measure <= config[:convergence_thold]
             # exit status 4 for "l2 norm converged"
             time_stepping_status = 4
         end
 
-        if show_info && time_stepping_status != 0
+        if config[:show_info] && time_stepping_status != 0
             inform_timing_information(
                 timing_infos,
-                maximum_wall_duration,
+                config[:maximum_wall_duration],
                 n_tsteps,
                 t,
                 Δt,
@@ -792,22 +859,22 @@ function simulate_euler_equations_cells(
         # the number of time steps is 1 mod write frequency OR
         # time stepping will stop this iteration
         if (
-            write_result &&
-            (((n_tsteps - 1) % write_frequency == 0) || time_stepping_status != 0)
+            config[:write_result] &&
+            (((n_tsteps - 1) % config[:write_frequency] == 0) || time_stepping_status != 0)
         )
             put!(
                 writer_channel,
                 (t, collect_cell_partitions!(take!(idle_buffer_channel), cell_partitions)),
             )
             n_written_tsteps += 1
-            if show_info
+            if config[:show_info]
                 @info "Saving simulation state at " k = n_tsteps total_saved =
                     n_written_tsteps
             end
         end
     end
     # stop writing and clean up the output stream
-    if write_result
+    if config[:write_result]
         put!(writer_channel, :stop)
         wait(writer_taskref[])
 
