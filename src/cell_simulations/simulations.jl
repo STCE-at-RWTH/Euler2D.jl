@@ -38,6 +38,11 @@ struct CellBasedEulerSim{T,C<:FVMCell}
     cells::Array{Dict{Int64,C},1}
 end
 
+"""
+    n_space_dims(::CellBasedEulerSim)
+
+These are always in two dimensions.
+"""
 n_space_dims(::CellBasedEulerSim) = 2
 
 """
@@ -638,11 +643,11 @@ function resume_simulation_from_file(file, T_end, config; T = Float64)
     t0, cells = nth_step(simulation, 1)
 
     sim_settings = Dict{Symbol,Any}([
-        :t0 = t0,
-        :T_end = T_end,
-        :bounds = simulation.bounds,
-        :ncells = simulation.ncells,
-        :simulation_numeric_dtype = numeric_dtype(simulation),
+        :t0 => t0,
+        :T_end => T_end,
+        :bounds => simulation.bounds,
+        :ncells => simulation.ncells,
+        :simulation_numeric_dtype => numeric_dtype(simulation),
     ])
 
     settings_and_config = merge(config, sim_settings)
@@ -664,19 +669,20 @@ function start_simulation_from_initial_conditions(
     @assert length(bounds) == 2
     @assert length(boundary_conditions) == 5
 
-    global_cells, global_cell_ids = if mode == PRIMAL
+    global_cells, global_cell_ids = if config[:mode] == PRIMAL
         primal_cell_list_and_id_grid(u0, params, bounds, ncells, config[:scale], obstacles)
     else
         tangent_cell_list_and_id_grid(u0, params, bounds, ncells, config[:scale], obstacles)
     end
 
     sim_settings = Dict{Symbol,Any}([
-        :params = params,
-        :T_end = T_end,
-        :obstacles = obstacles,
-        :bounds = bounds,
-        :ncells = ncells,
-        :simulation_numeric_dtype = typeof(T_end),
+        :params => params,
+        :T_end => T_end,
+        :obstacles => obstacles,
+        :bounds => bounds,
+        :boundary_conditions => boundary_conditions,
+        :ncells => ncells,
+        :simulation_numeric_dtype => typeof(T_end),
     ])
     settings_and_config = merge(config, sim_settings)
 
@@ -766,11 +772,16 @@ function simulate_euler_equations_cells(global_cells, global_cell_ids, config)
     # open output stream
     if config[:write_result]
         tape_stream = open(tape_file, "w+")
-        write(tape_stream, zero(Int), mode)
-        if mode == TANGENT
+        write(tape_stream, zero(Int), config[:mode])
+        if config[:mode] == TANGENT
             write(tape_stream, n_seeds(valtype(global_cells)))
         end
-        write(tape_stream, length(global_cells), length(ncells), ncells...)
+        write(
+            tape_stream,
+            length(global_cells),
+            length(config[:ncells]),
+            config[:ncells]...,
+        )
         for b ∈ config[:bounds]
             write(tape_stream, b...)
         end
@@ -800,7 +811,7 @@ function simulate_euler_equations_cells(global_cells, global_cell_ids, config)
         Δt = step_cell_simulation_with_strang_splitting!(
             cell_partitions,
             partition_neighboring,
-            T_end - t,
+            config[:T_end] - t,
             config[:boundary_conditions],
             config[:cfl_limit],
             config[:gas],
@@ -828,7 +839,7 @@ function simulate_euler_equations_cells(global_cells, global_cell_ids, config)
         n_tsteps += 1
         t += Δt
 
-        if t > T_end || t ≈ T_end
+        if t > config[:T_end] || t ≈ config[:T_end]
             # exit status 1 for "finished at t=T"
             time_stepping_status = 1
         elseif n_tsteps >= config[:max_tsteps]
@@ -888,7 +899,7 @@ function simulate_euler_equations_cells(global_cells, global_cell_ids, config)
     end
 
     return CellBasedEulerSim(
-        (ncells...,),
+        (config[:ncells]...,),
         1,
         (((first(r), last(r)) for r ∈ cell_ifaces)...,),
         [t],

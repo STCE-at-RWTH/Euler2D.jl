@@ -46,22 +46,26 @@ const ncells = (120, 120 * 4 ÷ 3)
 # Profile.init(; n = 10^7, delay = 0.005)
 # Profile.clear()
 
-Euler2D.simulate_euler_equations_cells(
-    u0,
-    starting_parameters,
-    25.0,
-    bcs,
-    probe,
-    bounds,
-    ncells;
+sim_config = Euler2D.cell_simulation_config(;
     mode = Euler2D.TANGENT,
     gas = DRY_AIR,
     scale = scale,
     show_detailed_info = false,
     info_frequency = 50,
     write_frequency = 100,
-    max_tsteps = 25000,
-    output_tag = "validate_convergence_checks/tangent_convergence_measures_integration",
+    max_tsteps = 1000,
+    output_tag = "validate_from_file/start_from_ics",
     output_channel_size = 2,
-    tasks_per_axis = 8,
+    tasks_per_axis = 12,
+)
+
+Euler2D.start_simulation_from_initial_conditions(
+    u0,
+    starting_parameters,
+    25.0,
+    bcs,
+    probe,
+    bounds,
+    ncells,
+    sim_config,
 );
