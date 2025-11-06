@@ -656,6 +656,21 @@ function cell_simulation_config(; kwargs...)
     return cfg
 end
 
+"""
+    resume_simulation_from_file(file, T_end, config; T=Float64)
+
+Resume a simulation from a previously saved one.
+
+Arguments
+---
+- `file`: The cell tape file to resume from. 
+- `T_end`: The maximum `t` to continue to.
+- `config`: Config dict.
+
+Keyword Arguments
+---
+- `T`: Numeric data type to assume from the file.
+"""
 function resume_simulation_from_file(file, T_end, config; T = Float64)
     simulation =
         load_cell_sim(file; steps = :last, T = T, show_info = config[:show_detailed_info])
