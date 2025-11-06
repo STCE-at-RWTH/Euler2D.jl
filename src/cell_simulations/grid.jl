@@ -632,21 +632,20 @@ function step_cell_simulation_with_strang_splitting!(
     # first x
     # compute Δu from flux functions
     # find Δt
-    Δt =
-        cfl_limit * tmapreduce(
-            min,
-            cell_partitions;
-            outputtype = T,
-            init = Δt_maximum,
-        ) do cell_partition
-            compute_partition_update_and_max_Δt!(
-                cell_partition,
-                1,
-                1,
-                boundary_conditions,
-                gas,
-            )
-        end
+    Δt = tmapreduce(
+        min,
+        cell_partitions;
+        outputtype = T,
+        init = Δt_maximum,
+    ) do cell_partition
+        cfl_limit * compute_partition_update_and_max_Δt!(
+            cell_partition,
+            1,
+            1,
+            boundary_conditions,
+            gas,
+        )
+    end
     # propagate between neighboring partitions
     # and apply
     tforeach(cell_partitions) do p
