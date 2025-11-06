@@ -1,8 +1,3 @@
-@enum EulerSimulationMode::UInt8 begin
-    PRIMAL
-    TANGENT
-end
-
 """
     CellBasedEulerSim{T, C<:QuadCell}
 
@@ -36,6 +31,11 @@ struct CellBasedEulerSim{T,C<:FVMCell}
     tsteps::Vector{T}
     cell_ids::Array{Int,2}
     cells::Array{Dict{Int64,C},1}
+end
+
+@enum EulerSimulationMode::UInt8 begin
+    PRIMAL
+    TANGENT
 end
 
 """
@@ -494,35 +494,50 @@ end
 
 # POSSIBLE CONVERGENCE MEASURES
 
-function _l2_convergence_measure(cell_ids, cells_updates, Δt)
-    return integrate(axes(cell_ids)...) do i, j
+_opnorm2_sqr(u) = eigmax(u' * u)
+_opnorm1(u::AbstractVector) = sum(abs, u)
+_opnorm1(u::AbstractMatrix) = maximum(sum(abs, u; dims = 1))
+_opnormInf(u::AbstractVector) = maximum(abs, u)
+_opnormInf(u::AbstractMatrix) = maximum(sum(abs, u; dims = 2))
+
+function _l2_primal_convergence_measure(cell_ids, cells_updates, dA)
+    igral = integrate(axes(cell_ids)...) do i, j
         id = cell_ids[i, j]
-        id == 0 && return zero(Δt)
+        id == 0 && return zero(dA)
         du = total_update(cells_updates[id])[1]
-        return du' * du
+        return _opnorm2_sqr(du)
     end
+    return sqrt(igral * dA)
 end
 
-function _l1_convergence_measure(cell_ids, cells_updates, Δt)
-    return integrate(axes(cell_ids)...) do i, j
+function _l1_primal_convergence_measure(cell_ids, cells_updates, dA)
+    return dA * integrate(axes(cell_ids)...) do i, j
         id = cell_ids[i, j]
-        id == 0 && return zero(Δt)
+        id == 0 && return zero(dA)
         du = total_update(cells_updates[id])[1]
-        return sum(abs, du)
+        return _opnorm1(du)
     end
 end
 
-function _linf_convergence_measure(cell_ids, cells_updates, Δt)
-    return tmapreduce(max, cell_ids) do id
-        cells_updates[id] == 0 && return zero(Δt)
+function _linf_primal_convergence_measure(cell_ids, cells_updates, dA)
+    return dA * tmapreduce(max, cell_ids) do id
+        cells_updates[id] == 0 && return zero(dA)
         du = total_update(cells_updates[id])[1]
-        return maximum(abs, du)
+        return _opnormInf(du)
     end
 end
 
-"""
-Take the tape data stream and return a channel where simulation state can be queued then pushed.
-"""
+function _l2_tangent_convergence_measure(cell_ids, cells_updates, dA)
+    igral = integrate(axes(cell_ids)...) do i, j
+        id = cell_ids[i, j]
+        id == 0 && return zero(dA)
+        du = total_update(cells_updates[id])[2]
+        return _opnorm2_sqr(du)
+    end
+    return sqrt(igral * dA)
+end
+
+# Take the tape data stream and return a channel where simulation state can be queued then pushed.
 function _start_output_task(buffer_size, tstep_type, data_stream, empty_buffer_channel)
     taskref = Ref{Task}()
     ch = Channel{Union{Symbol,tstep_type}}(
@@ -596,6 +611,8 @@ function inform_timing_information(
     nothing
 end
 
+# check if there is a risk of the simulation being terminated
+# due to wall clock time running out
 function _simulation_too_slow(infos, maximum_wall_clock, current_num_tsteps)
     total_duration = infos.current_wall_time - infos.start_time
     avg_dur = total_duration ÷ current_num_tsteps
@@ -850,8 +867,9 @@ function _simulate(initial_state::CellBasedEulerSim{T,C}, config) where {T,C}
         # compute convergence estimates
         # merge! is fast. probably.
         collect_cell_partition_updates!(updates_buffer, cell_partitions)
-        l1_conv_measure = _l1_convergence_measure(global_cell_ids, updates_buffer, Δt) * dA
-        l2_conv_measure = _l2_convergence_measure(global_cell_ids, updates_buffer, Δt) * dA
+        l1_conv = _l1_primal_convergence_measure(global_cell_ids, updates_buffer, dA)
+        l2_conv = _l2_primal_convergence_measure(global_cell_ids, updates_buffer, dA)
+        l2_tanc = _l2_tangent_convergence_measure(global_cell_ids, updates_buffer, dA)
 
         advance_timing_infos!(timing_infos)
         if config[:show_info] && ((n_computed_tsteps - 1) % config[:info_frequency] == 0)
@@ -861,9 +879,10 @@ function _simulate(initial_state::CellBasedEulerSim{T,C}, config) where {T,C}
                 n_computed_tsteps,
                 t,
                 Δt,
-                l1_conv_measure,
-                l2_conv_measure,
+                l1_conv,
+                l2_conv,
             )
+            @info "honk" l2_tanc = l2_tanc
         end
         n_computed_tsteps += 1
         t += Δt
@@ -881,7 +900,7 @@ function _simulate(initial_state::CellBasedEulerSim{T,C}, config) where {T,C}
         )
             # exit status 3 for "out of wall clock time"
             time_stepping_status = 3
-        elseif l2_conv_measure <= config[:convergence_thold]
+        elseif l2_conv <= config[:convergence_thold]
             # exit status 4 for "l2 norm converged"
             time_stepping_status = 4
         end
@@ -892,8 +911,8 @@ function _simulate(initial_state::CellBasedEulerSim{T,C}, config) where {T,C}
                 n_computed_tsteps,
                 t,
                 Δt,
-                l1_conv_measure,
-                l2_conv_measure,
+                l1_conv,
+                l2_conv,
             )
             @info "Terminating." status = time_stepping_status
         end
