@@ -46,6 +46,13 @@ These are always in two dimensions.
 n_space_dims(::CellBasedEulerSim) = 2
 
 """
+    n_cells(sim::CellBasedEulerSim)
+
+How many cells on each of the Cartesian axes?
+"""
+n_cells(sim::CellBasedEulerSim) = sim.ncells
+
+"""
     grid_size(sim)
 
 Size of the spatial axes of this simulation.
@@ -539,10 +546,14 @@ end
 
 function write_tstep_to_stream(stream, t, global_cells)
     @info "Writing time step to file." t = t ncells = length(global_cells)
+    T = valtype(global_cells)
+    # maybe we also want to assert bitstype here
+    @assert Base.isconcretetype(T)
     write(stream, t)
     for (id, cell) ∈ global_cells
         @assert id == cell.id
-        write(stream, Ref(cell))
+        # specify T to make the LSP happy; julia can infer it .n.
+        write(stream, Ref{T}(cell))
     end
 end
 
@@ -612,6 +623,8 @@ Keyword Arguments (and their default values)
 - `show_info = true` : Should diagnostic information be printed out?
 - `info_frequency = 10`: How often should info be printed?
 - `tasks_per_axis = Threads.nthreads()`: How many partitions should be created on each axis?
+- `convergence_test_freqency = 1`: How often should the convergencce measures be tested?
+- `boundary_conditions = (Phantom, StrongWall, Phantom, Phantom, StrongWall)`: Can't save these to a file (sad)
 """
 function cell_simulation_config(; kwargs...)
     cfg = Dict{Symbol,Any}([
@@ -630,6 +643,14 @@ function cell_simulation_config(; kwargs...)
         :show_detailed_info => false,
         :info_frequency => 10,
         :tasks_per_axis => Threads.nthreads(),
+        :convergence_test_freqency => 1,
+        :boundary_conditions => (
+            ExtrapolateToPhantom(),
+            StrongWall(),
+            ExtrapolateToPhantom(),
+            ExtrapolateToPhantom(),
+            StrongWall(),
+        ),
     ])
     merge!(cfg, kwargs)
     return cfg
@@ -639,62 +660,17 @@ function resume_simulation_from_file(file, T_end, config; T = Float64)
     simulation =
         load_cell_sim(file; steps = :last, T = T, show_info = config[:show_detailed_info])
     @assert n_tsteps(simulation) == 1
-
-    t0, cells = nth_step(simulation, 1)
-
-    sim_settings = Dict{Symbol,Any}([
-        :t0 => t0,
-        :T_end => T_end,
-        :bounds => simulation.bounds,
-        :ncells => simulation.ncells,
-        :simulation_numeric_dtype => numeric_dtype(simulation),
-    ])
-
+    sim_settings = Dict{Symbol,Any}([:T_end => T_end])
     settings_and_config = merge(config, sim_settings)
-    return simulate_euler_equations_cells(cells, simulation.cell_ids, settings_and_config)
-end
-
-function start_simulation_from_initial_conditions(
-    u0,
-    params,
-    T_end,
-    boundary_conditions,
-    obstacles,
-    bounds,
-    ncells,
-    config,
-)
-    N = length(ncells)
-    @assert N == 2
-    @assert length(bounds) == 2
-    @assert length(boundary_conditions) == 5
-
-    global_cells, global_cell_ids = if config[:mode] == PRIMAL
-        primal_cell_list_and_id_grid(u0, params, bounds, ncells, config[:scale], obstacles)
-    else
-        tangent_cell_list_and_id_grid(u0, params, bounds, ncells, config[:scale], obstacles)
-    end
-
-    sim_settings = Dict{Symbol,Any}([
-        :params => params,
-        :T_end => T_end,
-        :obstacles => obstacles,
-        :bounds => bounds,
-        :boundary_conditions => boundary_conditions,
-        :ncells => ncells,
-        :simulation_numeric_dtype => typeof(T_end),
-    ])
-    settings_and_config = merge(config, sim_settings)
-
-    return simulate_euler_equations_cells(
-        global_cells,
-        global_cell_ids,
-        settings_and_config,
-    )
+    return _simulate(simulation, settings_and_config)
 end
 
 """
-    simulate_euler_equations_cells(u0, T_end, boundary_conditions, bounds, ncells)
+    start_simulation_from_initial_conditions(
+      u0, params, T_end, 
+      obstacles, bounds, ncells,
+      boundary_conditions, config,
+    )
 
 Simulate the solution to the Euler equations from `t=0` to `t=T`, with `u(0, x) = u0(x)`.
 Time step size is computed from the CFL condition.
@@ -708,19 +684,60 @@ Arguments
 - `u0`: ``u(t=0, x, p):ℝ^2×ℝ^{n_p}↦ConservedProps{2, T, ...}``: conditions at time `t=0`.
 - `params`: Parameter vector for `u0`.
 - `T_end`: Must be greater than zero.
-- `boundary_conditions`: a tuple of boundary conditions for each space dimension
 - `obstacles`: list of obstacles in the flow.
 - `bounds`: a tuple of extents for each space dimension (tuple of tuples)
 - `ncells`: a tuple of cell counts for each dimension
-
+- `boundary_conditions`: a tuple of boundary conditions for each space dimension
+- `config`: Config dict.
 """
-function simulate_euler_equations_cells(global_cells, global_cell_ids, config)
-    T = config[:simulation_numeric_dtype]
+function start_simulation_from_initial_conditions(
+    u0,
+    params,
+    T_end,
+    obstacles,
+    bounds,
+    ncells,
+    boundary_conditions,
+    config,
+)
+    N = length(ncells)
+    @assert N == 2
+    @assert length(bounds) == 2
+    @assert length(boundary_conditions) == 5
+
+    global_cells, global_cell_ids = if config[:mode] == PRIMAL
+        primal_cell_list_and_id_grid(u0, params, bounds, ncells, config[:scale], obstacles)
+    else
+        tangent_cell_list_and_id_grid(u0, params, bounds, ncells, config[:scale], obstacles)
+    end
+    t0 = get(config, :t0, zero(T_end))
+
+    initial_sim =
+        CellBasedEulerSim((ncells...,), 1, bounds, [t0], global_cell_ids, [global_cells])
+
+    sim_settings = Dict{Symbol,Any}([
+        :params => params,
+        :T_end => T_end,
+        :obstacles => obstacles,
+        :boundary_conditions => boundary_conditions,
+        :ncells => ncells,
+    ])
+    settings_and_config = merge(config, sim_settings)
+
+    return _simulate(initial_sim, settings_and_config)
+end
+
+function _simulate(initial_state::CellBasedEulerSim{T,C}, config) where {T,C}
     # set up counters
     # and start the timers
-    n_tsteps = 1
+    n_computed_tsteps = 1
     n_written_tsteps = 1
-    t = haskey(config, :t0) ? config[:t0] : zero(T)
+    if n_tsteps(initial_state) > 1
+        @warn "Simulation data passed as initial state has more than one time step!"
+    end
+
+    t, global_cells = nth_step(initial_state, n_tsteps(initial_state))
+    global_cell_ids = initial_state.cell_ids
     timing_infos = TimeSteppingInfos()
 
     # do some validation here
@@ -733,8 +750,6 @@ function simulate_euler_equations_cells(global_cells, global_cell_ids, config)
             "CFL invalid, must be between 0 and 1 for stabilty.",
         )
     end
-    cell_ifaces =
-        [range(b...; length = n + 1) for (b, n) ∈ zip(config[:bounds], config[:ncells])]
 
     dA = cell_volume(first(values(global_cells)))
     n_global_cells = length(global_cells)
@@ -779,10 +794,10 @@ function simulate_euler_equations_cells(global_cells, global_cell_ids, config)
         write(
             tape_stream,
             length(global_cells),
-            length(config[:ncells]),
-            config[:ncells]...,
+            n_space_dims(initial_state),
+            n_cells(initial_state)...,
         )
-        for b ∈ config[:bounds]
+        for b ∈ initial_state.bounds
             write(tape_stream, b...)
         end
         write(tape_stream, global_cell_ids)
@@ -824,40 +839,42 @@ function simulate_euler_equations_cells(global_cells, global_cell_ids, config)
         l2_conv_measure = _l2_convergence_measure(global_cell_ids, updates_buffer, Δt) * dA
 
         advance_timing_infos!(timing_infos)
-        if config[:show_info] && ((n_tsteps - 1) % config[:info_frequency] == 0)
+        if config[:show_info] && ((n_computed_tsteps - 1) % config[:info_frequency] == 0)
             inform_timing_information(
                 timing_infos,
                 config[:maximum_wall_duration],
-                n_tsteps,
+                n_computed_tsteps,
                 t,
                 Δt,
                 l1_conv_measure,
                 l2_conv_measure,
             )
         end
-
-        n_tsteps += 1
+        n_computed_tsteps += 1
         t += Δt
 
         if t > config[:T_end] || t ≈ config[:T_end]
             # exit status 1 for "finished at t=T"
             time_stepping_status = 1
-        elseif n_tsteps >= config[:max_tsteps]
+        elseif n_computed_tsteps >= config[:max_tsteps]
             # exit status 2 for "finished at Nt=Nmax"
             time_stepping_status = 2
-        elseif _simulation_too_slow(timing_infos, config[:maximum_wall_duration], n_tsteps)
+        elseif _simulation_too_slow(
+            timing_infos,
+            config[:maximum_wall_duration],
+            n_computed_tsteps,
+        )
             # exit status 3 for "out of wall clock time"
             time_stepping_status = 3
         elseif l2_conv_measure <= config[:convergence_thold]
             # exit status 4 for "l2 norm converged"
             time_stepping_status = 4
         end
-
         if config[:show_info] && time_stepping_status != 0
             inform_timing_information(
                 timing_infos,
                 config[:maximum_wall_duration],
-                n_tsteps,
+                n_computed_tsteps,
                 t,
                 Δt,
                 l1_conv_measure,
@@ -865,13 +882,16 @@ function simulate_euler_equations_cells(global_cells, global_cell_ids, config)
             )
             @info "Terminating." status = time_stepping_status
         end
+
         # push output to the writer task
         # if we are writing ther result AND
         # the number of time steps is 1 mod write frequency OR
         # time stepping will stop this iteration
         if (
-            config[:write_result] &&
-            (((n_tsteps - 1) % config[:write_frequency] == 0) || time_stepping_status != 0)
+            config[:write_result] && (
+                ((n_computed_tsteps - 1) % config[:write_frequency] == 0) ||
+                time_stepping_status != 0
+            )
         )
             put!(
                 writer_channel,
@@ -879,11 +899,12 @@ function simulate_euler_equations_cells(global_cells, global_cell_ids, config)
             )
             n_written_tsteps += 1
             if config[:show_info]
-                @info "Saving simulation state at " k = n_tsteps total_saved =
+                @info "Saving simulation state at " k = n_computed_tsteps total_saved =
                     n_written_tsteps
             end
         end
     end
+
     # stop writing and clean up the output stream
     if config[:write_result]
         put!(writer_channel, :stop)
@@ -899,11 +920,11 @@ function simulate_euler_equations_cells(global_cells, global_cell_ids, config)
     end
 
     return CellBasedEulerSim(
-        (config[:ncells]...,),
+        initial_state.ncells,
         1,
-        (((first(r), last(r)) for r ∈ cell_ifaces)...,),
+        initial_state.bounds,
         [t],
-        global_cell_ids,
+        initial_state.cell_ids,
         [collect_cell_partitions(cell_partitions, n_global_cells)],
     )
 end
@@ -952,7 +973,7 @@ Other kwargs include:
 """
 function load_cell_sim(path; steps = :all, T = Float64, show_info = true)
     return open(path, "r") do f
-        n_tsteps = read(f, Int)
+        n_t = read(f, Int)
         mode = read(f, EulerSimulationMode)
         n_seeds = if mode == TANGENT
             read(f, Int)
@@ -965,15 +986,15 @@ function load_cell_sim(path; steps = :all, T = Float64, show_info = true)
         ncells = (read(f, Int), read(f, Int))
         bounds = ntuple(i -> (read(f, T), read(f, T)), 2)
         if show_info
-            @info "Loaded metadata for cell-based Euler simulation at $path." mode n_seeds n_tsteps n_active n_dims ncells
+            @info "Loaded metadata for cell-based Euler simulation at $path." mode n_seeds n_t n_active n_dims ncells
         end
         active_cell_ids = Array{Int,2}(undef, ncells...)
         read!(f, active_cell_ids)
 
-        (time_steps_to_read, n_tsteps) = if steps == :all
-            1:n_tsteps, n_tsteps
+        (time_steps_to_read, n_t) = if steps == :all
+            1:n_t, n_t
         elseif steps == :last
-            [n_tsteps], 1
+            [n_t], 1
         else
             steps, length(steps)
         end
@@ -989,8 +1010,8 @@ function load_cell_sim(path; steps = :all, T = Float64, show_info = true)
                 time_steps_to_read
         end
 
-        time_steps = Vector{T}(undef, n_tsteps)
-        cell_vals = Vector{Dict{Int,CellDType}}(undef, n_tsteps)
+        time_steps = Vector{T}(undef, n_t)
+        cell_vals = Vector{Dict{Int,CellDType}}(undef, n_t)
         _load_tsteps_from_file!(
             cell_vals,
             time_steps,
@@ -1002,7 +1023,7 @@ function load_cell_sim(path; steps = :all, T = Float64, show_info = true)
 
         return CellBasedEulerSim(
             ncells,
-            n_tsteps,
+            n_t,
             bounds,
             time_steps,
             active_cell_ids,

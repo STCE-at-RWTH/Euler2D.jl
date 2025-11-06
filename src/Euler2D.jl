@@ -40,7 +40,6 @@ export DRY_AIR
 export F_euler
 export interface_signal_speeds
 export eigenvectors_∇F_euler, eigenvectors_∇G_euler
-export simulate_euler_equations_cells
 
 # dimension stuff
 export EulerEqnsScaling
@@ -72,6 +71,8 @@ export grid_size, n_space_dims, n_tsteps
 export cell_volume, cell_boundary_polygon, minimum_cell_size, maximum_cell_size
 export Obstacle, TriangularObstacle, RectangularObstacle, CircularObstacle
 export load_cell_sim
+export cell_simulation_config
+export resume_simulation_from_file, start_simulation_from_initial_conditions
 
 # All sim methods
 export pressure_field, density_field, velocity_field
