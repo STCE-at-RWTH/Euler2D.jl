@@ -684,6 +684,11 @@ Arguments
 - `T_end`: The maximum `t` to continue to.
 - `config`: Config dict.
 
+Known "Gotchas"
+---
+`:boundary_conditions` must be provided by the config dict. 
+Tuple of `(north, south, east, west, wall)` BCs.
+
 Keyword Arguments
 ---
 - `T`: Numeric data type to assume from the file.
