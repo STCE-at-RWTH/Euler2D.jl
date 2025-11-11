@@ -108,7 +108,7 @@ function nth_step(csim::CellBasedEulerSim, n)
     return csim.tsteps[n], csim.cells[n]
 end
 
-eachstep(csim::CellBasedEulerSim) = [nth_step(csim, n) for n ∈ 1:n_tsteps(csim)]
+eachstep(csim::CellBasedEulerSim) = (nth_step(csim, n) for n ∈ 1:n_tsteps(csim))
 
 """
     density_field(csim::CellBasedEulerSim, n)
