@@ -65,7 +65,6 @@ export numeric_dtype
 
 # CellSim methods
 export CellBasedEulerSim, FVMCell, PrimalQuadCell, TangentQuadCell
-export inward_normals, outward_normals
 export cell_boundaries, cell_centers, nth_step, eachstep
 export grid_size, n_space_dims, n_tsteps
 export cell_volume, cell_boundary_polygon, minimum_cell_size, maximum_cell_size
@@ -83,12 +82,15 @@ include("utils.jl")
 include("nondimensionalization.jl")
 include("transport.jl")
 include("boundary_conditions.jl")
+
 include("riemann_solver/approximate_riemann_solver.jl")
 include("riemann_solver/exact_riemann_solver.jl")
+
 include("cell_simulations/cells.jl")
 include("cell_simulations/obstacle.jl")
 include("cell_simulations/grid.jl")
 include("cell_simulations/simulations.jl")
+
 include("postprocessing/canny_rh_filter.jl")
 include("postprocessing/local_pseudoinversion.jl")
 

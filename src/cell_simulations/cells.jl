@@ -1,19 +1,3 @@
-# I always think in "north south east west"... who knows why.
-#   anyway
-@enum CellBoundaries::UInt8 begin
-    NORTH_BOUNDARY = 1
-    SOUTH_BOUNDARY = 2
-    EAST_BOUNDARY = 3
-    WEST_BOUNDARY = 4
-    INTERNAL_STRONGWALL = 5
-end
-
-@enum CellNeighboring::UInt8 begin
-    OTHER_QUADCELL
-    BOUNDARY_CONDITION
-    IS_PHANTOM
-end
-
 """
     FVMCell{T}
 
@@ -22,7 +6,6 @@ The underlying numeric data type is `T`.
 
 All FVMCells _must_ provide the following methods:
 
- - `update_dtype(::Type{<:FVMCell})`
  - `cell_boundary_polygon(::FVMCell)`
  - `cell_volume(::FVMCell)` (defaults to `poly_area(cell_boundary_polygon(cell))`)
  - `phantom_neighbor`
@@ -31,11 +14,28 @@ All FVMCells _must_ provide the following methods:
 """
 abstract type FVMCell{T} end
 
+"""
+    numeric_dtype(::FVMCell{T})
+
+Get the numeric data type of this `FVMCell`. (It's `T`).
+"""
 numeric_dtype(::FVMCell{T}) where {T} = T
+
+"""
+    numeric_dtype(::Type{<:FVMCell{T}})
+
+Get the numeric data type of this `FVMCell` type. (It's `T`).
+"""
 numeric_dtype(::Type{<:FVMCell{T}}) where {T} = T
 
 update_dtype(::T) where {T<:FVMCell} = update_dtype(T)
 
+"""
+    cell_volume(cell::FVMCell)
+
+Compute the total volume of `cell`. Defaults to computing the area of the cell's
+boundary polygon, but there may be smarter ways for certain subtypes.
+"""
 cell_volume(cell::FVMCell) = poly_area(cell_boundary_polygon(cell))
 
 """
@@ -47,7 +47,7 @@ Does `cell2` (or `poly`) contain `cell1`?
 function is_cell_contained_by(cell1, poly)
     cell_poly = cell_boundary_polygon(cell1)
     if cell_poly isa PlanePolygons.SizedClockwiseOrientedPolygon
-        # help inference out a bit here
+        # help inference out a bit here with the Tuple call
         return all(Tuple(edge_starts(cell_poly))) do pt
             return PlanePolygons.point_inside_strict(poly, pt)
         end
@@ -120,12 +120,45 @@ The data required to perform the update to an FVMCell.
 
 Subtypes must provide:
 
-- `get_update_info(Δ::FVMCellUpdate, dim)`
+- `partial_cell_update(Δ, Δ_partial, dim, s)`
+- `zero_cell_update(Δ::FVMCellUpdate, dim)`
 """
 abstract type FVMCellUpdate{T} end
 
+"""
+  zero_cell_update(::FVMCellUpdate)
+  zero_cell_update(::Type{<:FVMCellUpdate})
+
+Return the appropriate "zero update" for the update type.
+
+This is not `Base.zero`, since the updates are not applied via addition.
+"""
 function zero_cell_update(::T) where {T<:FVMCellUpdate}
     return zero_cell_update(T)
+end
+
+"""
+    partial_cell_update(Δ, Δ_partial, dim, s)
+
+Add the update value `Δ_partial` for dimension `dim`, splitting step `s` into `Δ`
+and return a new copy.
+"""
+function partial_cell_update end
+
+# I always think in "north south east west"... who knows why.
+#   anyway
+@enum CellBoundaries::UInt8 begin
+    NORTH_BOUNDARY = 1
+    SOUTH_BOUNDARY = 2
+    EAST_BOUNDARY = 3
+    WEST_BOUNDARY = 4
+    INTERNAL_STRONGWALL = 5
+end
+
+@enum CellNeighboring::UInt8 begin
+    OTHER_QUADCELL
+    BOUNDARY_CONDITION
+    IS_PHANTOM
 end
 
 """
@@ -152,14 +185,17 @@ struct PrimalQuadCell{T} <: RectangularFVMCell{T}
     center::SVector{2,T}
     extent::SVector{2,T}
     u::SVector{4,T}
-    # either (:boundary, :cell)
-    # and then the ID of the appropriate boundary
     neighbors::NamedTuple{
         (:north, :south, :east, :west),
         NTuple{4,Tuple{CellNeighboring,Int}},
     }
 end
 
+"""
+    PrimalQuadCellStrangUpdate{T}
+
+Update data for Strang splitting.
+"""
 struct PrimalQuadCellStrangUpdate{T} <: FVMCellUpdate{T}
     Δu_x::NTuple{2,SVector{4,T}}
     Δu_y::SVector{4,T}
@@ -206,7 +242,12 @@ struct TangentQuadCell{T,NSEEDS,PARAMCOUNT} <: RectangularFVMCell{T}
     }
 end
 
-struct TangentQuadCellStrangUpdate{T,NSEEDS,NPARAMS}
+"""
+    TangentQuadCellStrangUpdate
+
+Update data for Strang splitting.
+"""
+struct TangentQuadCellStrangUpdate{T,NSEEDS,NPARAMS} <: FVMCellUpdate{T}
     Δu_x::NTuple{2,SVector{4,T}}
     Δu_y::SVector{4,T}
     Δu̇_x::NTuple{2,SMatrix{4,NSEEDS,T,NPARAMS}}
@@ -294,15 +335,6 @@ end
 
 Apply the update `Δu` in dimension `dim` at splitting level 's' (Strang splitting has 2 `x`-axis levels and 1 `y`-axis level)
 """ update_cell
-
-function inward_normals(T::DataType)
-    return (
-        north = SVector((zero(T), -one(T))...),
-        south = SVector((zero(T), one(T))...),
-        east = SVector((-one(T), zero(T))...),
-        west = SVector((one(T), zero(T))...),
-    )
-end
 
 function outward_normals(T::DataType)
     return (

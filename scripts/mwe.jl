@@ -43,7 +43,7 @@ probe = [
     CircularObstacle((0.0, 0.0), 0.75),
     RectangularObstacle(SVector(1.0, 0.0), SVector(2.0, 1.5)),
 ]
-const ncells = (120, 120 * 4 ÷ 3)
+const ncells = (240, 240 * 4 ÷ 3)
 
 # Profile.init(; n = 10^7, delay = 0.005)
 # Profile.clear()
@@ -55,8 +55,8 @@ sim_config = Euler2D.cell_simulation_config(;
     show_detailed_info = false,
     info_frequency = 250,
     write_frequency = 500,
-    max_tsteps = 50000,
-    output_tag = "minimum_working_example/tangent_mode",
+    max_tsteps = 30000,
+    output_tag = "minimum_working_example/tangent_mode_5k",
     output_channel_size = 2,
     tasks_per_axis = 12,
     boundary_conditions = bcs,

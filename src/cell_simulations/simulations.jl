@@ -38,6 +38,12 @@ end
     TANGENT
 end
 
+# check the simulation mode of a cell type or simulation
+_sim_mode(::Type{TangentQuadCell{T,N1,N2}}) where {T,N1,N2} = TANGENT
+_sim_mode(::Type{PrimalQuadCell{T}}) where {T} = PRIMAL
+_sim_mode(::T) where {T<:FVMCell} = _sim_mode(T)
+_sim_mode(::CellBasedEulerSim{T,C}) where {T,C} = _sim_mode(C)
+
 """
     n_space_dims(::CellBasedEulerSim)
 
@@ -492,50 +498,7 @@ function total_mass_contained_by(
     return U_contained + U_overlap, Udot_contained + Udot_overlap
 end
 
-# POSSIBLE CONVERGENCE MEASURES
-
-_opnorm2_sqr(u) = eigmax(u' * u)
-_opnorm1(u::AbstractVector) = sum(abs, u)
-_opnorm1(u::AbstractMatrix) = maximum(sum(abs, u; dims = 1))
-_opnormInf(u::AbstractVector) = maximum(abs, u)
-_opnormInf(u::AbstractMatrix) = maximum(sum(abs, u; dims = 2))
-
-function _l2_primal_convergence_measure(cell_ids, cells_updates, dA)
-    igral = integrate(axes(cell_ids)...) do i, j
-        id = cell_ids[i, j]
-        id == 0 && return zero(dA)
-        du = total_update(cells_updates[id])[1]
-        return _opnorm2_sqr(du)
-    end
-    return sqrt(igral * dA)
-end
-
-function _l1_primal_convergence_measure(cell_ids, cells_updates, dA)
-    return dA * integrate(axes(cell_ids)...) do i, j
-        id = cell_ids[i, j]
-        id == 0 && return zero(dA)
-        du = total_update(cells_updates[id])[1]
-        return _opnorm1(du)
-    end
-end
-
-function _linf_primal_convergence_measure(cell_ids, cells_updates, dA)
-    return dA * tmapreduce(max, cell_ids) do id
-        cells_updates[id] == 0 && return zero(dA)
-        du = total_update(cells_updates[id])[1]
-        return _opnormInf(du)
-    end
-end
-
-function _l2_tangent_convergence_measure(cell_ids, cells_updates, dA)
-    igral = integrate(axes(cell_ids)...) do i, j
-        id = cell_ids[i, j]
-        id == 0 && return zero(dA)
-        du = total_update(cells_updates[id])[2]
-        return _opnorm2_sqr(du)
-    end
-    return sqrt(igral * dA)
-end
+## ACTUALLY RUNNING THE SIMULATIONS
 
 # Take the tape data stream and return a channel where simulation state can be queued then pushed.
 function _start_output_task(buffer_size, tstep_type, data_stream, empty_buffer_channel)
@@ -598,6 +561,7 @@ function inform_timing_information(
     Δt,
     l1_conv,
     l2_conv,
+    lInf_conv,
 )
     total_duration = infos.current_wall_time - infos.start_time
     avg_dur = total_duration ÷ current_num_tsteps
@@ -606,7 +570,7 @@ function inform_timing_information(
     r = Dates.CompoundPeriod(r.periods[1:max(1, length(r.periods) - 2)])
 
     @info "Time step $current_num_tsteps (duration $cur_dur, avg. $avg_dur, remaining wall clock $r)" cur_t =
-        t del_t = Δt nex_t = t + Δt l1_co = l1_conv l2_co = l2_conv
+        t del_t = Δt nex_t = t + Δt l1_co = l1_conv l2_co = l2_conv lI_co = lInf_conv
 
     nothing
 end
@@ -617,6 +581,49 @@ function _simulation_too_slow(infos, maximum_wall_clock, current_num_tsteps)
     total_duration = infos.current_wall_time - infos.start_time
     avg_dur = total_duration ÷ current_num_tsteps
     return (current_num_tsteps + 4) * avg_dur > maximum_wall_clock
+end
+
+_opnorm2_sqr(u) = eigmax(u' * u)
+_opnorm1(u::AbstractVector) = sum(abs, u)
+_opnorm1(u::AbstractMatrix) = maximum(sum(abs, u; dims = 1))
+_opnormInf(u::AbstractVector) = maximum(abs, u)
+_opnormInf(u::AbstractMatrix) = maximum(sum(abs, u; dims = 2))
+
+# integrate the provided norm |Δ|^p_p over the domain
+function _integral_convergence_measure(norm_p, cell_ids, cell_updates, dA)
+    N = length(total_update(zero_cell_update(valtype(cell_updates))))
+    igrals = ntuple(N) do n
+        return integrate(axes(cell_ids)...) do i, j
+            id = cell_ids[i, j]
+            id == 0 && return zero(dA)
+            du = total_update(cell_updates[id])[n]
+            return norm_p(du)
+        end
+    end
+    return igrals .* dA
+end
+
+# L1 norm = maximum absolute column sum (integrated)
+function _l1_convergence_measure(cell_ids, cell_updates, dA)
+    return _integral_convergence_measure(_opnorm1, cell_ids, cell_updates, dA)
+end
+
+# L2 norm = sqrt of largest eigenvalue of u'u
+function _l2_convergence_measure(cell_ids, cell_updates, dA)
+    return sqrt.(_integral_convergence_measure(_opnorm2_sqr, cell_ids, cell_updates, dA))
+end
+
+# LInf norm = absolute maximum row sum (over whole domain)
+function _lInf_convergence_measure(cell_ids, cell_updates, dA)
+    N = length(total_update(zero_cell_update(valtype(cell_updates))))
+    bounds = ntuple(N) do n
+        return tmapreduce(max, cell_ids) do id
+            id == 0 && return zero(dA)
+            du = total_update(cell_updates[id])[n]
+            return _opnormInf(du)
+        end
+    end
+    return bounds
 end
 
 """
@@ -696,7 +703,12 @@ Keyword Arguments
 function resume_simulation_from_file(file, T_end, config; T = Float64)
     simulation =
         load_cell_sim(file; steps = :last, T = T, show_info = config[:show_detailed_info])
+    # just making sure...
     @assert n_tsteps(simulation) == 1
+    if !haskey(config, :boundary_conditions)
+        throw(ArgumentError("Config dictionary must have boundary conditions available!"))
+    end
+    # add T_end to settings dict
     sim_settings = Dict{Symbol,Any}([:T_end => T_end])
     settings_and_config = merge(config, sim_settings)
     return _simulate(simulation, settings_and_config)
@@ -712,7 +724,8 @@ end
 Simulate the solution to the Euler equations from `t=0` to `t=T`, with `u(0, x) = u0(x)`.
 Time step size is computed from the CFL condition.
 
-The simulation will fail if any nonphysical conditions are reached (speed of sound cannot be computed).
+The simulation will fail if any nonphysical conditions are reached (usually this means a vacuum state occurred, 
+and the speed of sound cannot be computed).
 
 The simulation can be written to disk.
 
@@ -748,10 +761,10 @@ function start_simulation_from_initial_conditions(
         tangent_cell_list_and_id_grid(u0, params, bounds, ncells, config[:scale], obstacles)
     end
     t0 = get(config, :t0, zero(T_end))
-
     initial_sim =
         CellBasedEulerSim((ncells...,), 1, bounds, [t0], global_cell_ids, [global_cells])
 
+    # add some known items to the config dict... just in case?
     sim_settings = Dict{Symbol,Any}([
         :params => params,
         :T_end => T_end,
@@ -760,7 +773,6 @@ function start_simulation_from_initial_conditions(
         :ncells => ncells,
     ])
     settings_and_config = merge(config, sim_settings)
-
     return _simulate(initial_sim, settings_and_config)
 end
 
@@ -775,7 +787,6 @@ function _simulate(initial_state::CellBasedEulerSim{T,C}, config) where {T,C}
 
     t, global_cells = nth_step(initial_state, n_tsteps(initial_state))
     global_cell_ids = initial_state.cell_ids
-    timing_infos = TimeSteppingInfos()
 
     # do some validation here
     if !(config[:T_end] > t)
@@ -815,12 +826,6 @@ function _simulate(initial_state::CellBasedEulerSim{T,C}, config) where {T,C}
         @info "Only the final value of the simulation will be available." T_end =
             config[:T_end]
     end
-    # initialize counters and timer
-    if config[:show_info]
-        start_str = Dates.format(timing_infos.start_time, "HH:MM:SS.sss")
-        @info "Starting simulation at $start_str" ncells = n_global_cells npartitions =
-            length(cell_partitions)
-    end
     # open output stream
     if config[:write_result]
         tape_stream = open(tape_file, "w+")
@@ -855,6 +860,13 @@ function _simulate(initial_state::CellBasedEulerSim{T,C}, config) where {T,C}
         put!(writer_channel, (t, global_cells))
     end
 
+    # start the timer 
+    timing_infos = TimeSteppingInfos()
+    if config[:show_info]
+        start_str = Dates.format(timing_infos.start_time, "HH:MM:SS.sss")
+        @info "Starting simulation at $start_str" ncells = n_global_cells npartitions =
+            length(cell_partitions)
+    end
     # status flag; 0 is "continue"
     time_stepping_status = 0
     # do the time stepping
@@ -872,10 +884,11 @@ function _simulate(initial_state::CellBasedEulerSim{T,C}, config) where {T,C}
         # compute convergence estimates
         # merge! is fast. probably.
         collect_cell_partition_updates!(updates_buffer, cell_partitions)
-        l1_conv = _l1_primal_convergence_measure(global_cell_ids, updates_buffer, dA)
-        l2_conv = _l2_primal_convergence_measure(global_cell_ids, updates_buffer, dA)
-        l2_tanc = _l2_tangent_convergence_measure(global_cell_ids, updates_buffer, dA)
+        l1_conv = _l1_convergence_measure(global_cell_ids, updates_buffer, dA)
+        l2_conv = _l2_convergence_measure(global_cell_ids, updates_buffer, dA)
+        lInf_conv = _lInf_convergence_measure(global_cell_ids, updates_buffer, dA)
 
+        # step the timer forward and print if we wish
         advance_timing_infos!(timing_infos)
         if config[:show_info] && ((n_computed_tsteps - 1) % config[:info_frequency] == 0)
             inform_timing_information(
@@ -886,12 +899,14 @@ function _simulate(initial_state::CellBasedEulerSim{T,C}, config) where {T,C}
                 Δt,
                 l1_conv,
                 l2_conv,
+                lInf_conv,
             )
-            @info "honk" l2_tanc = l2_tanc
         end
+
+        # advance the counter and t
         n_computed_tsteps += 1
         t += Δt
-
+        # test termination conditions
         if t > config[:T_end] || t ≈ config[:T_end]
             # exit status 1 for "finished at t=T"
             time_stepping_status = 1
@@ -905,10 +920,11 @@ function _simulate(initial_state::CellBasedEulerSim{T,C}, config) where {T,C}
         )
             # exit status 3 for "out of wall clock time"
             time_stepping_status = 3
-        elseif l2_conv <= config[:convergence_thold]
+        elseif first(l2_conv) <= config[:convergence_thold]
             # exit status 4 for "l2 norm converged"
             time_stepping_status = 4
         end
+        # one final check if we should print some info to the console upon termination
         if config[:show_info] && time_stepping_status != 0
             inform_timing_information(
                 timing_infos,
@@ -918,12 +934,13 @@ function _simulate(initial_state::CellBasedEulerSim{T,C}, config) where {T,C}
                 Δt,
                 l1_conv,
                 l2_conv,
+                lInf_conv,
             )
             @info "Terminating." status = time_stepping_status
         end
 
         # push output to the writer task
-        # if we are writing ther result AND
+        # if we are writing the result AND
         # the number of time steps is 1 mod write frequency OR
         # time stepping will stop this iteration
         if (
@@ -948,7 +965,6 @@ function _simulate(initial_state::CellBasedEulerSim{T,C}, config) where {T,C}
     if config[:write_result]
         put!(writer_channel, :stop)
         wait(writer_taskref[])
-
         seekstart(tape_stream)
         write(tape_stream, n_written_tsteps)
         seekend(tape_stream)
@@ -957,7 +973,7 @@ function _simulate(initial_state::CellBasedEulerSim{T,C}, config) where {T,C}
             println(f, time_stepping_status)
         end
     end
-
+    # return the final result
     return CellBasedEulerSim(
         initial_state.ncells,
         1,
@@ -979,7 +995,7 @@ function _load_tsteps_from_file!(
     stream,
     tstep_range,
     n_active;
-    show_info = true,
+    show_info = false,
 ) where {CellType,T}
     step_size_bytes = sizeof(T) + n_active * sizeof(CellType)
     skip_size = diff(vcat(0, tstep_range)) .- 1
@@ -990,7 +1006,7 @@ function _load_tsteps_from_file!(
         end
         ts[i] = read(stream, T)
         if show_info
-            #@info "Reading time step at " t = ts[i] skipped = skip_size[i]
+            @info "Reading time step at " t = ts[i] skipped = skip_size[i]
         end
         read!(stream, temp)
         cell_vals[i] = Dict{Int,CellType}()
@@ -1071,15 +1087,12 @@ function load_cell_sim(path; steps = :all, T = Float64, show_info = true)
     end
 end
 
-_sim_mode(::Type{TangentQuadCell{T,N1,N2}}) where {T,N1,N2} = TANGENT
-_sim_mode(::Type{PrimalQuadCell{T}}) where {T} = PRIMAL
-
 function write_cell_sim(path, sim::CellBasedEulerSim{T,C}) where {T,C}
     return open(path, "w") do f
         # how many time steps
         # what is the mode
         write(f, sim.nsteps, _sim_mode(C))
-        if _sim_mode(C) == TANGENT
+        if _sim_mode(sim) == TANGENT
             # if the mode is TANGENT, how many seeds
             write(f, n_seeds(C))
         end
