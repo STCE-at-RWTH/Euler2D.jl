@@ -4,13 +4,26 @@ This package provides an implementation of an HLL solver for the Euler equations
 
 ## Usage
 
-This package exports `simulate_euler_equations`, which simulates the Euler equations in 1, 2, and 3 dimensions. See the documentation for more details. This package also exports `load_euler_sim`, for loading the data files written during simulation.
+The "simplest" set-up for a bow-shock simulation is shown at `scripts/mwe.jl`.
 
-This package exports `simulate_euler_equations_cells`, which simulations solutions to the Euler equations using a cell list in two dimensions. Simple obstacles are implemented for this system.
+The process is as follows:
+
+1. Set ``u0(x, p)``.
+2. Choose bounds, grid size, a nondimensionalization scale, and starting parameters.
+3. Get a keyword dictionary for the simulation configuration.
+4. Start the simulation.
+
+It is also possible to resume a simulation from an already-generated output file.
 
 ## Dependencies
 
-This package depends on [`ShockwaveProperties.jl`](https://github.com/STCE-at-RWTH/ShockwaveProperties.jl). This can be accessed through STCE's Julia Registry, which can be added at the REPL via:
+This package depends on 
+
+- [`ShockwaveProperties.jl`](https://github.com/STCE-at-RWTH/ShockwaveProperties.jl)
+- [`PlanePolygons.jl`](https://github.com/STCE-at-RWTH/PlanePolygons.jl)
+- [`SimpleIntegration.jl`](https://github.com/STCE-at-RWTH/SimpleIntegration.jl)
+
+These packages can be accessed through STCE's Julia Registry, which can be added at the REPL via:
 
 ```julia
 ]registry add https://github.com/STCE-at-RWTH/STCEJuliaRegistry
