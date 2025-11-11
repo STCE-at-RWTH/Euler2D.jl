@@ -644,6 +644,7 @@ Keyword Arguments (and their default values)
 - `write_frequency = 1`: How often should time steps be written out?
 - `history_in_memory = false`: Should we keep whole history in memory?
 - `output_tag = "cell_euler_sim"`: File name for the tape and output summary.
+- `prepend_data_dir` = true: should a "data" directory be created to hold the output files of simulations?
 - `show_info = true` : Should diagnostic information be printed out?
 - `info_frequency = 10`: How often should info be printed?
 - `tasks_per_axis = Threads.nthreads()`: How many partitions should be created on each axis?
@@ -663,6 +664,7 @@ function cell_simulation_config(; kwargs...)
         :output_channel_size => 5,
         :write_frequency => 1,
         :output_tag => "cell_euler_sim",
+        :prepend_data_dir => true,
         :show_info => true,
         :show_detailed_info => false,
         :info_frequency => 10,
@@ -815,9 +817,9 @@ function _simulate(initial_state::CellBasedEulerSim{T,C}, config) where {T,C}
 
     # if we are writing the result we should make sure there is a file available.
     if config[:write_result]
-        tape_file = joinpath(pwd(), "data", config[:output_tag] * ".celltape")
-        tape_path = dirname(tape_file)
-        status_file = joinpath(pwd(), "data", config[:output_tag] * ".status")
+        tape_path = config[:prepend_data_dir] ? joinpath(pwd(), "data") : pwd()
+        tape_file = joinpath(tape_path, config[:output_tag] * ".celltape")
+        status_file = joinpath(tape_path, config[:output_tag] * ".status")
         if !isdir(tape_path)
             @info "Creating data directory/ies at $tape_path"
             mkpath(tape_path)
