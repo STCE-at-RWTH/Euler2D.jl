@@ -93,6 +93,7 @@ include("cell_simulations/simulations.jl")
 
 include("postprocessing/canny_rh_filter.jl")
 include("postprocessing/local_pseudoinversion.jl")
+include("postprocessing/bressan.jl")
 
 const _SI_DEFAULT_SCALE = EulerEqnsScaling(1.0u"m", 1.0u"kg/m^3", 1.0u"m/s")
 

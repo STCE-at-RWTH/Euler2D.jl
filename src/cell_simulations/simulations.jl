@@ -584,7 +584,7 @@ function _simulation_too_slow(infos, maximum_wall_clock, current_num_tsteps)
 end
 
 _opnorm2_sqr(u) = eigmax(u' * u)
-_opnorm1(u::AbstractVector) = sum(abs, u)
+_opnorm1(u) = sum(abs, u)
 _opnorm1(u::AbstractMatrix) = maximum(sum(abs, u; dims = 1))
 _opnormInf(u::AbstractVector) = maximum(abs, u)
 _opnormInf(u::AbstractMatrix) = maximum(sum(abs, u; dims = 2))
