@@ -282,7 +282,8 @@ end
     extract_bow_shock_points(sim, sensor_info)
 
 Tries to extract the main bow shock from a simulation given the results of applying a shock sensor.
-Will throw out any cells that deviate from both of their immediate neighbors by more than `gap_size` cell radii.
+
+Extracts the center of each of the first marked shock cells in the "row".
 """
 function extract_bow_shock_points(sim, sensor_info; gap_size = 8)
     _, cells = nth_step(sim, 1)
@@ -302,7 +303,7 @@ function extract_bow_shock_points(sim, sensor_info; gap_size = 8)
         idx = findfirst(candidate_row)
         isnothing(idx) && return SVector(Inf, Inf)
         cell_id = ids_row[idx]
-        return cells[cell_id].center - SVector(0.0, cells[cell_id].extent[2] / 2)
+        return cells[cell_id].center #- SVector(0.0, cells[cell_id].extent[2] / 2)
     end
     filter!(≠(SVector(Inf, Inf)), candidate_points)
     return candidate_points
