@@ -10,7 +10,7 @@ using StaticArrays
 
 using PlanePolygons: change_of_basis_matrix, orthonormal_basis
 using Euler2D: dimensionless_pressure, dimensionless_speed_of_sound, F_euler
-using Euler2D: select_middle, scale_velocity_coordinates
+using Euler2D: select_middle, change_space_coordinates
 
 """Pressure ratio ``P_r/P_l`` abbreviated pi"""
 function _π(uL, uR, gas)
@@ -163,9 +163,10 @@ function solve_for_jump_parameters(qL, qR, gas)
         # 18.61: stuff - B = 0 
         v2 = exp(x[3] - x[1]) - params[2]
         # 18.63: stuff - C = 0
-        v3 =
+        v3 = (
             h_1(x[1], gas) +
             sqrt(jump_params[2] / jump_params[1]) * h_1(x[1] + log(jump_params[2]), gas) - params[3]
+        )
         return SVector(v1, v2, v3)
     end
     solution = solve(nonlinear_system, SimpleNewtonRaphson())
@@ -270,8 +271,8 @@ end
 
 function solve_riemann_problem(ray, uL, uR, gas, new_coords)
     to_normal_coords = change_of_basis_matrix(I, new_coords)
-    qL = scale_velocity_coordinates(uL, to_normal_coords)
-    qR = scale_velocity_coordinates(uR, to_normal_coords)
+    qL = change_space_coordinates(uL, to_normal_coords)
+    qR = change_space_coordinates(uR, to_normal_coords)
     (
         has_one_shock,
         (sL_1, sL_2),
@@ -293,17 +294,17 @@ function solve_riemann_problem(ray, uL, uR, gas, new_coords)
                 return uL
             end
             state = to_conserved(values(qL_prim_★)..., shear_v_L, gas)
-            return scale_velocity_coordinates(state, new_coords)
+            return change_space_coordinates(state, new_coords)
         else
             if ray < sL_1
                 return uL
             elseif ray < sL_2
                 raref_state = rarefaction_1(ray, qL_prim, sound_speed(qL_prim, gas), gas)
                 state = to_conserved(values(raref_state)..., shear_v_L, gas)
-                return scale_velocity_coordinates(state, new_coords)
+                return change_space_coordinates(state, new_coords)
             else
                 state = to_conserved(values(qL_prim_★)..., shear_v_L, gas)
-                return scale_velocity_coordinates(state, new_coords)
+                return change_space_coordinates(state, new_coords)
             end
         end
     else
@@ -313,15 +314,15 @@ function solve_riemann_problem(ray, uL, uR, gas, new_coords)
                 return uR
             end
             state = to_conserved(values(qR_prim_★)..., shear_v_R, gas)
-            return scale_velocity_coordinates(state, new_coords)
+            return change_space_coordinates(state, new_coords)
         else
             if ray < sR_1
                 state = to_conserved(values(qR_prim_★)..., shear_v_R, gas)
-                return scale_velocity_coordinates(state, new_coords)
+                return change_space_coordinates(state, new_coords)
             elseif ray < sR_2
                 raref_state = rarefaction_3(ray, qR_prim, sound_speed(qR_prim, gas), gas)
                 state = to_conserved(values(raref_state)..., shear_v_R, gas)
-                return scale_velocity_coordinates(state, new_coords)
+                return change_space_coordinates(state, new_coords)
             else
                 return uR
             end

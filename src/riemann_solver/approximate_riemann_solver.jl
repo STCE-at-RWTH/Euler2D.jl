@@ -79,12 +79,11 @@ end
 
 Compute the HLL numerical flux across the L-R boundary.
 - `uL`, `uR`: States on either side of the boundary
-- `n` : Direction normal to the boundary, points towards uR
+- `n` : Direction normal to the boundary, assumed that it points towards uR
 """
-# TODO I no longer know what project_state_to_normal should have done
 function ϕ_hll(uL, uR, n, gas)
-    qL = project_state_to_normal(uL, n)
-    qR = project_state_to_normal(uR, n)
+    qL = change_space_coordinates(uL, n)
+    qR = change_space_coordinates(uR, n)
     fL = F_euler(qL, gas)[:, 1]
     fR = F_euler(qR, gas)[:, 1]
     sL, sR = interface_signal_speeds(qL, qR, 1, gas)

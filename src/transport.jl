@@ -33,6 +33,8 @@ end
 
 Computes the value of the flux function F(u) for the Euler equations.
 Returns a `ConservedPropsTransport` that maintains the unitful-ness of the quantity.
+
+DEPRECATED DO NOT DO THIS PLEASE
 """
 function F_euler(
     u::ConservedProps{N,T,U1,U2,U3},
@@ -71,7 +73,7 @@ Outputs a matrix with one column for each space dimension.
 
 This implementation will strip out units, and convert down to metric base units in the process. 
 """
-function F_euler(u::StaticVector{S,T}, gas::CaloricallyPerfectGas) where {S,T}
+function F_euler(u::SVector{S,T}, gas::CaloricallyPerfectGas) where {S,T}
     ρv = select_middle(u)
     v = SVector{S - 2,T}(ρv / u[1])
     P = dimensionless_pressure(u, gas)
@@ -101,7 +103,7 @@ function select_space_dim(
     dim,
 ) where {N,T,U1,U2,U3}
     idxs = SVector(ntuple(i -> i, N))
-    return vcat_ρ_ρv_ρE_preserve_static(
+    return vcat_state_components(
         ustrip(_units_ρ_transport, F_e.F_ρ[dim]),
         ustrip.(_units_ρv_transport, F_e.F_ρv[idxs, dim]),
         ustrip(_units_ρE_transport, F_e.F_ρE[dim]),
@@ -120,7 +122,7 @@ function eigenvalues_∇F_euler(u, dim, gas::CaloricallyPerfectGas)
     ρv = select_middle(u)
     v = ρv / u[1]
     a = dimensionless_speed_of_sound(u, gas)
-    return vcat_ρ_ρv_ρE_preserve_static(
+    return vcat_state_components(
         v[dim] - a,
         SVector(ntuple(Returns(v[dim]), length(v))),
         v[dim] + a,
@@ -134,7 +136,7 @@ function eigenvalues_∇F_euler(
 ) where {N,T,Q1,Q2,Q3}
     v = ustrip.(ShockwaveProperties._units_v, velocity(u))
     a = ustrip(ShockwaveProperties._units_v, speed_of_sound(u, gas))
-    return vcat_ρ_ρv_ρE_preserve_static(
+    return vcat_state_components(
         v[dim] - a,
         SVector(ntuple(Returns(v[dim]), N)),
         v[dim] + a,
