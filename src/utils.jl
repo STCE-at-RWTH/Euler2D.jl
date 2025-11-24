@@ -7,48 +7,59 @@ numeric_dtype(::Type{ConservedProps{N,T,U1,U2,U3}}) where {N,T,U1,U2,U3} = T
 u_array_space_dims(::AbstractArray{T,N}) where {T,N} = N - 1
 u_array_space_size(u::AbstractArray{T,N}) where {T,N} = size(u)[2:end]
 
-vcat_ρ_ρv_ρE_preserve_static(u1, u2, u3) = vcat(u1, u2, u3)
-function vcat_ρ_ρv_ρE_preserve_static(u1, u2::SVector{S,T}, u3) where {S,T}
-    return SVector{S + 2}(u1, u2..., u3)
+vcat_state_components(ρ, ρv, ρE) = vcat(ρ, ρv, ρE)
+function vcat_state_components(ρ, ρv::SVector{S,T}, ρE) where {S,T}
+    return SVector{S + 2}(ρ, ρv..., ρE)
 end
 
 ### CHANGE COORDINATE VECTORS FOR VELOCITY SPACE
 
 """
-    scale_velocity_coordinates(u, T)
+    change_space_coordinates(u, T)
 
 Multiply the momentum vector of the state `u=[ρ, ρv..., ρE]` by T.
 """
-function scale_velocity_coordinates(u, T)
+function change_space_coordinates(u, T::AbstractMatrix)
     ρv_new = T * select_middle(u)
-    return vcat_ρ_ρv_ρE_preserve_static(u[begin], ρv_new, u[end])
+    return vcat_state_components(u[begin], ρv_new, u[end])
 end
 
 """
-    shift_velocity_coordinates(u_star, v0)
+    change_space_coordinates(u, T)
+
+Multiply the momentum vector of the state `u=[ρ, ρv..., ρE]` by the transformation matrix.
+"""
+function change_space_coordinates(u, e1::AbstractVector)
+    B = PlanePolygons.orthonormal_basis(e1)
+    to_B = change_of_basis_matrix(I, B)
+    return change_space_coordinates(u, to_B)
+end
+
+"""
+    translate_velocity_coordinates(u_star, v0)
 
 Shift the velocity coordinates to a frame moving at `v0`.
 Total energy will change due to the new kinetic energy in the new frame.
 """
-function shift_velocity_coordinates(u_star, v0)
+function translate_velocity_coordinates(u_star, v0)
     ρ = u_star[begin]
     v_star = dimensionless_velocity(u_star)
     v = v_star - v0
     ρe = dimensionless_internal_energy_density(u_star)
     ρv = ρ * v
-    return vcat_ρ_ρv_ρE_preserve_static(ρ, ρv, ρe + ρv ⋅ v / 2)
+    return vcat_state_components(ρ, ρv, ρe + ρv ⋅ v / 2)
 end
 
 """
-    change_velocity_coordinates(u_star, T, v0)
+    change_space_coordinates_and_shift_v(u_star, T, v0)
 
 Switch to a new coordinate space for velocity by
 switching to a frame moving at `v0` and scaling by `T`.
 """
-function change_velocity_coordinates(u_star, T, v0)
+function change_space_coordinates_and_shift_v(u_star, T, v0)
     # scale then shift, I think
-    u1 = shift_velocity_coordinates(u_star, v0)
-    return scale_velocity_coordinates(u1, T)
+    u1 = translate_velocity_coordinates(u_star, v0)
+    return change_space_coordinates(u1, T)
 end
 
 ### END OF BASES

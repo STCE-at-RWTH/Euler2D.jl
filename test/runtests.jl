@@ -9,7 +9,7 @@ using Unitful
     @testset "Utilities" begin
         using PlanePolygons
         using PlanePolygons: orthonormal_basis
-        using Euler2D: scale_velocity_coordinates
+        using Euler2D: change_space_coordinates
 
         v = @SVector [2.0, 1.0, 1.0, 2.0]
 
@@ -18,12 +18,12 @@ using Unitful
         to_B = change_of_basis_matrix(I, B)
         @test isapprox(B[:, 1] ⋅ B[:, 2], 0.0; atol = 1.0e-12)
 
-        v_prime = scale_velocity_coordinates(v, to_B)
+        v_prime = change_space_coordinates(v, to_B)
         @test v_prime isa SVector
         @test v_prime[3] == 0
         @test all(
             tpl -> isapprox(tpl...; atol = 1.0e-12),
-            zip(v, scale_velocity_coordinates(v_prime, B)),
+            zip(v, change_space_coordinates(v_prime, B)),
         )
     end
 

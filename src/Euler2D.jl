@@ -52,7 +52,6 @@ export dimensionless_mach_number, dimensionless_speed_of_sound
 export dimensionless_internal_energy_density, dimensionless_internal_energy
 export dimensionless_total_enthalpy_density, dimensionless_total_enthalpy
 export dimensionless_enthalpy_density, dimensionless_enthalpy
-export shift_velocity_coordinates
 
 # boundary condition types
 export BoundaryCondition, PeriodicAxis, EdgeBoundary
