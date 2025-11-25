@@ -54,9 +54,9 @@ n_space_dims(::CellBasedEulerSim) = 2
 """
     n_cells(sim::CellBasedEulerSim)
 
-How many cells on each of the Cartesian axes?
+How many active cells are there in the simulation?
 """
-n_cells(sim::CellBasedEulerSim) = sim.ncells
+n_cells(sim::CellBasedEulerSim) = length(keys(first(sim.cells)))
 
 """
     grid_size(sim)
