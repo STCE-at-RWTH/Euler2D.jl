@@ -7,8 +7,11 @@
 
 module CannyShockSensor
 
-using Interpolations
 using LinearAlgebra
+
+using Accessors
+using Interpolations
+using OhMyThreads
 using StaticArrays
 using Tullio
 
@@ -17,7 +20,7 @@ using Euler2D: translate_velocity_coordinates, change_space_coordinates_and_shif
 using PlanePolygons
 using ShockwaveProperties
 
-export find_shock_in_timestep
+export find_shock_in_timestep, extract_bow_shock_interpolation
 
 _diff_op(T) = SVector{3,T}(-one(T), zero(T), one(T))
 _avg_op(T) = SVector{3,T}(one(T), 2 * one(T), one(T))
@@ -154,7 +157,7 @@ function hugoniot_equation_relative_err(u_A, u_B, gas)
 end
 
 """
-    mach_number_change_across_shock(θij, u1, u2, gas)
+    relative_mach_number_change_as_if_shock(θij, u1, u2, gas)
 
 Compute the Mach number jump error and a smoothness criterion between two states `u1` and `u2`.
 
@@ -164,7 +167,7 @@ a pressure increase across the shock (upstream -> downstream).
 2. Estimate the change across that shock. Note that `a` does not change under a velocity transformation
 3. Return the relative change in the mach number, which is an estimate of the "strength" of the shock.
 """
-function mach_number_change_across_shock(θij, u_A, u_B, gas)
+function relative_mach_number_change_as_if_shock(θij, u_A, u_B, gas)
     v_shock = _shock_velocity(θij, u_A, u_B, gas)
     u_shock_A = translate_velocity_coordinates(u_A, v_shock)
     u_shock_B = translate_velocity_coordinates(u_B, v_shock)
@@ -195,20 +198,55 @@ struct ShockSensorInfo
     n_rejected_rh::Int
 end
 
+"""
+    _pressure_field!(result, csim::CellBasedEulerSim, n, gas)
+
+Compute the dimensionless pressure field for a cell-based Euler simulation `csim` at time step `n` in gas `gas`.
+
+Stores zero if the cell in question is not active.
+Stores results in `result`. Returns `result`.
+"""
+function _pressure_field!(
+    result,
+    csim::CellBasedEulerSim,
+    n::Integer,
+    gas::CaloricallyPerfectGas,
+)
+    _, cells = nth_step(csim, n)
+    for i ∈ eachindex(result, csim.cell_ids)
+        if csim.cell_ids[i] == 0
+            result[i] = zero(eltype(result))
+        else
+            result[i] = dimensionless_pressure(cells[csim.cell_ids[i]].u, gas)
+        end
+    end
+    # TODO really gotta figure out how to deal with nothings or missings in this matrix
+    # TODO this solution is not very good
+    return result
+end
+
+function _fill_pfield_and_pad!(pfield, pad_size, sim, t, gas)
+    p_nopad = @view pfield[(begin+pad_size):(end-pad_size), (begin+pad_size):(end-pad_size)]
+    @assert size(p_nopad) == size(sim.cell_ids)
+    _pressure_field!(p_nopad, sim, t, gas)
+    _pad_by_copying_outwards!(pfield, pad_size)
+
+    return pfield
+end
+
 function find_shock_in_timestep(
     sim::CellBasedEulerSim{T,C},
     t,
     gas;
     rh_rel_error_max = 0.5,
-    continuous_variation_thold = 0.01,
+    continuous_variation_thold = 0.05,
 ) where {T,C}
-    # TODO really gotta figure out how to deal with nothings or missings in this matrix
-    # TODO this solution is not very good
-    pfield = Matrix{T}(undef, grid_size(sim) .+ 4)
-    pfield_nopad = @view pfield[begin+2:end-2, begin+2:end-2]
-    @assert size(pfield_nopad) == size(sim.cell_ids)
-    Euler2D.pressure_field!(pfield_nopad, sim, t, gas)
-    _pad_by_copying_outwards!(pfield, 2)
+    N_pad = 2
+    # padding size is 2 on either size, hence we need 2*N_pad extra values
+    pfield = Matrix{T}(undef, grid_size(sim) .+ 2 * N_pad)
+    pfield_nopad = @view pfield[(begin+N_pad):(end-N_pad), (begin+N_pad):(end-N_pad)]
+    _fill_pfield_and_pad!(pfield, N_pad, sim, t, gas)
+
     # find the gradients via the sobel operators
     # not quite accurate but good enough since we discretize to the compass directions anyway
     dPdx = _d_dx_convolve(pfield)
@@ -226,6 +264,14 @@ function find_shock_in_timestep(
     n_marked_edges = count(candidates)
     n_too_smooth = 0
     n_no_shock = 0
+
+    @assert (
+        size(sim.cell_ids) ==
+        size(candidates) ==
+        size(pfield_nopad) ==
+        size(dPdx_nopad) ==
+        size(dPdy_nopad)
+    )
 
     for i ∈ eachindex(
         IndexCartesian(),
@@ -260,7 +306,7 @@ function find_shock_in_timestep(
             n_no_shock += 1
             continue
         end
-        abs_smoothness_err = mach_number_change_across_shock(θij, u_A, u_B, gas)
+        abs_smoothness_err = relative_mach_number_change_as_if_shock(θij, u_A, u_B, gas)
         if abs_smoothness_err <= continuous_variation_thold
             candidates[i] = false
             n_too_smooth += 1
@@ -295,11 +341,9 @@ function extract_bow_shock_points(sim, sensor_info; gap_size = 8)
     # TODO maybe implement gap finding?
     # max_gap_length = gap_size * norm(Euler2D.minimum_cell_size(sim))
     candidate_points = map(
-        zip(
-            eachslice(sensor_info.candidates; dims = (2,)),
-            eachslice(ids_view; dims = (2,)),
-        ),
-    ) do (candidate_row, ids_row)
+        eachslice(sensor_info.candidates; dims = (2,)),
+        eachslice(ids_view; dims = (2,)),
+    ) do candidate_row, ids_row
         idx = findfirst(candidate_row)
         isnothing(idx) && return SVector(Inf, Inf)
         cell_id = ids_row[idx]
@@ -315,6 +359,134 @@ function extract_bow_shock_interpolation(sim, sensor_info; skip_pts = 10)
         interpolate(points, BSpline(Linear())),
         range(0.0, 1.0; length = length(points)),
     )
+end
+
+function _pts_via_range_interp(xs, yrange, y_actual)
+    interp = scale(interpolate(xs, BSpline(Linear())), yrange)
+    x_actual = interp.(y_actual)
+    return x_actual
+end
+
+function _pts_via_gridded_interp(xs, ys, y_actual)
+    interp = interpolate((ys,), xs, Gridded(Linear()))
+    x_actual = interp.(y_actual)
+    return x_actual
+end
+
+"""
+    NPointBowShockInterpolation
+
+Represents specifically an interpolation of the points generated by the y-axis symmetric bow shock problem.
+
+Hüser was heckin' right.
+"""
+struct NPointBowShockInterpolation{YT<:AbstractVector,XT<:AbstractVector}
+    N::Int
+    ys::YT
+    xs::XT
+end
+
+function NPointBowShockInterpolation(N, sim, sensor_info)
+    shock_points = extract_bow_shock_points(sim, sensor_info)
+    # speed penalty on a reinterpret here should be ok
+    shock_points_r = reinterpret(reshape, Float64, shock_points)
+    shock_ys = @view shock_points_r[2, :]
+    shock_xs = @view shock_points_r[1, :]
+
+    ymin = 0.0 # just in case we want to change this later?
+    ymax = maximum(shock_ys)
+    half_dy = (ymax - ymin) / (2 * N - 1)
+    actual_ys = range(half_dy, ymax; length = N)
+    actual_xs = if length(shock_ys) == length(cell_centers(sim, 2))
+        # can use fast interpolation!
+        _pts_via_range_interp(shock_xs, cell_centers(sim, 2), actual_ys)
+    else
+        #slow interpolation
+        _pts_via_gridded_interp(shock_xs, shock_ys, actual_ys)
+    end
+
+    return NPointBowShockInterpolation(N, actual_ys, actual_xs)
+end
+
+# prefer methods to direct field access in case I can re-use some of these other methods later?
+
+n_points(interp::NPointBowShockInterpolation) = interp.N
+interp_x_knots(interp::NPointBowShockInterpolation) = interp.xs
+interp_y_knots(interp::NPointBowShockInterpolation) = interp.ys
+
+# TODO purge allocations here if they become a performance problem
+
+function interpolation_points(interp)
+    return map((x, y) -> SVector(x, y), interp_x_knots(interp), interp_y_knots(interp))
+end
+
+function interpolation_segments(interp)
+    pts = interpolation_points(interp)
+    p0 = SVector(pts[1][1], -pts[1][2])
+    pushfirst!(pts, p0)
+    return tuple.(@view(pts[begin:end-1]), @view(pts[begin+1:end]))
+end
+
+function _segment_normal(A, B)
+    ℓ = PlanePolygons.Line(A, B - A)
+    return normalize(left_normal(ℓ))
+end
+
+function interpolation_normals_at_points(interp)
+    segments = interpolation_segments(interp)
+    n_end = _segment_normal(last(segments)...)
+    normals = map(@view(segments[begin:end-1]), @view(segments[begin+1:end])) do s1, s2
+        n1 = _segment_normal(s1...)
+        n2 = _segment_normal(s2...)
+        return normalize(0.5 * (n1 + n2))
+    end
+    push!(normals, n_end)
+end
+
+function _interpolation_segment(interp, y)
+    y0 = first(interp.ys)
+    if y < y0
+        return (SVector(first(interp.xs), -y0), SVector(first(interp.xs), y0))
+    elseif y > last(interp.ys)
+        return _interpolation_segment(interp, last(interp.ys))
+    end
+
+    Δy = step(interp.ys)
+    n = min(interp.N, floor(Int, (y - y0) / Δy) + 1)
+    return (SVector(interp.xs[n], interp.ys[n]), SVector(interp.xs[n+1], interp.ys[n+1]))
+end
+
+function _interpolation_normal(interp, y)
+    return _segment_normal(_interpolation_segment(interp, y)...)
+end
+
+function bow_shock_point(interp, y)
+    y★ = y < 0 ? -y : y
+    p0, p1 = _interpolation_segment(interp, y★)
+    dy★ = y★ - p0[2]
+    s = dy★ / (p1[2] - p0[2])
+    x★ = p0[1] + s * (p1[1] - p0[1])
+    return SVector(x★, y < 0 ? -y★ : y★)
+end
+
+function bow_shock_normal(interp, y)
+    y★ = y < 0 ? -y : y
+    n = _interpolation_normal(interp, y★)
+    if y < 0
+        @reset n[2] = -1 * n[2]
+    end
+    return n
+end
+
+function shift_shock_interpolation_by_normals(interp, Δ)
+    ns = interpolation_normals_at_points(interp)
+    xs_shifted = map(interp_x_knots(interp), ns) do x, n
+        return x + Δ * n[1]
+    end
+    ys_shifted = map(interp_y_knots(interp), ns) do y, n
+        return y + Δ * n[2]
+    end
+    return NPointBowShockInterpolation(interp.N, ys_shifted, xs_shifted)
 end
 
 end

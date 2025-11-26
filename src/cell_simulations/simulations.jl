@@ -267,31 +267,6 @@ function pressure_field(
 end
 
 """
-    pressure_field!(result, csim::CellBasedEulerSim, n, gas)
-
-Compute the dimensionless pressure field for a cell-based Euler simulation `csim` at time step `n` in gas `gas`.
-
-Stores zero if the cell in question is not active.
-Stores results in `result`. Returns `result`.
-"""
-function pressure_field!(
-    result,
-    csim::CellBasedEulerSim,
-    n::Integer,
-    gas::CaloricallyPerfectGas,
-)
-    _, cells = nth_step(csim, n)
-    for i ∈ eachindex(result, csim.cell_ids)
-        if csim.cell_ids[i] == 0
-            result[i] = zero(eltype(result))
-        else
-            result[i] = dimensionless_pressure(cells[csim.cell_ids[i]].u, gas)
-        end
-    end
-    return result
-end
-
-"""
     pressure_field(csim::CellBasedEulerSim, scale, n)
 
 Compute the total internal energy density field for a cell-based Euler simulation `csim` and redimensionalize it at time step `n`.
