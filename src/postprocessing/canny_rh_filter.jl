@@ -489,4 +489,87 @@ function shift_shock_interpolation_by_normals(interp, Δ)
     return NPointBowShockInterpolation(interp.N, ys_shifted, xs_shifted)
 end
 
+function _point_between_interpolations(pt, iL, iR)
+    sL = interpolation_segments(iL)
+    sR = interpolation_segments(iR)
+
+    return any(zip(sL, sR)) do (bc, ad)
+        poly = SClosedPolygon(ad[1], bc..., ad[2])
+        point_inside(poly, pt)
+    end
+end
+
+function point_between_interpolations(pt, interp_L, interp_R)
+    if pt[2] < 0
+        return _point_between_interpolations(SVector(pt[1], -pt[2]), interp_L, interp_R)
+    end
+    return _point_between_interpolations(pt, interp_L, interp_R)
+end
+
+function interpolation_length(interp)
+    pts = interpolation_points(interp)
+    # we want s=0 to correspond to y=0
+    pts[1] = SVector(pts[1][1], 0.0)
+    starts = @view pts[begin:end-1]
+    ends = @view pts[begin+1, end]
+    return mapreduce(+, starts, ends) do A, B
+        norm(B - A)
+    end
+end
+
+# we don't want the point, we want the value of t for both
+# lines, so that we can easily test if the point is on the segment or not
+function _line_intersect(ℓ1, ℓ2)
+    if vectors_parallel(direction_of(ℓ1), direction_of(ℓ2))
+        return PlanePolygons._POINT_DOES_NOT_EXIST(
+            PlanePolygons._numeric_dtype(point_on(ℓ1)),
+        )
+    end
+    d = point_on(ℓ2) - point_on(ℓ1)
+    A = hcat(direction_of(ℓ1), -1 * direction_of(ℓ2))
+    return A \ d
+end
+
+# test if line ℓ interesects line AB between A and B
+# and return the test result and the parameter value on ℓ
+# that yields the intersection point
+function _test_if_intersection_on_segment(A, B, ℓ)
+    ℓ_AB = Line(A, B - A)
+    t_B = (B-A)[1] / direction_of(ℓ_AB)[1]
+    t, s = _line_intersect(ℓ_AB, ℓ)
+    return (0 ≤ t ≤ t_B, s)
+end
+
+function interpolation_line_intersect(interp, line)
+    xs = interp_x_knots(interp)
+    ys = interp_y_knots(interp)
+
+    p0_A = SVector(first(xs), -first(ys))
+    p0_B = SVector(first(xs), first(ys))
+    is_on, s = _test_if_intersection_on_segment(p0_A, p0_B, line)
+    is_on && return point_on(line) + s * direction_of(line)
+
+    for i ∈ 1:n_points(interp)-1
+        A = SVector(xs[i], ys[i])
+        B = SVector(xs[i+1], ys[i+1])
+        is_on, s = _test_if_intersection_on_segment(A, B, line)
+        is_on && return point_on(line) + s * direction_of(line)
+
+        A_neg = SVector(xs[i], -ys[i])
+        B_neg = SVector(xs[i+1], -ys[i+1])
+        is_on, s = _test_if_intersection_on_segment(A_neg, B_neg, line)
+        is_on && return point_on(line) + s * direction_of(line)
+    end
+
+    pN_A = SVector(xs[end-1], ys[end-1])
+    pN_B = SVector(xs[end], ys[end])
+    t, s = _line_intersect(Line(pN_A, pN_B - pN_A), line)
+    t ≥ 0 && return point_on(line) + s * direction_of(line)
+
+    pN_A_neg = SVector(xs[end-1], -ys[end-1])
+    pN_B_neg = SVector(xs[end], -ys[end])
+    t, s = _line_intersect(Line(pN_A_neg, pN_B_neg - pN_A_neg), line)
+    return point_on(line) + s * direction_of(line)
+end
+
 end

@@ -1,10 +1,10 @@
 module LocalPseudoinversion
+using LinearAlgebra
 
 using Accessors
 using DifferentiationInterface
 using ForwardDiff: ForwardDiff
 using Graphs
-using LinearAlgebra
 using MetaGraphsNext
 using OhMyThreads: tmap, tmapreduce
 using Tullio
@@ -47,6 +47,28 @@ function intersection_point_jacobian(point, poly1, poly2)
     return J
 end
 
+function intersection_point_jacobian(
+    point,
+    poly1::SizedClockwiseOrientedPolygon{N,T},
+    poly2,
+) where {N,T}
+    J = @SArray zeros(T, (2, 2 * N))
+    for (i, (p1, p2)) ∈ enumerate(zip(edge_starts(poly1), edge_ends(poly1)))
+        is_other_point_on_line(Line(p1, p2 - p1), point) || continue
+        for ℓ2 ∈ Iterators.filter(ℓ -> is_other_point_on_line(ℓ, point), edge_lines(poly2))
+            jac = DifferentiationInterface.jacobian(fdiff_backend, vcat(p1, p2)) do vals
+                q1 = vals[SVector(1, 2)]
+                q2 = vals[SVector(3, 4)]
+                return line_intersect(Line(q1, q2 - q1), ℓ2)
+            end
+            j = ((i + 1) % N) + 1
+            @reset J[2*i-1:2*i] = jac[SVector(1, 2)]
+            @reset J[2*j-1:2*j] = jac[SVector(3, 4)]
+        end
+    end
+    return J
+end
+
 # gets the jacobian of the intersection area w.r.t. the first argument
 # allocates like hell, but... it works and isn't performance critical.?
 function intersection_area_jacobian(flat_poly1, poly2)
@@ -67,7 +89,9 @@ end
 ## BOW-SHOCK PROBLEM SPECIFIC
 
 """
-    CoarsePolyCell{T, NV}
+    CoarseQuadCell{T, NV}
+
+Not fully implemented???? Da hecc
 """
 struct CoarseQuadCell{T,NSEEDS,NTANGENTS} <: FVMCell{T}
     id::Int
@@ -86,7 +110,7 @@ end
 
 function coarse_cell_neighbor_data(c1, c2)
     if (c1.id == c2.id)
-        return (false, nothing)
+        return nothing
     end
     e1 = cell_boundary_polygon(c1)
     e2 = cell_boundary_polygon(c2)
@@ -98,11 +122,11 @@ function coarse_cell_neighbor_data(c1, c2)
                 are_points_collinear_between(p1, p2, q1, q2) ||
                 are_points_collinear_between(q1, q2, p1, p2)
             )
-                return (true, (dir, p1, p2))
+                return (dir, p1, p2)
             end
         end
     end
-    return (false, nothing)
+    return nothing
 end
 
 function compute_coarse_cell_contents(
@@ -238,8 +262,8 @@ function populate_coarse_cell_graph(
     phantom_idx = 1000 * nv(g) + 1
     for cell ∈ coarse_cells
         for other ∈ coarse_cells
-            flag, val = coarse_cell_neighbor_data(cell, other)
-            if flag
+            val = coarse_cell_neighbor_data(cell, other)
+            if !isnothing(val)
                 g[cell.id, other.id] = val
             end
         end
