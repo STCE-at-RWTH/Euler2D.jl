@@ -362,7 +362,10 @@ function _in_window(cell, window_x, window_y)
     )
 end
 
-# I am satisfied that this implementation is correct
+# I am no longer satisfied that this implementation is correct
+# re: what happens when (x, y) lands on a boundary of the simulation?
+# TODO check that we are computing (phantom) neighbor cells correctly 
+# so that we can estimate gradients?
 function ∇u_at(sim, n, x, y, boundary_conditions, gas; padding = nothing)
     window = if isnothing(padding)
         dx, dy = 2 .* minimum_cell_size(sim)
@@ -446,6 +449,8 @@ end
     total_mass_contained_by(poly, sim, tstep)
 
 Get the TOTAL `(mass, momentum, energy)` contained inside of `poly` at timestep `tstep`. 
+This quantity IS NOT volume-averaged! To get the volume-averaged quantity you MUST divide by
+the area of `poly`!
 """
 function total_mass_contained_by(
     poly,
