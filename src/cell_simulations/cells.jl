@@ -95,7 +95,7 @@ end
 """
     RectangularFVMCell{T}
 
-An FVM cell that is a rectangle.
+An FVM cell that is a rectangle with sides aligned to the `x` and `y` axes.
 Has fields `center` and `extent`.
 """
 abstract type RectangularFVMCell{T} <: FVMCell{T} end
