@@ -339,6 +339,28 @@ function maximum_cell_size(sim::CellBasedEulerSim)
     end
 end
 
+"""
+    estimate_∇u_in_rectangular_cell(cell, sim, n, boundary_conditions, gas)
+
+Return an estimate for ``∇_x u`` in the given cell computed using finite differences
+to the average values of the neighboring cells.
+"""
+function estimate_∇u_in_rectangular_cell(
+    cell::RectangularFVMCell,
+    sim,
+    n,
+    boundary_conditions,
+    gas,
+)
+    _, active_cells = nth_step(sim, n)
+    nbrs = neighbor_cells(cell, active_cells, boundary_conditions, gas)
+    # TODO should this be cell.extent + east.extent/2 + west.extent/2 ?
+    dudx = (nbrs.east.u - nbrs.west.u) / cell.extent[1]
+    # TODO same but north south
+    dudy = (nbrs.north.u - nbrs.south.u) / cell.extent[2]
+    return hcat(dudx, dudy)
+end
+
 function _find_window_on_range(range, window, buffer)
     idx1 = max(
         something(findfirst(>=(window[1]), range), firstindex(range)) - buffer,
@@ -366,7 +388,7 @@ end
 # re: what happens when (x, y) lands on a boundary of the simulation?
 # TODO check that we are computing (phantom) neighbor cells correctly 
 # so that we can estimate gradients?
-function ∇u_at(sim, n, x, y, boundary_conditions, gas; padding = nothing)
+function ∇u_at(sim, n, x, y, bcs, gas; padding = nothing)
     window = if isnothing(padding)
         dx, dy = 2 .* minimum_cell_size(sim)
         (x .+ (-dx, dx), y .+ (-dy, dy))
@@ -385,10 +407,8 @@ function ∇u_at(sim, n, x, y, boundary_conditions, gas; padding = nothing)
     acc = zero(SMatrix{4,2,Float64,8})
     for id ∈ contains_point
         counter += 1
-        nbrs = neighbor_cells(cells[id], cells, boundary_conditions, gas)
-        dudx = (nbrs.east.u - nbrs.west.u) / cells[id].extent[1]
-        dudy = (nbrs.north.u - nbrs.south.u) / cells[id].extent[2]
-        @reset acc += hcat(dudx, dudy)
+        c = cells[id]
+        @reset acc += estimate_∇u_in_rectangular_cell(c, sim, n, bcs, gas)
     end
     return acc / counter
 end
@@ -475,6 +495,52 @@ function total_mass_contained_by(
             return A .* (cells[id].u, cells[id].u̇)
         end
 
+    return U_contained + U_overlap, Udot_contained + Udot_overlap
+end
+
+"""
+    total_mass_contained_by_with_gradient_estimates(poly, sim, tstep)
+
+Get the TOTAL `(mass, momentum, energy)` contained inside of `poly` at timestep `tstep`. 
+This quantity IS NOT volume-averaged! To get the volume-averaged quantity you MUST divide by
+the area of `poly`!
+
+This routine will estimate the gradient in each of the cells "overlapping" `poly`! HOWEVER!!
+This first-order estimate is only applied to the primal value!!
+"""
+function total_mass_contained_by_with_gradient_estimates(
+    poly,
+    sim::CellBasedEulerSim{T,TangentQuadCell{T,NSEEDS,NP}},
+    tstep,
+    boundary_conditions,
+    gas;
+    poly_bbox_padding = nothing,
+) where {T,NSEEDS,NP}
+    contained = all_cells_contained_by(poly, sim; padding = poly_bbox_padding)
+    overlapping = all_cells_overlapping(poly, sim; padding = poly_bbox_padding)
+    _, cells = nth_step(sim, tstep)
+    U_zero = @SVector zeros(T, 4)
+    Udot_zero = @SArray zeros(T, 4, NSEEDS)
+    U_contained, Udot_contained =
+        mapreduce((a, b) -> a .+ b, contained; init = (U_zero, Udot_zero)) do id
+            A = cell_volume(cells[id])
+            return A .* (cells[id].u, cells[id].u̇)
+        end
+
+    # BE WARNED, FUTURE SELF
+    # Does not apply linear approximation to udot
+    U_overlap, Udot_overlap =
+        mapreduce((a, b) -> a .+ b, overlapping; init = (U_zero, Udot_zero)) do id
+            c = cells[id]
+            poly_cell = cell_boundary_polygon(c)
+            isect = poly_intersection(poly, poly_cell)
+            A = poly_area(isect)
+            dudx = estimate_∇u_in_rectangular_cell(c, sim, tstep, boundary_conditions, gas)
+            u_isect = inv(num_vertices(isect)) * sum(edge_starts(isect)) do pt
+                c.u + dudx * (pt - c.center)
+            end
+            return A .* (u_isect, cells[id].u̇)
+        end
     return U_contained + U_overlap, Udot_contained + Udot_overlap
 end
 
