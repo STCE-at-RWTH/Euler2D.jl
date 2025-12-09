@@ -64,6 +64,25 @@ end
 
 ### END OF BASES
 
+### POLYGON UTILITIES
+
+"""
+    shift_polygon_vertices_in_direction(poly, dirs, s)
+
+Shift the vertices of `poly` by `shift[i] * dirs[i]`.
+"""
+function shift_polygon_vertices_in_direction(
+    poly::SClosedPolygon{NV,T},
+    dirs,
+    shift,
+) where {NV,T}
+    new_pts = map(edge_starts(poly), dirs, shift) do p, n, s_i
+        p + s_i * n
+    end
+    return SClosedPolygon{NV,T}(new_pts)
+end
+### END POLYGON UTILITIES
+
 ### FINITE DIFFS
 """Get an appropriate `ε` for finite differences around `arg`."""
 function fdiff_eps(arg::T) where {T<:Real}

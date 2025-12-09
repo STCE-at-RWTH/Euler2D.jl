@@ -11,7 +11,8 @@ using Tullio
 using StaticArrays
 
 using Euler2D
-using Euler2D: CellNeighboring, fdiff_eps, select_middle
+using Euler2D: CellNeighboring
+using Euler2D: shift_polygon_vertices_in_direction, fdiff_eps, select_middle
 using Euler2D: all_cells_overlapping, total_mass_contained_by
 using PlanePolygons
 
@@ -54,7 +55,9 @@ function intersection_point_jacobian(
 ) where {N,T}
     J = @SArray zeros(T, (2, 2 * N))
     for (i, (p1, p2)) ∈ enumerate(zip(edge_starts(poly1), edge_ends(poly1)))
-        is_other_point_on_line(Line(p1, p2 - p1), point) || continue
+        if !is_other_point_on_line(Line(p1, p2 - p1), point)
+            continue
+        end
         for ℓ2 ∈ Iterators.filter(ℓ -> is_other_point_on_line(ℓ, point), edge_lines(poly2))
             jac = DifferentiationInterface.jacobian(fdiff_backend, vcat(p1, p2)) do vals
                 q1 = vals[SVector(1, 2)]
@@ -82,6 +85,32 @@ function intersection_area_jacobian(flat_poly1, poly2)
         @reset grad1[i] = (out1 - out2) / (2 * h)
     end
     return grad1
+end
+
+"""
+    intersection_area_gradient(poly1, s_dirs, poly2)
+
+Compute the gradient of the intersection area of `poly1` and `poly2` with respect to
+shift magnitudes in the given shift directions. 
+
+We assume that `poly1` is what is shifted and that `poly2` remains constant.
+
+Uses finite differences. There is almost certainly an AD-based solution here...
+however, we are interested in some amount of "smoothing", in case the intersection area is not very large.
+"""
+function intersection_area_gradient(poly1::SClosedPolygon{N,T}, s_dirs, poly2) where {N,T}
+    grad = @SVector zeros(T, N)
+    h = fdiff_eps(zero(T))
+    s = @SVector zeros(T, N)
+    for i in eachindex(s, grad)
+        poly1_minus_h = shift_polygon_vertices_in_direction(poly1, s_dirs, @set s[i] -= h)
+        poly1_plus_h = shift_polygon_vertices_in_direction(poly1, s_dirs, @set s[i] += h)
+        # maybe save a buffer here?
+        A_minus = poly_area(poly_intersection(poly1_minus_h, poly2))
+        A_plus = poly_area(poly_intersection(poly1_plus_h, poly2))
+        @reset grad[i] = (A_plus - A_minus) / (2 * h)
+    end
+    return grad
 end
 
 ## END POLYGON STUFF
