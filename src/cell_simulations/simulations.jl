@@ -361,6 +361,12 @@ function estimate_∇u_in_rectangular_cell(
     return hcat(dudx, dudy)
 end
 
+function estimate_∇u_in_rectangular_cell(id::Int, sim, n, boundary_conditions, gas)
+    _, cells = nth_step(sim, n)
+    c = cells[id]
+    return estimate_∇u_in_rectangular_cell(c, sim, n, boundary_conditions, gas)
+end
+
 function _find_window_on_range(range, window, buffer)
     idx1 = max(
         something(findfirst(>=(window[1]), range), firstindex(range)) - buffer,
@@ -481,8 +487,8 @@ function total_mass_contained_by(
     contained = all_cells_contained_by(poly, sim; padding = poly_bbox_padding)
     overlapping = all_cells_overlapping(poly, sim; padding = poly_bbox_padding)
     _, cells = nth_step(sim, tstep)
-    U_zero = zero(SVector{4,Float64})
-    Udot_zero = zero(SMatrix{4,NSEEDS,T,NP})
+    U_zero = @SVector zeros(T, 4)
+    Udot_zero = @SArray zeros(T, 4, NSEEDS)
     U_contained, Udot_contained =
         mapreduce((a, b) -> a .+ b, contained; init = (U_zero, Udot_zero)) do id
             A = cell_volume(cells[id])
@@ -531,14 +537,14 @@ function total_mass_contained_by_with_gradient_estimates(
     # Does not apply linear approximation to udot
     U_overlap, Udot_overlap =
         mapreduce((a, b) -> a .+ b, overlapping; init = (U_zero, Udot_zero)) do id
-            c = cells[id]
-            poly_cell = cell_boundary_polygon(c)
+            poly_cell = cell_boundary_polygon(cells[id])
             isect = poly_intersection(poly, poly_cell)
             A = poly_area(isect)
-            dudx = estimate_∇u_in_rectangular_cell(c, sim, tstep, boundary_conditions, gas)
-            u_isect = inv(num_vertices(isect)) * sum(edge_starts(isect)) do pt
-                c.u + dudx * (pt - c.center)
-            end
+            dudx = estimate_∇u_in_rectangular_cell(id, sim, tstep, boundary_conditions, gas)
+            u_isect =
+                inv(num_vertices(isect)) * sum(edge_starts(isect)) do pt
+                    return cells[id].u + dudx * (pt - cells[id].center)
+                end
             return A .* (u_isect, cells[id].u̇)
         end
     return U_contained + U_overlap, Udot_contained + Udot_overlap
