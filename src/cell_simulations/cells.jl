@@ -39,6 +39,16 @@ boundary polygon, but there may be smarter ways for certain subtypes.
 cell_volume(cell::FVMCell) = poly_area(cell_boundary_polygon(cell))
 
 """
+    cell_center(cell::FVMCell)
+
+Compute the geometric center of `cell`.
+"""
+function cell_center(cell::FVMCell)
+    p = cell_boundary_polygon(cell)
+    return inv(num_vertices(p)) * sum(edge_starts(p))
+end
+
+"""
     is_cell_contained_by(cell1, poly)
     is_cell_contained_by(cell1, cell2)
 
@@ -101,6 +111,7 @@ Has fields `center` and `extent`.
 abstract type RectangularFVMCell{T} <: FVMCell{T} end
 
 cell_volume(cell::RectangularFVMCell) = *(cell.extent...)
+cell_center(cell::RectangularFVMCell) = cell.center
 
 function cell_boundary_polygon(cell::RectangularFVMCell)
     c = cell.center

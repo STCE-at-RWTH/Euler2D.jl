@@ -66,7 +66,7 @@ export numeric_dtype
 export CellBasedEulerSim, FVMCell, PrimalQuadCell, TangentQuadCell
 export cell_boundaries, cell_centers, nth_step, eachstep
 export grid_size, n_cells, n_space_dims, n_tsteps
-export cell_volume, cell_boundary_polygon, minimum_cell_size, maximum_cell_size
+export cell_center, cell_volume, cell_boundary_polygon, minimum_cell_size, maximum_cell_size
 export Obstacle, TriangularObstacle, RectangularObstacle, CircularObstacle
 export load_cell_sim
 export cell_simulation_config
