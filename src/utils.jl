@@ -164,52 +164,41 @@ ncols_smatrix(::Type{SMatrix{M,N,T,L}}) where {M,N,T,L} = N
 
 Flip the `dim`th velocity component of `u`. and return a copy. 
 """
-function flip_velocity(u::ConservedProps{N,T,U1,U2,U3}, dim) where {N,T,U1,U2,U3}
+function flip_velocity(u::ConservedProps{N,T,U1,U2,U3}, dim::Int) where {N,T,U1,U2,U3}
     scaling = SVector(ntuple(i -> i == dim ? -one(T) : one(T), N))
     return ConservedProps(u.ρ, scaling .* u.ρv, u.ρE)
 end
 
-function flip_velocity(u::SVector{N,T}, dim) where {N,T}
+function flip_velocity(u::SVector{N,T}, dim::Int) where {N,T}
     # momentum density vector is stored in u[2] and u[3]
     # or u[2:end-1] for higher-dimensional problems (not that we care)
     scaling = SVector(ntuple(i -> i == 1 + dim ? -one(T) : one(T), N))
     return u .* scaling
 end
 
-function flip_velocity(u::SMatrix{M,N,T,L}, dim) where {M,N,T,L}
+function flip_velocity(u::SMatrix{M,N,T,L}, dim::Int) where {M,N,T,L}
     scaling = SDiagonal(ntuple(i -> i == 1 + dim ? -one(T) : one(T), M))
     return scaling * u
+end
+
+"""
+    flip_velocity(u, n)
+
+Flip the velocity component of `u` in direction `n`.
+"""
+function flip_velocity(u, n)
+    B = PlanePolygons.orthonormal_basis(n)
+    to_B = change_of_basis_matrix(I, B)
+    from_B = change_of_basis_matrix(B, I)
+    ρv = select_middle(u)
+    ρv_★ = from_B * SDiagonal(-1, 1) * to_B * ρv
+    return vcat_state_components(u[begin], ρv_★, u[end])
 end
 
 merge_values_tuple(arg1, arg2) = (arg1, arg2)
 merge_values_tuple(arg1::Tuple, arg2) = (arg1..., arg2)
 merge_values_tuple(arg1, arg2::Tuple) = (arg1, arg2...)
 merge_values_tuple(arg1::Tuple, arg2::Tuple) = (arg1..., arg2...)
-
-"""
-    merge_named_tuples(nt1::NamedTuple{NAMES}, nt2::NamedTuple{NAMES}, nts::NamedTuple{NAMES}...)
-
-Merge the values of the provided named tuples. Will flatten any tuple fields.
-"""
-function merge_named_tuples(nt1::NamedTuple{NAMES}, nt2::NamedTuple{NAMES}) where {NAMES}
-    new_values = ntuple(length(NAMES)) do i
-        merge_values_tuple(nt1[NAMES[i]], nt2[NAMES[i]])
-    end
-    return NamedTuple{NAMES}(new_values)
-end
-
-function merge_named_tuples(nt1::NamedTuple{NAMES}, nts::NamedTuple{NAMES}...) where {NAMES}
-    return merge_named_tuples(merge_named_tuples(nt1, nts[1]), nts[2:end]...)
-end
-
-#BUG this allocates
-# WHY DOES THIS ALLOCATE
-function _prepend_names(nt::NamedTuple{NAMES}) where {NAMES}
-    new_values = ntuple(length(NAMES)) do i
-        (NAMES[i], nt[NAMES[i]])
-    end
-    return NamedTuple{NAMES}(new_values)
-end
 
 # named constants
 const _dirs_bc_is_reversed = (north = true, south = false, east = false, west = true)
