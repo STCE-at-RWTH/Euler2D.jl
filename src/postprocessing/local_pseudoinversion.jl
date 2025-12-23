@@ -1,4 +1,5 @@
 module LocalPseudoinversion
+
 using LinearAlgebra
 
 using Accessors
@@ -7,8 +8,8 @@ using ForwardDiff: ForwardDiff
 using Graphs
 using MetaGraphsNext
 using OhMyThreads: tmap, tmapreduce
-using Tullio
 using StaticArrays
+using Tullio
 
 using Euler2D
 using Euler2D: CellNeighboring
@@ -97,12 +98,12 @@ function intersection_point_gradient(
             j = ((i + 1) % N) + 1
             jac_local = DifferentiationInterface.jacobian(
                 fdiff_backend,
-                @SVector zeros(T, 2),
+                @SVector(zeros(T, 2)),
                 Constant(A),
                 Constant(B),
                 Constant(shift_dirs[i]),
                 Constant(shift_dirs[j]),
-                Constant(ℓ_BC)
+                Constant(ℓ_BC),
             ) do s, pA, pB, dirA, dirB, ℓ_BC_noshift
                 A_shifted = pA + s[1] * dirA
                 B_shifted = pB + s[2] * dirB
@@ -318,6 +319,70 @@ end
 
 Euler2D.cell_boundary_polygon(cell::PseudoinversionCell) = cell.boundary
 
+using Euler2D.ShockInterpolation: n_points, x_knots, y_knots
+using Euler2D.ShockInterpolation: interpolation_segments, interpolation_normals_at_points
+
+"""
+    pseudoinversion_cell_polys(bow_shock_interp, L)
+
+Build the set of polygons for pseudoinversion with tangent-to-shock side lengths `L`.
+"""
+function pseudoinversion_cell_polys(bow_shock_interp, L)
+    segments = interpolation_segments(bow_shock_interp)
+    corner_normals = interpolation_normals_at_points(bow_shock_interp)
+
+    out = SClosedPolygon{4,Float64}[]
+    sizehint!(out, 3 * n_points(bow_shock_interp))
+    for i = 2:n_points(bow_shock_interp)
+        n1 = corner_normals[i-1]
+        n2 = corner_normals[i]
+        A, B = segments[i]
+        Qi_L = SClosedPolygon(A, A + L * n1, B + L * n2, B)
+        Qi = SClosedPolygon(A, B, B - L * n2, A - L * n1)
+        Qi_R = SClosedPolygon(A - L * n1, B - L * n2, B - 2 * L * n2, A - 2 * L * n2)
+        push!(out, Qi_L, Qi, Qi_R)
+    end
+
+    return out
+end
+
+function _du_ds_via_product_rule(
+    u_j,
+    ∇x_u_j,
+    x_c_j,
+    sim_cell_boundary,
+    pinv_cell_boundary,
+    pinv_shift_dirs,
+)
+    # intersection between the pinv and simulation cells
+    p_isect = poly_intersection(pinv_cell_boundary, sim_cell_boundary)
+    # area of that intersection
+    A_isect = poly_area(p_isect)
+    # and its dependence on s
+    dA_isect_ds =
+        intersection_area_gradient(pinv_cell_boundary, pinv_shift_dirs, sim_cell_boundary)
+
+    # value of u in the intersection
+    u_isect = inv(num_vertices(p_isect)) * sum(edge_starts(p_isect)) do pt_l
+        return u_j + ∇x_u_j * (pt_l - x_c_j)
+    end
+    # dependence of u_isect on the shifts s
+    du_isect_ds =
+        inv(num_vertices(p_isect)) *
+        ∇x_u_j *
+        sum(edge_starts(p_isect)) do pt_l
+            ∇s_pt_l = intersection_point_gradient(
+                pt_l,
+                pinv_cell_boundary,
+                pinv_shift_dirs,
+                sim_cell_boundary,
+            )
+            # factor out ∇u, since it's constant (linear approximation)
+            return ∇s_pt_l
+        end
+    return u_isect * dA_isect_ds' + A_isect * du_isect_ds
+end
+
 function compute_pseudoinversion_cell_contents(
     pinv_cell::PseudoinversionCell{T,NS,NT},
     sim::CellBasedEulerSim{T,TangentQuadCell{T,NS,NT}},
@@ -328,7 +393,7 @@ function compute_pseudoinversion_cell_contents(
     pinv_cell_boundary = cell_boundary_polygon(pinv_cell)
     A, dAds = DifferentiationInterface.value_and_gradient(
         fdiff_backend,
-        zero(SVector{T,4}),
+        @SVector(zeros(T, 4)),
         Constant(pinv_cell_boundary),
         Constant(pinv_cell.vertex_shift_dirs),
     ) do s, poly, ns
@@ -352,44 +417,15 @@ function compute_pseudoinversion_cell_contents(
     # Interested in the first term inside the big brackets
     # namely A * sum_j partial_s_k * iint_CjnQi u dA
     dU_tot_ds = mapreduce(+, overlapped) do id
-        # boundary of the simulation cell
-        boundary_loc = cell_boundary_polygon(cells[id])
-        # intersection between the simulation and pinv cells
-        p_isect = poly_intersection(pinv_cell_boundary, boundary_loc)
-        # area of that intersection
-        A_isect = poly_area(p_isect)
-        # and its dependence on s
-        dA_isect_ds = intersection_area_gradient(
+        ∇_x_u = estimate_∇u_in_rectangular_cell(cells[id], sim, tstep, boundary_conditions, gas)
+        return _du_ds_via_product_rule(
+            cells[id].u,
+            ∇_x_u,
+            cell_center(cells[id]),
+            cell_boundary_polygon(cells[id]),
             pinv_cell_boundary,
             pinv_cell.vertex_shift_dirs,
-            boundary_loc,
         )
-
-        # value of u in the simulation cell
-        u_loc = cells[id].u
-        x_c_loc = cells[id].center
-        ∇x_u_loc =
-            estimate_∇u_in_rectangular_cell(id, sim, tstep, boundary_conditions, gas)
-        # value of u in the intersection
-        u_isect =
-            inv(num_vertices(p_isect)) * sum(edge_starts(p_isect)) do pt_l
-                return u_loc + ∇x_u_loc * (pt_l - x_c_loc)
-            end
-        # dependence of u_isect on the shifts s
-        du_isect_ds =
-            inv(num_vertices(p_isect)) *
-            ∇x_u_loc *
-            sum(edge_starts(p_isect)) do pt_l
-                ∇s_pt_l = intersection_point_gradient(
-                    pt_l,
-                    pinv_cell_boundary,
-                    pinv_cell.vertex_shift_dirs,
-                    boundary_loc,
-                )
-                # factor out ∇u, since it's constant (linear approximation)
-                return ∇s_pt_l
-            end
-        return u_isect * dA_isect_ds' + A_isect * du_isect_ds
     end
     du_ds = inv(A^2) * (A * dU_tot_ds - U_tot * dAds')
     return inv(A) * U_tot, inv(A) * Udot_tot, du_ds
@@ -500,6 +536,8 @@ function _unmarshal_edge_data_gradient(g)
     @assert size(g) == (7, 4)
     return (g[1, :], g[SVector(2, 3), :], g[SVector(4, 5), :], g[SVector(6, 7), :])
 end
+
+# TODO these are in the containing Euler2D module now!
 
 function project_to_orthonormal_basis(v, new_basis_x)
     B = PlanePolygons.orthonormal_basis(new_basis_x)
