@@ -823,10 +823,11 @@ function _simulate(initial_state::CellBasedEulerSim{T,C}, config) where {T,C}
     if config[:write_result]
         tape_path = config[:prepend_data_dir] ? joinpath(pwd(), "data") : pwd()
         tape_file = joinpath(tape_path, config[:output_tag] * ".celltape")
+        output_path = dirname(tape_file)
         status_file = joinpath(tape_path, config[:output_tag] * ".status")
-        if !isdir(tape_path)
-            @info "Creating data directory/ies at $tape_path"
-            mkpath(tape_path)
+        if !isdir(output_path)
+            @info "Creating data directory/ies at $tape_path; creating subdirectories for output tag $(config[:output_tag])."
+            mkpath(output_path)
         end
     else
         @info "Only the final value of the simulation will be available." T_end =
