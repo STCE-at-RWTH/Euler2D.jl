@@ -638,7 +638,6 @@ Keyword Arguments (and their default values)
 - `scale::EulerEqnsScaling = _SI_DEFAULT_SCALE`: A set of non-dimensionalization parameters.
 - `cfl_limit = 0.75`: The CFL condition to apply to `Δt`. Between zero and one, default `0.75`.
 - `max_tsteps=typemax(Int)`: Maximum number of time steps to take. Defaults to "very large".
-- `convergence_thold=1.0e-10`: Convergence threshold for the L2 norm of the flux
 - `write_result = true`: Should output be written to disk?
 - `output_channel_size = 5`: How many time steps should be buffered during I/O?
 - `write_frequency = 1`: How often should time steps be written out?
@@ -649,6 +648,9 @@ Keyword Arguments (and their default values)
 - `info_frequency = 10`: How often should info be printed?
 - `tasks_per_axis = Threads.nthreads()`: How many partitions should be created on each axis?
 - `convergence_test_freqency = 1`: How often should the convergencce measures be tested?
+- `l1_thold=5.0e-10`: Convergence threshold for the L1 operator norm of the update (may also be a tuple)
+- `l2_thold=1.0e-8`: Convergence threshold for the L2 operator norm of the update (may also be a tuple)
+- `linf_thold=5.0e-8`: Convergence threshold for L∞ operator norm of the update (may also be a tuple)
 - `boundary_conditions = (Phantom, StrongWall, Phantom, Phantom, StrongWall)`: Can't save these to a file (sad)
 """
 function cell_simulation_config(; kwargs...)
@@ -658,7 +660,6 @@ function cell_simulation_config(; kwargs...)
         :scale => _SI_DEFAULT_SCALE,
         :cfl_limit => 0.75,
         :max_tsteps => typemax(Int),
-        :convergence_thold => 1.0e-10,
         :maximum_wall_duration => Hour(167),
         :write_result => true,
         :output_channel_size => 5,
@@ -670,6 +671,9 @@ function cell_simulation_config(; kwargs...)
         :info_frequency => 10,
         :tasks_per_axis => Threads.nthreads(),
         :convergence_test_freqency => 1,
+        :l1_thold => 5.0e-10,
+        :l2_thold => 1.0e-8,
+        :linf_thold => 5.0e-8,
         :boundary_conditions => (
             ExtrapolateToPhantom(),
             StrongWall(),
@@ -885,10 +889,17 @@ function _simulate(initial_state::CellBasedEulerSim{T,C}, config) where {T,C}
 
         # compute convergence estimates
         # merge! is fast. probably.
-        collect_cell_partition_updates!(updates_buffer, cell_partitions)
-        l1_conv = _l1_convergence_measure(global_cell_ids, updates_buffer, dA)
-        l2_conv = _l2_convergence_measure(global_cell_ids, updates_buffer, dA)
-        lInf_conv = _lInf_convergence_measure(global_cell_ids, updates_buffer, dA)
+        if (n_computed_tsteps - 1) % config[:convergence_test_freqency] == 0
+            collect_cell_partition_updates!(updates_buffer, cell_partitions)
+            l1_conv = _l1_convergence_measure(global_cell_ids, updates_buffer, dA)
+            l2_conv = _l2_convergence_measure(global_cell_ids, updates_buffer, dA)
+            lInf_conv = _lInf_convergence_measure(global_cell_ids, updates_buffer, dA)
+
+            convergence_pass =
+                all(l1_conv .≤ config[:l1_thold]) &&
+                all(l2_conv .≤ config[:l2_thold]) &&
+                all(lInf_conv .≤ config[:linf_thold])
+        end
 
         # step the timer forward and print if we wish
         advance_timing_infos!(timing_infos)
@@ -922,8 +933,8 @@ function _simulate(initial_state::CellBasedEulerSim{T,C}, config) where {T,C}
         )
             # exit status 3 for "out of wall clock time"
             time_stepping_status = 3
-        elseif first(l2_conv) <= config[:convergence_thold]
-            # exit status 4 for "l2 norm converged"
+        elseif convergence_pass
+            # exit status 4 for "all norms converged"
             time_stepping_status = 4
         end
         # one final check if we should print some info to the console upon termination

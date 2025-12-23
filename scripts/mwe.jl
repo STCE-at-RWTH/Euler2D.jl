@@ -60,6 +60,10 @@ sim_config = Euler2D.cell_simulation_config(;
     output_channel_size = 2,
     tasks_per_axis = 12,
     boundary_conditions = bcs,
+    convergence_test_frequency = 10,
+    l1_thold = (1.0e-10, 1.0e-8),
+    l2_thold = (1.0e-10, 1.0e-8),
+    lInf_thold = (1.0e-8, 5.0e-8),
 )
 
 Euler2D.start_simulation_from_initial_conditions(
