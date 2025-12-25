@@ -650,7 +650,7 @@ Keyword Arguments (and their default values)
 - `convergence_test_freqency = 1`: How often should the convergencce measures be tested?
 - `l1_thold=5.0e-10`: Convergence threshold for the L1 operator norm of the update (may also be a tuple)
 - `l2_thold=1.0e-8`: Convergence threshold for the L2 operator norm of the update (may also be a tuple)
-- `linf_thold=5.0e-8`: Convergence threshold for L∞ operator norm of the update (may also be a tuple)
+- `lInf_thold=5.0e-8`: Convergence threshold for L∞ operator norm of the update (may also be a tuple)
 - `boundary_conditions = (Phantom, StrongWall, Phantom, Phantom, StrongWall)`: Can't save these to a file (sad)
 """
 function cell_simulation_config(; kwargs...)
@@ -673,7 +673,7 @@ function cell_simulation_config(; kwargs...)
         :convergence_test_freqency => 1,
         :l1_thold => 5.0e-10,
         :l2_thold => 1.0e-8,
-        :linf_thold => 5.0e-8,
+        :lInf_thold => 5.0e-8,
         :boundary_conditions => (
             ExtrapolateToPhantom(),
             StrongWall(),
@@ -899,7 +899,7 @@ function _simulate(initial_state::CellBasedEulerSim{T,C}, config) where {T,C}
             convergence_pass =
                 all(l1_conv .≤ config[:l1_thold]) &&
                 all(l2_conv .≤ config[:l2_thold]) &&
-                all(lInf_conv .≤ config[:linf_thold])
+                all(lInf_conv .≤ config[:lInf_thold])
         end
 
         # step the timer forward and print if we wish
