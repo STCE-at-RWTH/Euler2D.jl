@@ -354,10 +354,10 @@ function estimate_∇u_in_rectangular_cell(
 )
     _, active_cells = nth_step(sim, n)
     nbrs = neighbor_cells(cell, active_cells, boundary_conditions, gas)
-    # TODO should this be cell.extent + east.extent/2 + west.extent/2 ?
-    dudx = (nbrs.east.u - nbrs.west.u) / cell.extent[1]
-    # TODO same but north south
-    dudy = (nbrs.north.u - nbrs.south.u) / cell.extent[2]
+    hx = cell.extent[1] + 0.5 * (nbrs.east.extent[1] + nbrs.west.extent[1])
+    hy = cell.extent[2] + 0.5 * (nbrs.south.extent[2] + nbrs.north.extent[2])
+    dudx = (nbrs.east.u - nbrs.west.u) / hx
+    dudy = (nbrs.north.u - nbrs.south.u) / hy
     return hcat(dudx, dudy)
 end
 
