@@ -122,11 +122,7 @@ function eigenvalues_∇F_euler(u, dim, gas::CaloricallyPerfectGas)
     ρv = select_middle(u)
     v = ρv / u[1]
     a = dimensionless_speed_of_sound(u, gas)
-    return vcat_state_components(
-        v[dim] - a,
-        SVector(ntuple(Returns(v[dim]), length(v))),
-        v[dim] + a,
-    )
+    return SVector(v[dim] - a, ntuple(Returns(v[dim]), length(v))..., v[dim] + a)
 end
 
 function eigenvalues_∇F_euler(
@@ -136,11 +132,7 @@ function eigenvalues_∇F_euler(
 ) where {N,T,Q1,Q2,Q3}
     v = ustrip.(ShockwaveProperties._units_v, velocity(u))
     a = ustrip(ShockwaveProperties._units_v, speed_of_sound(u, gas))
-    return vcat_state_components(
-        v[dim] - a,
-        SVector(ntuple(Returns(v[dim]), N)),
-        v[dim] + a,
-    )
+    return SVector(v[dim] - a, ntuple(Returns(v[dim]), N)..., v[dim] + a)
 end
 
 """
