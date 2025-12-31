@@ -92,6 +92,7 @@ include("cell_simulations/simulations.jl")
 
 include("postprocessing/canny_rh_filter.jl")
 include("postprocessing/shock_interpolation.jl")
+include("postprocessing/shock_sensitivity.jl")
 include("postprocessing/local_pseudoinversion.jl")
 include("postprocessing/bressan.jl")
 
