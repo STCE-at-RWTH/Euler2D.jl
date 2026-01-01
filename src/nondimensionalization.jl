@@ -45,10 +45,7 @@ function redimensionalize(u_star::SVector{N,T}, s) where {N,T}
     return ConservedProps(ρ, ρv, ρE)
 end
 
-function dimensionless_pressure(
-    u_star::SVector{N,T},
-    gas::CaloricallyPerfectGas,
-) where {N,T}
+function dimensionless_pressure(u_star::SVector{N,T}, gas) where {N,T}
     ρv_star = select_middle(u_star)
     return (gas.γ - 1) * (u_star[N] - ρv_star ⋅ ρv_star / (2 * u_star[1]))
 end
@@ -58,10 +55,7 @@ end
 
 Compute the non-dimesionalized speed of sound `a_star` from the nondimesionalized state variable `u``
 """
-function dimensionless_speed_of_sound(
-    u_star::SVector{N,T},
-    gas::CaloricallyPerfectGas,
-) where {N,T}
+function dimensionless_speed_of_sound(u_star::SVector{N,T}, gas) where {N,T}
     P_star = dimensionless_pressure(u_star, gas)
     return sqrt(gas.γ * (P_star / u_star[1]))
 end
@@ -71,10 +65,7 @@ end
 
 Compute the dimnensionless mach number of state `u_star` in `gas`.
 """
-function dimensionless_mach_number(
-    u_star::SVector{N,T},
-    gas::CaloricallyPerfectGas,
-) where {N,T}
+function dimensionless_mach_number(u_star::SVector{N,T}, gas) where {N,T}
     a = dimensionless_speed_of_sound(u_star, gas)
     ρa = u_star[1] * a
     return select_middle(u_star) ./ ρa
@@ -98,10 +89,7 @@ Compute the dimensionless total enthalpy density `ρH_star` from the nondimesion
 
 INCLUDES KINETIC ENERGY!
 """
-function dimensionless_total_enthalpy_density(
-    u_star::SVector{N,T},
-    gas::CaloricallyPerfectGas,
-) where {N,T}
+function dimensionless_total_enthalpy_density(u_star::SVector{N,T}, gas) where {N,T}
     return u_star[N] + dimensionless_pressure(u_star, gas)
 end
 
