@@ -245,7 +245,7 @@ function compute_coarse_cell_contents(
         )
         # # dependence of u(x) at each of the overlapping area's corners
         du_dx_vtxs = mapreduce(hcat, edge_starts(p_union)) do pt
-            ∇u_at(sim, tstep, pt..., boundary_conditions, gas; padding = 2 .* min_cell_size)
+            ∇u_at(pt, sim, tstep, boundary_conditions, gas; padding = 2 .* min_cell_size)
         end
         # dependence of the overlapping area's corners on the big cell's corners
         dxj = mapreduce(vcat, edge_starts(p_union)) do pt

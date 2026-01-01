@@ -37,7 +37,7 @@ export ShockwaveProperties
 export DRY_AIR
 
 # methods
-export F_euler
+export F_euler, F_euler_n
 export interface_signal_speeds
 export eigenvectors_∇F_euler, eigenvectors_∇G_euler
 

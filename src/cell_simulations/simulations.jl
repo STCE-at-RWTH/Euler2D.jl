@@ -390,11 +390,32 @@ function _in_window(cell, window_x, window_y)
     )
 end
 
+function u_at(x, y, sim, n)
+    xs, ys = cell_boundaries(sim)
+    _, cells = nth_step(sim, n)
+    @assert first(xs) <= x <= last(xs) && first(ys) <= y <= last(ys)
+    Δi = floor(Int, (x - first(xs)) / step(xs))
+    Δj = floor(Int, (y - first(ys)) / step(ys))
+    return cells[sim.cell_ids[begin+Δi, begin+Δj]].u
+end
+
+function u_and_u̇_at(x, y, sim, n)
+    xs, ys = cell_boundaries(sim)
+    _, cells = nth_step(sim, n)
+    @assert first(xs) <= x <= last(xs) && first(ys) <= y <= last(ys)
+    Δi = floor(Int, (x - first(xs)) / step(xs))
+    Δj = floor(Int, (y - first(ys)) / step(ys))
+    c = cells[sim.cell_ids[begin+Δi, begin+Δj]]
+    return (c.u, c.u̇)
+end
+
+u_at(pt, sim, n) = u_at(pt..., sim, n)
+
 # I am no longer satisfied that this implementation is correct
 # re: what happens when (x, y) lands on a boundary of the simulation?
 # TODO check that we are computing (phantom) neighbor cells correctly 
 # so that we can estimate gradients?
-function ∇u_at(sim, n, x, y, bcs, gas; padding = nothing)
+function ∇u_at(x, y, sim, n, bcs, gas; padding = nothing)
     window = if isnothing(padding)
         dx, dy = 2 .* minimum_cell_size(sim)
         (x .+ (-dx, dx), y .+ (-dy, dy))
@@ -417,6 +438,10 @@ function ∇u_at(sim, n, x, y, bcs, gas; padding = nothing)
         @reset acc += estimate_∇u_in_rectangular_cell(c, sim, n, bcs, gas)
     end
     return acc / counter
+end
+
+function ∇u_at(pt, sim, n, bcs, gas; padding = nothing)
+    return ∇u_at(pt..., sim, n, bcs, gas; padding = padding)
 end
 
 """
