@@ -27,7 +27,7 @@ using Unitful: @derived_dimension, Density, Pressure, Velocity
 # STCE packages
 using PlanePolygons
 using ShockwaveProperties
-using ShockwaveProperties: MomentumDensity, EnergyDensity
+# using ShockwaveProperties: MomentumDensity, EnergyDensity
 using SimpleIntegration
 
 const fdiff_backend = AutoForwardDiff()
@@ -35,6 +35,10 @@ const fdiff_backend = AutoForwardDiff()
 # reexport
 export ShockwaveProperties
 export DRY_AIR
+
+# modules
+export CannyShockSensor, ShockInterpolation
+export ShockSensitivity, LocalPseudoinversion
 
 # methods
 export F_euler, F_euler_n

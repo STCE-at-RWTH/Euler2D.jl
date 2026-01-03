@@ -88,7 +88,7 @@ end
 
 function _segment_normal(A, B)
     ℓ = PlanePolygons.Line(A, B - A)
-    return normalize(left_normal(ℓ))
+    return normalize(right_normal(ℓ))
 end
 
 function interpolation_normals_at_points(interp)
@@ -100,6 +100,12 @@ function interpolation_normals_at_points(interp)
         return normalize(0.5 * (n1 + n2))
     end
     push!(normals, n_end)
+end
+
+function interpolation_normal_axes_at_points(interp)
+    pts = interpolation_points(interp)
+    ns = interpolation_normals_at_points(interp)
+    map((pt, dir) -> PlanePolygons.Line(pt, dir), pts, ns)
 end
 
 function _interpolation_segment(interp, y)
