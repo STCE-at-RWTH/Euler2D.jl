@@ -170,11 +170,11 @@ a pressure increase across the shock (upstream -> downstream).
 """
 function relative_mach_number_change_as_if_shock(θij, u_A, u_B, gas)
     v_shock = _shock_velocity(θij, u_A, u_B, gas)
-    u_shock_A = translate_velocity_coordinates(u_A, v_shock)
-    u_shock_B = translate_velocity_coordinates(u_B, v_shock)
     n = normalize(v_shock)
-    Mn_A = dimensionless_mach_number(u_shock_A, gas) ⋅ n
-    Mn_B = dimensionless_mach_number(u_shock_B, gas) ⋅ n
+    u_shock_A = change_space_coordinates_and_shift_v(u_A, n, v_shock)
+    u_shock_B = change_space_coordinates_and_shift_v(u_B, n, v_shock)
+    Mn_A = first(dimensionless_mach_number(u_shock_A, gas))
+    Mn_B = first(dimensionless_mach_number(u_shock_B, gas))
     return abs((Mn_A - Mn_B) / Mn_A)
 end
 
