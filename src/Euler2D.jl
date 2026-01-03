@@ -41,7 +41,7 @@ export CannyShockSensor, ShockInterpolation
 export ShockSensitivity, LocalPseudoinversion
 
 # methods
-export F_euler, F_euler_n
+export F_euler
 export interface_signal_speeds
 export eigenvectors_∇F_euler, eigenvectors_∇G_euler
 

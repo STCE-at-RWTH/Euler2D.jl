@@ -87,13 +87,6 @@ function F_euler(u, gas::CaloricallyPerfectGas)
     return vcat(ρv', ρv_flux, (ρv * (u[end] + P) / u[1])')
 end
 
-"""
-    F_euler_n(u, n, gas)
-
-Computes the flux normal to a given unit vector ``n̂``. Useful for verifying the Rankine-Hugoniot conditions.
-"""
-F_euler_n(u, n̂, gas::CaloricallyPerfectGas) = F_euler(u, gas) * n̂
-
 # TODO this allocates, is type unstable
 # function select_space_dim(
 #     F_e::ConservedPropsTransport{N,T,U1,U2,U3},
