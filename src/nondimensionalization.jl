@@ -45,9 +45,9 @@ function redimensionalize(u_star::SVector{N,T}, s) where {N,T}
     return ConservedProps(ρ, ρv, ρE)
 end
 
-function dimensionless_pressure(u_star::SVector{N,T}, gas) where {N,T}
+function dimensionless_pressure(u_star, gas)
     ρv_star = select_middle(u_star)
-    return (gas.γ - 1) * (u_star[N] - ρv_star ⋅ ρv_star / (2 * u_star[1]))
+    return (gas.γ - 1) * (last(u_star) - ρv_star ⋅ ρv_star / (2 * first(u_star)))
 end
 
 """

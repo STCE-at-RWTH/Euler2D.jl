@@ -74,17 +74,30 @@ This implementation will strip out units, and convert down to metric base units 
 """
 function F_euler(u::SVector{S,T}, gas::CaloricallyPerfectGas) where {S,T}
     ρv = select_middle(u)
-    v = SVector{S - 2,T}(ρv / u[1])
+    v = ρv / u[1]
     P = dimensionless_pressure(u, gas)
     ρv_flux = ρv * v' + I * P
     return vcat(ρv', ρv_flux, (v * (u[end] + P))')
 end
 
-function F_euler(u, gas::CaloricallyPerfectGas)
-    ρv = @view(u[2:end-1])
-    P = ustrip(ShockwaveProperties._units_P, pressure(u[1], ρv, u[end], gas))
-    ρv_flux = (ρv * ρv') / u[1] + I * P
-    return vcat(ρv', ρv_flux, (ρv * (u[end] + P) / u[1])')
+# we could definitely clean up the allocs here but it's better than it was now
+function F_euler(u, gas)
+    F = similar(u, (length(u), length(u) - 2))
+    ρ = first(u)
+    ρv = select_middle(u)
+    ρE = last(u)
+    P = dimensionless_pressure(u, gas)
+    # shout out broadcast fusion
+    @. F[begin, :] = ρv
+    F[begin+1:end-1, :] .= (ρv .* ρv') ./ ρ
+    F[begin+1:end-1, :] += I * P
+    c1 = (ρE + P) / ρ
+    @. F[end, :] = ρv * c1
+    return F
+end
+
+function F_euler(u::ConservedProps, gas, scale)
+    return F_euler(nondimensionalize(u, scale), gas)
 end
 
 # TODO this allocates, is type unstable
