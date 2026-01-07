@@ -13,6 +13,8 @@ using Euler2D: CannyShockSensor, ShockInterpolation
 using Euler2D: CaloricallyPerfectGas
 using Euler2D: fdiff_backend
 
+using .CannyShockSensor: hugoniot_equation_relative_err
+
 _F_e1(u, gas) = F_euler(u, gas)[:, 1]
 
 function _∇F_e1(u, gas)
@@ -20,14 +22,19 @@ function _∇F_e1(u, gas)
 end
 
 function _F_e1_and_jvp(u, udot, gas)
-    (F, (Fdot,)) = DifferentiationInterface.value_and_pushforward(
-        _F_e1,
+    (F, (Fdot,)) = value_and_pushforward(_F_e1, fdiff_backend, u, (udot,), Constant(gas))
+    return F, Fdot
+end
+
+function _change_space_coords_jvp(u, udot, T_or_e1)
+    (u_θ, (udot_θ,)) = value_and_pushforward(
+        Euler2D.change_space_coordinates,
         fdiff_backend,
         u,
         (udot,),
-        Constant(gas),
+        Constant(T_or_e1),
     )
-    return F, Fdot
+    return u_θ, udot_θ
 end
 
 _total_dp_U(dU_ds, Γdot, Udot) = dU_ds * Γdot + Udot
@@ -84,20 +91,8 @@ function ShockSensitivityStep(shock_point, shock_normal, pdot, Cr, Δs, alpha, s
     U_R_xy, Udot_R_xy = Euler2D.u_and_u̇_at(shock_normal_axis(Cr_ds_alpha)..., sim, 1)
     U_LL_xy = Euler2D.u_at(shock_normal_axis(-Cr_ds_alpha - 2 * Δs)..., sim, 1)
     U_RR_xy = Euler2D.u_at(shock_normal_axis(Cr_ds_alpha + 2 * Δs)..., sim, 1)
-    (U_L, (Udot_L,)) = DifferentiationInterface.value_and_pushforward(
-        Euler2D.change_space_coordinates,
-        fdiff_backend,
-        U_L_xy,
-        (Udot_L_xy * pdot,),
-        Constant(shock_normal),
-    )
-    (U_R, (Udot_R,)) = DifferentiationInterface.value_and_pushforward(
-        Euler2D.change_space_coordinates,
-        fdiff_backend,
-        U_R_xy,
-        (Udot_R_xy * pdot,),
-        Constant(shock_normal),
-    )
+    U_L, Udot_L = _change_space_coords_jvp(U_L_xy, Udot_L_xy * pdot, shock_normal)
+    U_R, Udot_R = _change_space_coords_jvp(U_R_xy, Udot_R_xy * pdot, shock_normal)
     U_LL = Euler2D.change_space_coordinates(U_LL_xy, shock_normal)
     U_RR = Euler2D.change_space_coordinates(U_RR_xy, shock_normal)
     dU_Lds = (U_L - U_LL) / (2 * Δs)
@@ -144,51 +139,22 @@ function verify_stationary_shock_sensitivity(Γdot_guess, data)
     return @. ΔdFn_dp - inv(ΔU) * ΔFn * ΔdU_dp
 end
 
-@doc raw"""
-    sensitivity_via_fixed_point(...)
+function verify_jump_properties(data)
+    hugoniot_error = hugoniot_equation_relative_err(data.U_L, data.U_R, data.gas)
+    P_ratio =
+        dimensionless_pressure(data.U_R, data.gas) /
+        dimensionless_pressure(data.U_L, data.gas)
+    P_ratio_ideal = ShockwaveProperties.shock_pressure_ratio(
+        dimensionless_mach_number(data.U_L, data.gas),
+        SVector(1.0, 0.0),
+        data.gas,
+    )
 
-Arguments
----
-- `UL` = ``U(Γ - \hat{n}(C_r\Delta x^\alpha))``
-- `ULL` = ``U(Γ - \hat{n}(C_r\Delta x^\alpha + 2\Delta x))``
-- `UR` = ``U(Γ + \hat{n}(C_r\Delta x^\alpha))``
-- `URR` = ``U(Γ + \hat{n}(C_r\Delta x^\alpha + 2\Delta x))``
-- `UdotL` = ``U^{(1)}(Γ - \hat{n}(C_r\Delta x^\alpha))``
-- `UdotR` = ``U^{(1)}(Γ + \hat{n}(C_r\Delta x^\alpha))``
-- `n` = ``\hat{n}(w)``, which points *TOWARDS* the "right"
-- `Δs`
-- `gas`: the calorically perfect gas in question.
-"""
-function sensitivity_via_fixed_point(UL, ULL, UR, URR, UdotL, UdotR, n, Δs, gas)
-    ΔU = UL - UR
-    # estimates for du/ds on either side of the shock
-    # where s = 0 is right on the shock, and the axis in question is Γ+s*n
-    dUL_ds = (UL - ULL) / (2 * Δs)
-    dUR_ds = (URR - UR) / (2 * Δs)
+    P_ratio_error = abs(1 - P_ratio / P_ratio_ideal)
+    vL = dimensionless_velocity(data.U_L)
+    vR = dimensionless_velocity(data.U_R)
+    velocity_error = abs(1 - last(vL) / last(vR))
 
-    Fn_L = F_euler_n(UL, n, gas)
-    Fn_R = F_euler_n(UR, n, gas)
-    ΔFn = Fn_L - Fn_R
-
-    ∇Fn_L = _∇F_n(UL, n, gas)
-    ∇Fn_R = _∇F_n(UR, n, gas)
-
-    ΔΓdot(Γdot) =
-        let ΔU = ΔU,
-            ΔFn = ΔFn,
-            ∇Fn_L = ∇Fn_L,
-            ∇Fn_R = ∇Fn_R,
-            dUL_ds = dUL_ds,
-            dUR_ds = dUR_ds,
-            UdotL = UdotL,
-            UdotR = UdotR
-
-            Δc1 = (_total_dp_U(dUL_ds, Γdot, UdotL) - _total_dp_U(dUR_ds, Γdot, UdotR))
-            Δc2 = (
-                _total_dp_Fn(∇Fn_L, dUL_ds, Γdot, UdotL) -
-                _total_dp_Fn(∇Fn_R, dUR_ds, Γdot, UdotR)
-            )
-            inv.(ΔU) .* Δc2 - inv.(ΔU .^ 2) .* ΔFn .* Δc1
-        end
+    return hugoniot_error, P_ratio_error, velocity_error
 end
 end
