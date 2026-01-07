@@ -91,7 +91,7 @@ function ϕ_hll(uL, uR, n, gas)
 end
 
 """
-    ϕ_hll(uL, u̇L, uR, u̇R, dim, gas)
+    ϕ_hll_and_jvp(uL, u̇L, uR, u̇R, dim, gas)
 
 Compute the Jacobian-vector product of `ϕ_hll` given seeds `u̇L` and `u̇R`.
 
