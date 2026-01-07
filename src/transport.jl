@@ -6,7 +6,7 @@ Outputs a matrix with one column for each space dimension.
 
 This implementation will strip out units, and convert down to metric base units in the process. 
 """
-function F_euler(u::SVector{S,T}, gas::CaloricallyPerfectGas) where {S,T}
+function F_euler(u::SVector{S,T}, gas) where {S,T}
     ρv = select_middle(u)
     v = ρv / u[1]
     P = dimensionless_pressure(u, gas)
