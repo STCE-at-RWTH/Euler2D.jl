@@ -75,14 +75,14 @@ end
 Shift the vertices of `poly` by `shift[i] * dirs[i]`.
 """
 function shift_polygon_vertices_in_direction(
-    poly::SClosedPolygon{NV,T},
+    poly::SizedClockwiseOrientedPolygon{NV},
     dirs,
     shift,
-) where {NV,T}
+) where {NV}
     new_pts = map(edge_starts(poly), dirs, shift) do p, n, s_i
         p + s_i * n
     end
-    return SClosedPolygon{NV,T}(new_pts)
+    return new_pts
 end
 ### END POLYGON UTILITIES
 

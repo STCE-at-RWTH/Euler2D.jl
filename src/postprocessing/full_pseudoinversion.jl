@@ -12,13 +12,94 @@ using StaticArrays
 using Tullio
 
 using Euler2D
-using Euler2D: CellNeighboring
+using Euler2D: CellNeighboring, OTHER_QUADCELL, BOUNDARY_CONDITION, IS_PHANTOM
 using Euler2D: shift_polygon_vertices_in_direction, fdiff_eps, select_middle
 using Euler2D: all_cells_overlapping, total_mass_contained_by
 using Euler2D: total_mass_contained_by_with_gradient_estimates
 using Euler2D: fdiff_backend, estimate_∇u_in_rectangular_cell
 
 using PlanePolygons
+
+### POSTPROCESS A SIMULATION BY EXPANDING THE SYMMETRY OVER THE X-AXIS
+
+# update the cell id and neighbors of a cell that is still in the old region
+# id -> 2*id-1
+function _update_cell_id_and_insert_into!(new_cells, old_cell)
+    new_cell = @set old_cell.id = 2 * old_cell.id - 1
+    @reset new_cell.neighbors = map(new_cell.neighbors) do (nbr, i)
+        return nbr == OTHER_QUADCELL ? (nbr, 2 * i - 1) : (nbr, i)
+    end
+    new_cells[new_cell.id] = new_cell
+end
+
+# update the cell id, neighbors, and values of a cell that's in the flipped region
+# id -> 2*id
+function _flip_cell_and_insert_into!(new_cells, old_cell)
+    new_cell = @set old_cell.id = 2 * old_cell.id
+    @reset new_cell.neighbors = map(new_cell.neighbors) do (nbr, i)
+        return nbr == OTHER_QUADCELL ? (nbr, 2 * i) : (nbr, i)
+    end
+    old_south = new_cell.neighbors.south
+    @reset new_cell.neighbors.south = new_cell.neighbors.north
+    @reset new_cell.neighbors.north = old_south
+    @reset new_cell.center = new_cell.center .* SVector(1, -1)
+    flip = Diagonal(SVector(1, 1, -1, 1))
+    @reset new_cell.u = flip * new_cell.u
+    @reset new_cell.u̇ = flip * new_cell.u̇
+    new_cells[new_cell.id] = new_cell
+end
+
+function _update_cell_idx_field!(cells, cell_ids)
+    for i ∈ eachindex(IndexCartesian(), cell_ids)
+        cell_ids[i] == 0 && continue
+        cell = cells[cell_ids[i]]
+        cells[cell_ids[i]] = @set cell.idx = i
+    end
+end
+
+function _expand_final_tstep_over_x_axis(sim)
+    (Nx, Ny_old) = grid_size(sim)
+    new_grid_size = (Nx, 2 * Ny_old)
+    new_cell_ids = similar(sim.cell_ids, new_grid_size)
+
+    known_region = @view new_cell_ids[:, begin+Ny_old:end]
+    for i in eachindex(sim.cell_ids, known_region)
+        known_region[i] = 2 * sim.cell_ids[i] - (sim.cell_ids[i] != 0)
+    end
+    new_region = @view new_cell_ids[:, Ny_old:-1:begin]
+    new_region .= 2 .* sim.cell_ids
+
+    (bounds_x, (_, yR)) = sim.bounds
+    new_bounds = (bounds_x, (-yR, yR))
+    (t_last, cells) = nth_step(sim, n_tsteps(sim))
+    new_cells = typeof(cells)()
+    sizehint!(new_cells, 2 * length(cells))
+
+    for (_, old_cell) ∈ cells
+        _update_cell_id_and_insert_into!(new_cells, old_cell)
+        _flip_cell_and_insert_into!(new_cells, old_cell)
+    end
+
+    _update_cell_idx_field!(new_cells, new_cell_ids)
+    foreach(@view(known_region[:, begin]), @view(new_region[:, begin])) do id_A, id_B
+        (id_A == 0 || id_B == 0) && return
+        cell_A = new_cells[id_A]
+        cell_B = new_cells[id_B]
+        new_cells[id_A] = @set cell_A.neighbors.south = (OTHER_QUADCELL, id_B)
+        new_cells[id_B] = @set cell_B.neighbors.north = (OTHER_QUADCELL, id_A)
+    end
+
+    return CellBasedEulerSim(
+        new_grid_size,
+        1,
+        new_bounds,
+        [t_last],
+        new_cell_ids,
+        [new_cells],
+    )
+end
+
+### 
 
 ### SOME POLYGON STUFF
 # To my future self: sorry
@@ -81,7 +162,8 @@ function intersection_point_gradient(
     poly2,
 ) where {N,T}
     @assert N == length(shift_dirs)
-    J = @SArray zeros(T, 2, N)
+    # just use a regular array here?
+    J = @MMatrix zeros(T, 2, N)
     # A and B are on i-th edge of poly1
     for (i, (A, B)) ∈ enumerate(zip(edge_starts(poly1), edge_ends(poly1), shift_dirs))
         ℓ_AB = Line(A, B - A)
@@ -109,8 +191,8 @@ function intersection_point_gradient(
                 ℓ_AB_shifted = Line(A_shifted, B_shifted - A_shifted)
                 return line_intersect(ℓ_AB_shifted, ℓ_BC_noshift)
             end
-            @reset J[:, i] = jac_local[:, 1]
-            @reset J[:, j] = jac_local[:, 2]
+            J[:, i] = jac_local[:, 1]
+            J[:, j] = jac_local[:, 2]
         end
     end
     return J
@@ -147,9 +229,15 @@ function intersection_area_gradient(poly1::SClosedPolygon{N,T}, s_dirs, poly2) w
     h = fdiff_eps(zero(T))
     s = @SVector zeros(T, N)
     for i in eachindex(s, grad)
-        poly1_minus_h = shift_polygon_vertices_in_direction(poly1, s_dirs, @set s[i] -= h)
-        poly1_plus_h = shift_polygon_vertices_in_direction(poly1, s_dirs, @set s[i] += h)
+        s_cur = @set s[i] -= h
+        poly1_minus_h =
+            SClosedPolygon(shift_polygon_vertices_in_direction(poly1, s_dirs, s_cur))
+        s_cur = @set s[i] += h
+        poly1_plus_h =
+            SClosedPolygon(shift_polygon_vertices_in_direction(poly1, s_dirs, s_cur))
         # maybe save a buffer here?
+        # made a change so that DifferentiationInterface could handle some things
+        # need to assert that we do have SClosedPolygons here
         A_minus = poly_area(poly_intersection(poly1_minus_h, poly2))
         A_plus = poly_area(poly_intersection(poly1_plus_h, poly2))
         @reset grad[i] = (A_plus - A_minus) / (2 * h)
@@ -158,6 +246,7 @@ function intersection_area_gradient(poly1::SClosedPolygon{N,T}, s_dirs, poly2) w
 end
 
 ## END POLYGON STUFF
+
 struct PseudoinversionCell{T,NSEEDS,NTANGENTS} <: FVMCell{T}
     id::Int
     boundary::SClosedPolygon{4,T}
@@ -165,6 +254,17 @@ struct PseudoinversionCell{T,NSEEDS,NTANGENTS} <: FVMCell{T}
     u::SVector{4,T}
     u̇::SMatrix{4,NSEEDS,T,NTANGENTS}
     du_ds::SMatrix{4,4,T,16}
+end
+
+function PseudoinversionCell{T,NS}(id, boundary, shift_dirs) where {T,NS}
+    return PseudoinversionCell{T,NS,4 * NS}(
+        id,
+        boundary,
+        shift_dirs,
+        @SVector(zeros(T, 4)),
+        @SMatrix(zeros(T, 4, NS)),
+        @SMatrix(zeros(T, 4, 4)),
+    )
 end
 
 Euler2D.cell_boundary_polygon(cell::PseudoinversionCell) = cell.boundary
@@ -177,22 +277,18 @@ using Euler2D.ShockInterpolation: interpolation_segments, interpolation_normals_
 
 Build the set of polygons for pseudoinversion with tangent-to-shock side lengths `L`.
 """
-function pseudoinversion_cell_polys(bow_shock_interp, L)
-    segments = interpolation_segments(bow_shock_interp)
-    corner_normals = interpolation_normals_at_points(bow_shock_interp)
-
+function pseudoinversion_cell_polys(segments, corner_normals, L)
     out = SClosedPolygon{4,Float64}[]
-    sizehint!(out, 3 * n_points(bow_shock_interp))
-    for i = 2:n_points(bow_shock_interp)
-        n1 = corner_normals[i-1]
-        n2 = corner_normals[i]
+    sizehint!(out, 3 * length(segments))
+    for i ∈ eachindex(segments)
+        n1 = corner_normals[begin+i-1]
+        n2 = corner_normals[begin+i]
         A, B = segments[i]
-        Qi_L = SClosedPolygon(A, A + L * n1, B + L * n2, B)
-        Qi = SClosedPolygon(A, B, B - L * n2, A - L * n1)
-        Qi_R = SClosedPolygon(A - L * n1, B - L * n2, B - 2 * L * n2, A - 2 * L * n2)
+        Qi_L = SClosedPolygon(A - L * n1, B - L * n2, B, A)
+        Qi = SClosedPolygon(A, B, B + L * n2, A + L * n1)
+        Qi_R = SClosedPolygon(A + L * n1, B + L * n2, B + 2 * L * n2, A + 2 * L * n1)
         push!(out, Qi_L, Qi, Qi_R)
     end
-
     return out
 end
 
@@ -210,7 +306,7 @@ function _du_ds_via_product_rule(
     # area of that intersection
     A_isect = poly_area(p_isect)
     # and its dependence on s
-    dA_isect_ds =
+    ∇s_A_isect = #@SVector zeros(eltype(u_j), length(pinv_shift_dirs))
         intersection_area_gradient(pinv_cell_boundary, pinv_shift_dirs, sim_cell_boundary)
 
     # Approximate value of the linear interpolation of u in the intersection...
@@ -218,7 +314,7 @@ function _du_ds_via_product_rule(
         return u_j + ∇x_u_j * (pt_l - x_center_j)
     end
     # dependence of u_isect on the shifts s
-    du_isect_ds =
+    du_isect_ds = # @SMatrix zeros(eltype(u_j), 4, length(pinv_shift_dirs))
         inv(num_vertices(p_isect)) *
         ∇x_u_j *
         sum(edge_starts(p_isect)) do pt_l
@@ -236,7 +332,7 @@ function _du_ds_via_product_rule(
     # plus
     # (A in R) * (du_ds in R^[4 x n_s]) -> something in R^4
     # sizes check out
-    return u_isect * dA_isect_ds' + A_isect * du_isect_ds
+    return u_isect * ∇s_A_isect' + A_isect * du_isect_ds
 end
 
 function compute_pseudoinversion_cell_contents(
@@ -253,7 +349,7 @@ function compute_pseudoinversion_cell_contents(
         Constant(pinv_cell_boundary),
         Constant(pinv_cell.vertex_shift_dirs),
     ) do s, poly, ns
-        return poly_area(shift_polygon_vertices_in_direction(poly, ns, s))
+        return poly_area(vcat(shift_polygon_vertices_in_direction(poly, ns, s)...))
     end
     _, cells = nth_step(sim, tstep)
     min_cell_size = minimum_cell_size(sim)
@@ -285,6 +381,60 @@ function compute_pseudoinversion_cell_contents(
     end
     du_ds = inv(A^2) * (A * dU_tot_ds - U_tot * dAds')
     return inv(A) * U_tot, inv(A) * Udot_tot, du_ds
+end
+
+function make_pseudoinversion_cells(
+    sim::CellBasedEulerSim{T,<:TangentQuadCell{T,NS,NP}},
+    bow_shock_interp,
+    L_tangent,
+    bcs,
+    gas,
+) where {T,NS,NP}
+    segments = interpolation_segments(bow_shock_interp)
+    corner_normals = interpolation_normals_at_points(bow_shock_interp)
+    pushfirst!(corner_normals, first(corner_normals) .* SVector(1, -1))
+    normals_S = @view corner_normals[begin:end-1]
+    normals_N = @view corner_normals[begin+1:end]
+    polys = pseudoinversion_cell_polys(segments, corner_normals, L_tangent)
+
+    pinv_cells = PseudoinversionCell{T,NS,NP}[]
+    sizehint!(pinv_cells, length(polys))
+    polys_view = reshape(polys, (3, n_points(bow_shock_interp)))
+    for i ∈ eachindex(normals_S, normals_N)
+        n1 = normals_S[i]
+        n2 = normals_N[i]
+        for j ∈ axes(polys_view, 1)
+            poly = polys_view[j, i]
+            shift_directions = if j % 3 == 1
+                # cell is to the "left" of the shock
+                # so we set its shift directions like this
+                SVector(@SVector(zeros(T, 2)), @SVector(zeros(T, 2)), n2, n1)
+            elseif j % 3 == 2
+                # cell is to the "right" of the shock
+                # so we set shift directions on the other two vertices
+                SVector(n1, n2, @SVector(zeros(T, 2)), @SVector(zeros(T, 2)))
+            else
+                # cell is not on the shock so we set its shift direction to be all zeros
+                SVector(
+                    @SVector(zeros(T, 2)),
+                    @SVector(zeros(T, 2)),
+                    @SVector(zeros(T, 2)),
+                    @SVector(zeros(T, 2)),
+                )
+            end
+            push!(pinv_cells, PseudoinversionCell{T,NS}(i, poly, shift_directions))
+        end
+    end
+
+    # for i ∈ eachindex(pinv_cells)
+    #     pinv_cell = pinv_cells[i]
+    #     contents = compute_pseudoinversion_cell_contents(pinv_cell, sim, 1, bcs, gas)
+    #     @reset pinv_cell.u = contents[1]
+    #     @reset pinv_cell.u̇ = contents[2]
+    #     @reset pinv_cell.du_ds = contents[3]
+    #     pinv_cells[i] = pinv_cell
+    # end
+    return pinv_cells
 end
 
 end

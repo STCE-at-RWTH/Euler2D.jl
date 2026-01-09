@@ -39,6 +39,7 @@ export DRY_AIR
 # modules
 export CannyShockSensor, ShockInterpolation
 export ShockSensitivity, LocalPseudoinversion
+export FullPseudoinversion
 
 # methods
 export F_euler
