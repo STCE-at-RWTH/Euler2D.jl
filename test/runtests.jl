@@ -18,12 +18,12 @@ using Unitful
         to_B = change_of_basis_matrix(I, B)
         @test isapprox(B[:, 1] ⋅ B[:, 2], 0.0; atol = 1.0e-12)
 
-        v_prime = change_space_coordinates(v, to_B)
+        v_prime = change_space_coordinates(v, B)
         @test v_prime isa SVector
         @test v_prime[3] == 0
         @test all(
             tpl -> isapprox(tpl...; atol = 1.0e-12),
-            zip(v, change_space_coordinates(v_prime, B)),
+            zip(v, change_space_coordinates(v_prime, to_B)),
         )
     end
 
@@ -66,13 +66,12 @@ using Unitful
                      [(ux_1, ux_2), (ux_2, ux_1), (ux_1, ux_4), (ux_4, ux_5), (ux_4, ux_2)]
             (x1, x2, x3) =
                 ExactRiemannSolverInternal.solve_for_jump_parameters(uL, uR, DRY_AIR)
-            primL = ExactRiemannSolverInternal.to_ρPv(uL, DRY_AIR)
-            @test primL[3] isa SVector
-            primL_★ =
-                ExactRiemannSolverInternal.T_1(primL[1], primL[2], primL[3][1], x1, DRY_AIR)
-            primR_★ = ExactRiemannSolverInternal.T_2(primL_★..., x2, DRY_AIR)
-            primR_appx = ExactRiemannSolverInternal.T_3(primR_★..., x3, DRY_AIR)
-            primR = ExactRiemannSolverInternal.to_ρPv(uR, DRY_AIR)
+            primL = ExactRiemannSolverInternal.to_primitive_drop_shear(uL, DRY_AIR)
+            @test primL[3] isa Real
+            primL_★ = ExactRiemannSolverInternal.T_1(primL, x1, DRY_AIR)
+            primR_★ = ExactRiemannSolverInternal.T_2(primL_★, x2)
+            primR_appx = ExactRiemannSolverInternal.T_3(primR_★, x3, DRY_AIR)
+            primR = ExactRiemannSolverInternal.to_primitive_drop_shear(uR, DRY_AIR)
             @test isapprox(primR_appx.ρ, primR.ρ; atol = 1.0e-12)
             @test isapprox(primR_appx.P, primR.P; atol = 1.0e-12)
             @test isapprox(primR_appx.v, first(primR.v); atol = 1.0e-12)

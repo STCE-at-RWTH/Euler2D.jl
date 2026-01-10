@@ -426,15 +426,32 @@ function make_pseudoinversion_cells(
         end
     end
 
-    # for i ∈ eachindex(pinv_cells)
-    #     pinv_cell = pinv_cells[i]
-    #     contents = compute_pseudoinversion_cell_contents(pinv_cell, sim, 1, bcs, gas)
-    #     @reset pinv_cell.u = contents[1]
-    #     @reset pinv_cell.u̇ = contents[2]
-    #     @reset pinv_cell.du_ds = contents[3]
-    #     pinv_cells[i] = pinv_cell
-    # end
+    for i ∈ eachindex(pinv_cells)
+        pinv_cell = pinv_cells[i]
+        contents = compute_pseudoinversion_cell_contents(pinv_cell, sim, 1, bcs, gas)
+        @reset pinv_cell.u = contents[1]
+        @reset pinv_cell.u̇ = contents[2]
+        @reset pinv_cell.du_ds = contents[3]
+        pinv_cells[i] = pinv_cell
+    end
     return pinv_cells
 end
 
+using Euler2D: u_riemann
+
+function _boundary_integral(cell_id, pinv_cells, gas)
+    @assert cell_id % 3 == 2
+    p = cell_boundary_polygon(pinv_cells[cell_id])
+    normals_p = outward_edge_normals(p)
+    edge_lengths = map((a, b) -> norm(b - a), edge_starts(p), edge_ends(p))
+    u_west = u_riemann(pinv_cells[cell_id-1].u, pinv_cells[cell_id].u, -normals_p[1], gas)
+    u_north = u_riemann(pinv_cells[cell_id].u, pinv_cells[cell_id+3].u, normals_p[2], gas)
+    u_east = u_riemann(pinv_cells[cell_id].u, pinv_cells[cell_id+1].u, normals_p[3], gas)
+    u_south = u_riemann(pinv_cells[cell_id-3].u, pinv_cells[cell_id].u, -normals_p[4], gas)
+    return sum(
+        zip(edge_lengths, (u_west, u_north, u_east, u_south), normals_p),
+    ) do (L, u, n)
+        L * F_euler(u, gas) * n
+    end
+end
 end
