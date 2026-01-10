@@ -68,10 +68,10 @@ Compute the HLL numerical flux across the L-R boundary.
 - `dim` : Direction to calculate F_hll
 """
 function ϕ_hll(uL, uR, dim::Int, gas::CaloricallyPerfectGas)
-    fL = select_space_dim(F_euler(uL, gas), dim)
-    fR = select_space_dim(F_euler(uR, gas), dim)
+    fL = F_euler(uL, gas)[:, dim]
+    fR = F_euler(uR, gas)[:, dim]
     sL, sR = interface_signal_speeds(uL, uR, dim, gas)
-    return ϕ_hll(uL, uR, @view(fL[:, dim]), @view(fR[:, dim]), sL, sR)
+    return ϕ_hll(uL, uR, fL, fR, sL, sR)
 end
 
 """
@@ -79,7 +79,7 @@ end
 
 Compute the HLL numerical flux across the L-R boundary.
 - `uL`, `uR`: States on either side of the boundary
-- `n` : Direction normal to the boundary, assumed that it points towards uR
+- `n` : Direction normal to the boundary, assumed that it points towards `uR`
 """
 function ϕ_hll(uL, uR, n, gas)
     qL = change_space_coordinates(uL, n)
