@@ -279,15 +279,16 @@ Build the set of polygons for pseudoinversion with tangent-to-shock side lengths
 """
 function pseudoinversion_cell_polys(segments, corner_normals, L)
     out = SClosedPolygon{4,Float64}[]
-    sizehint!(out, 3 * length(segments))
+    sizehint!(out, 4 * length(segments))
     for i ∈ eachindex(segments)
         n1 = corner_normals[begin+i-1]
         n2 = corner_normals[begin+i]
         A, B = segments[i]
+        Qi_LL = SClosedPolygon(A - 2 * L * n1, B - 2 * L * n2, B - L * n2, A - L * n1)
         Qi_L = SClosedPolygon(A - L * n1, B - L * n2, B, A)
         Qi = SClosedPolygon(A, B, B + L * n2, A + L * n1)
         Qi_R = SClosedPolygon(A + L * n1, B + L * n2, B + 2 * L * n2, A + 2 * L * n1)
-        push!(out, Qi_L, Qi, Qi_R)
+        push!(out, Qi_LL, Qi_L, Qi, Qi_R)
     end
     return out
 end
@@ -399,17 +400,17 @@ function make_pseudoinversion_cells(
 
     pinv_cells = PseudoinversionCell{T,NS,NP}[]
     sizehint!(pinv_cells, length(polys))
-    polys_view = reshape(polys, (3, n_points(bow_shock_interp)))
+    polys_view = reshape(polys, (4, n_points(bow_shock_interp)))
     for i ∈ eachindex(normals_S, normals_N)
         n1 = normals_S[i]
         n2 = normals_N[i]
         for j ∈ axes(polys_view, 1)
             poly = polys_view[j, i]
-            shift_directions = if j % 3 == 1
+            shift_directions = if j % 4 == 2
                 # cell is to the "left" of the shock
                 # so we set its shift directions like this
                 SVector(@SVector(zeros(T, 2)), @SVector(zeros(T, 2)), n2, n1)
-            elseif j % 3 == 2
+            elseif j % 4 == 3
                 # cell is to the "right" of the shock
                 # so we set shift directions on the other two vertices
                 SVector(n1, n2, @SVector(zeros(T, 2)), @SVector(zeros(T, 2)))
@@ -440,13 +441,13 @@ end
 using Euler2D: u_riemann
 
 function _boundary_integral(cell_id, pinv_cells, gas)
-    @assert cell_id % 3 == 2
+    @assert cell_id % 4 == 3 || cell_id % 4 == 2
     p = cell_boundary_polygon(pinv_cells[cell_id])
     normals_p = outward_edge_normals(p)
     edge_lengths = map((a, b) -> norm(b - a), edge_starts(p), edge_ends(p))
     u_west = u_riemann(pinv_cells[cell_id-1].u, pinv_cells[cell_id].u, -normals_p[1], gas)
-    u_north = u_riemann(pinv_cells[cell_id].u, pinv_cells[cell_id+3].u, normals_p[2], gas)
-    u_east = u_riemann(pinv_cells[cell_id].u, pinv_cells[cell_id+1].u, normals_p[3], gas)
+    u_north = u_riemann(pinv_cells[cell_id].u, pinv_cells[cell_id+4].u, normals_p[2], gas)
+    u_east = u_riemann(pinv_cells[cell_id].u, pinv_cells[cell_id+4].u, normals_p[3], gas)
     u_south = u_riemann(pinv_cells[cell_id-3].u, pinv_cells[cell_id].u, -normals_p[4], gas)
     return sum(
         zip(edge_lengths, (u_west, u_north, u_east, u_south), normals_p),
