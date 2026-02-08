@@ -18,7 +18,7 @@ function u0(x, p)
     return ConservedProps(pp, DRY_AIR)
 end
 
-starting_parameters = SVector(0.662, 4.0, 220.0)
+starting_parameters = SVector(0.662, 6.0, 220.0)
 ambient = u0(nothing, starting_parameters)
 
 # set the nondimensionalization scale
@@ -38,12 +38,12 @@ const bcs = (
     StrongWall(), # walls
 )
 
-const bounds = ((-1.5, 0.0), (0.0, 2.0))
+const bounds = ((-2.0, 0.0), (0.0, 3.0))
 probe = [
-    CircularObstacle((0.0, 0.0), 0.75),
+    CircularObstacle((0.0, 0.0), 1.0),
     RectangularObstacle(SVector(1.0, 0.0), SVector(2.0, 1.5)),
 ]
-const ncells = (240, 240 * 4 ÷ 3)
+const ncells = (240, (240 * 3) ÷ 2)
 
 # Profile.init(; n = 10^7, delay = 0.005)
 # Profile.clear()
@@ -60,7 +60,7 @@ sim_config = Euler2D.cell_simulation_config(;
     output_channel_size = 2,
     tasks_per_axis = 12,
     boundary_conditions = bcs,
-    convergence_test_frequency = 10,
+    convergence_test_frequency = 50,
     l1_thold = (1.0e-10, 1.0e-8),
     l2_thold = (1.0e-10, 1.0e-8),
     lInf_thold = (1.0e-8, 5.0e-8),
