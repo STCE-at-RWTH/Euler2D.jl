@@ -844,7 +844,7 @@ function _simulate(initial_state::CellBasedEulerSim{T,C}, config) where {T,C}
             tape_stream,
             length(global_cells),
             n_space_dims(initial_state),
-            n_cells(initial_state)...,
+            grid_size(initial_state)...,
         )
         for b ∈ initial_state.bounds
             write(tape_stream, b...)
