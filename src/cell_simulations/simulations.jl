@@ -409,7 +409,8 @@ function u_and_u̇_at(x, y, sim, n)
     return (c.u, c.u̇)
 end
 
-u_at(pt, sim, n) = u_at(pt..., sim, n)
+u_at(pt, sim::CellBasedEulerSim, n) = u_at(pt..., sim, n)
+u_and_u̇_at(pt, sim::CellBasedEulerSim, n) = u_and_u̇_at(pt..., sim, n)
 
 # I am no longer satisfied that this implementation is correct
 # re: what happens when (x, y) lands on a boundary of the simulation?
