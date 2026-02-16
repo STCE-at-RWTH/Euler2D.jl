@@ -2,7 +2,7 @@
 # following the derviations in Smoller 1994
 # Shock Waves and Reaction-Diffisuion Equations
 
-module ExactRiemannSolverInternal
+module ExactRiemannSolver
 
 using LinearAlgebra
 using SimpleNonlinearSolve
@@ -14,12 +14,12 @@ using Euler2D: dimensionless_velocity, dimensionless_pressure
 using Euler2D: dimensionless_speed_of_sound, F_euler
 using Euler2D: select_middle, change_space_coordinates
 
-"""Pressure ratio ``P_r/P_l`` abbreviated pi"""
+"""Pressure ratio ``P_r/P_l`` abbreviated ``π``"""
 function _π(uL, uR, gas)
     return dimensionless_pressure(uR, gas) / dimensionless_pressure(uL, gas)
 end
 
-"""Density ratio ``ρ_r/ρ_l`` abbreviated z"""
+"""Density ratio ``ρ_r/ρ_l`` abbreviated ``z``"""
 _z(uL, uR) = first(uR) / first(uL)
 
 """Common coefficient computed from ``γ``"""
@@ -28,7 +28,7 @@ _β(gas) = (gas.γ + 1) / (gas.γ - 1)
 """Common coefficient computed from ``γ``"""
 _τ(gas) = (gas.γ - 1) / (2 * gas.γ)
 
-"""The parametrizations in Smoller rely on ``-\\log π``"""
+"""The parametrizations in Smoller rely on ``-log π``"""
 _x(uL, uR, gas) = -log(_π(uL, uR, gas))
 
 """
@@ -49,9 +49,9 @@ density_bound_uR(uL, gas) = (uL[1], _β(gas) * uL[1])
 
 # Methods
 These three are defined in **18.60** in Smoller.
-- [`_A(::JumpRatios)`](@ref)
-- [`_B(::JumpRatios)`](@ref)
-- [`_C(::JumpRatios)`](@ref)
+- [`smoller_riemann_A(::JumpRatios)`](@ref)
+- [`smoller_riemann_B(::JumpRatios)`](@ref)
+- [`smoller_riemann_C(::JumpRatios)`](@ref)
 """
 struct JumpRatios{T}
     # Q for Quotient!
@@ -61,9 +61,9 @@ struct JumpRatios{T}
 end
 
 # 18.60 from Smoller
-_A(ratios) = ratios.Q_density
-_B(ratios) = ratios.Q_pressure
-_C(ratios) = ratios.Q_Δv_c
+smoller_riemann_A(ratios) = ratios.Q_density
+smoller_riemann_B(ratios) = ratios.Q_pressure
+smoller_riemann_C(ratios) = ratios.Q_Δv_c
 
 function JumpRatios(uL::AbstractVector, uR::AbstractVector, gas)
     A = _z(uL, uR)
@@ -71,22 +71,6 @@ function JumpRatios(uL::AbstractVector, uR::AbstractVector, gas)
     Δv1 = first(dimensionless_velocity(uR)) - first(dimensionless_velocity(uL))
     C = Δv1 / dimensionless_speed_of_sound(uL, gas)
     return JumpRatios(A, B, C)
-end
-
-"""
-  jump_ratios(uL, uR, gas)
-
-Compute the jump ratios:
-```math
-  A = ρ_r/ρ_l \\quad B = P_r/P_l \\quad C = (v_r - v_l) / c_l
-```
-"""
-function jump_ratios(uL, uR, gas)
-    A = _z(uL, uR)
-    B = _π(uL, uR, gas)
-    cL = dimensionless_speed_of_sound(uL, gas)
-    C = (uR[2] / uR[1] - uL[2] / uL[1]) / cL
-    return (A, B, C)
 end
 
 """
@@ -176,10 +160,10 @@ function test_1_wave_for_rarefaction(qL, qR, gas)
 end
 
 function test_1_wave_for_rarefaction(jump_ratios, gas)
-    c1 = sqrt(_B(jump_ratios) / _A(jump_ratios))
-    lhs = c1 * h_1(log(_B(jump_ratios)), gas)
+    c1 = sqrt(smoller_riemann_B(jump_ratios) / smoller_riemann_A(jump_ratios))
+    lhs = c1 * h_1(log(smoller_riemann_B(jump_ratios)), gas)
     rhs = 2 / (gas.γ - 1) * (1 + c1)
-    return lhs < _C(jump_ratios) < rhs
+    return lhs < smoller_riemann_C(jump_ratios) < rhs
 end
 
 """
@@ -193,10 +177,10 @@ function test_3_wave_for_rarefaction(qL, qR, gas)
 end
 
 function test_3_wave_for_rarefaction(jumps, gas)
-    c1 = sqrt(_B(jumps) / _A(jumps))
-    lhs = h_1(-log(_B(jumps)), gas)
+    c1 = sqrt(smoller_riemann_B(jumps) / smoller_riemann_A(jumps))
+    lhs = h_1(-log(smoller_riemann_B(jumps)), gas)
     rhs = 2 / (gas.γ - 1) * (1 + c1)
-    return lhs < _C(jumps) < rhs
+    return lhs < smoller_riemann_C(jumps) < rhs
 end
 
 """
@@ -211,11 +195,14 @@ function solve_for_jump_parameters(qL, qR, gas)
     G(x, Q) =
         let gas = gas
             # 18.62 stuff - A = 0
-            v1 = f_1(x[1], gas) * exp(x[2]) * f_3(x[3], gas) - _A(Q)
+            v1 = f_1(x[1], gas) * exp(x[2]) * f_3(x[3], gas) - smoller_riemann_A(Q)
             # 18.61: stuff - B = 0 
-            v2 = exp(x[3] - x[1]) - _B(Q)
+            v2 = exp(x[3] - x[1]) - smoller_riemann_B(Q)
             # 18.63: stuff - C = 0
-            v3 = h_1(x[1], gas) + sqrt(_B(Q) / _A(Q)) * h_1(x[1] + log(_B(Q)), gas) - _C(Q)
+            v3 =
+                h_1(x[1], gas) +
+                sqrt(smoller_riemann_B(Q) / smoller_riemann_A(Q)) *
+                h_1(x[1] + log(smoller_riemann_B(Q)), gas) - smoller_riemann_C(Q)
             return SVector(v1, v2, v3)
         end
     nonlinear_system = NonlinearProblem(G, x0, Q_jump)
@@ -423,7 +410,7 @@ end
 function u_riemann(uL, uR, n, gas)
     qL = change_space_coordinates(uL, n)
     qR = change_space_coordinates(uR, n)
-    q_riemann = ExactRiemannSolverInternal.solve_riemann_problem(0, qL, qR, gas)
+    q_riemann = ExactRiemannSolver.solve_riemann_problem(0, qL, qR, gas)
     u_riemann = change_space_coordinates(q_riemann, n, SVector(1.0, 0.0))
     return u_riemann
 end

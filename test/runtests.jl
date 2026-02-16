@@ -46,7 +46,7 @@ using Unitful
     end
 
     @testset "Exact Riemann Solver" begin
-        using Euler2D: ExactRiemannSolverInternal
+        using Euler2D: ExactRiemannSolver
 
         # test for states only in x-axis
         ux_1 = @SVector [1.0, 1.0, 0.0, 6000.0]
@@ -55,30 +55,25 @@ using Unitful
         ux_4 = @SVector [1.0, -1.0, 0.0, 6000.0]
         ux_5 = @SVector [2.0, -1.0, 0.0, 6000.0]
 
-        @test all(
-            ExactRiemannSolverInternal.jump_ratios(ux_1, ux_1, DRY_AIR) .== (1.0, 1.0, 0.0),
-        )
+        @test all(ExactRiemannSolver.jump_ratios(ux_1, ux_1, DRY_AIR) .== (1.0, 1.0, 0.0))
         @test all(
             x -> isapprox(x, 0.0; atol = 1.0e-12),
-            ExactRiemannSolverInternal.solve_for_jump_parameters(ux_1, ux_1, DRY_AIR),
+            ExactRiemannSolver.solve_for_jump_parameters(ux_1, ux_1, DRY_AIR),
         )
         @testset for (uL, uR) ∈
                      [(ux_1, ux_2), (ux_2, ux_1), (ux_1, ux_4), (ux_4, ux_5), (ux_4, ux_2)]
-            (x1, x2, x3) =
-                ExactRiemannSolverInternal.solve_for_jump_parameters(uL, uR, DRY_AIR)
-            primL = ExactRiemannSolverInternal.to_primitive_drop_shear(uL, DRY_AIR)
+            (x1, x2, x3) = ExactRiemannSolver.solve_for_jump_parameters(uL, uR, DRY_AIR)
+            primL = ExactRiemannSolver.to_primitive_drop_shear(uL, DRY_AIR)
             @test primL[3] isa Real
-            primL_★ = ExactRiemannSolverInternal.T_1(primL, x1, DRY_AIR)
-            primR_★ = ExactRiemannSolverInternal.T_2(primL_★, x2)
-            primR_appx = ExactRiemannSolverInternal.T_3(primR_★, x3, DRY_AIR)
-            primR = ExactRiemannSolverInternal.to_primitive_drop_shear(uR, DRY_AIR)
+            primL_★ = ExactRiemannSolver.T_1(primL, x1, DRY_AIR)
+            primR_★ = ExactRiemannSolver.T_2(primL_★, x2)
+            primR_appx = ExactRiemannSolver.T_3(primR_★, x3, DRY_AIR)
+            primR = ExactRiemannSolver.to_primitive_drop_shear(uR, DRY_AIR)
             @test isapprox(primR_appx.ρ, primR.ρ; atol = 1.0e-12)
             @test isapprox(primR_appx.P, primR.P; atol = 1.0e-12)
             @test isapprox(primR_appx.v, first(primR.v); atol = 1.0e-12)
-            one_wave =
-                ExactRiemannSolverInternal.test_1_wave_for_rarefaction(uL, uR, DRY_AIR)
-            three_wave =
-                ExactRiemannSolverInternal.test_3_wave_for_rarefaction(uL, uR, DRY_AIR)
+            one_wave = ExactRiemannSolver.test_1_wave_for_rarefaction(uL, uR, DRY_AIR)
+            three_wave = ExactRiemannSolver.test_3_wave_for_rarefaction(uL, uR, DRY_AIR)
             @test (
                 isapprox(x1, 0.0; atol = 1.0e-12) ||
                 ((one_wave && x1 > 0) || (!one_wave && x1 < 0))
@@ -88,8 +83,7 @@ using Unitful
                 ((three_wave && x3 > 0) || (!three_wave && x3 < 0))
             )
 
-            data_pack =
-                ExactRiemannSolverInternal.riemann_states_and_speeds(uL, uR, DRY_AIR)
+            data_pack = ExactRiemannSolver.riemann_states_and_speeds(uL, uR, DRY_AIR)
             @test data_pack[1] == !one_wave
             @test data_pack[6] == !three_wave
             # speeds should be increasing left-to-right!
