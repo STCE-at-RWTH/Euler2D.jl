@@ -69,7 +69,7 @@ Total energy will change due to the new kinetic energy in the new frame.
 See also [`change_space_coordinates`](@ref) or [`change_space_coordinates_and_shift_v`](@ref).
 """
 function translate_velocity_coordinates(u_star, v0)
-    ρ = u_star[begin]
+    ρ = first(u_star)
     v_star = dimensionless_velocity(u_star)
     v = v_star - v0
     ρe = dimensionless_internal_energy_density(u_star)

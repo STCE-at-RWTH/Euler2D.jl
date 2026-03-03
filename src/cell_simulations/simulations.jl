@@ -92,7 +92,7 @@ Return `StepRange` of all the cell center positions for the `n`th space dimensio
 """
 function cell_centers(sim, dim)
     ifaces = cell_boundaries(sim, dim)
-    return ifaces[1:end-1] .+ step(ifaces) / 2
+    return ifaces[begin:end-1] .+ step(ifaces) / 2
 end
 
 function cell_centers(e::CellBasedEulerSim)
@@ -661,11 +661,11 @@ function _simulation_too_slow(infos, maximum_wall_clock, current_num_tsteps)
     return (current_num_tsteps + 4) * avg_dur > maximum_wall_clock
 end
 
-_opnorm2_sqr(u) = eigmax(u' * u)
-_opnorm1(u) = sum(abs, u)
-_opnorm1(u::AbstractMatrix) = maximum(sum(abs, u; dims = 1))
-_opnormInf(u::AbstractVector) = maximum(abs, u)
-_opnormInf(u::AbstractMatrix) = maximum(sum(abs, u; dims = 2))
+opnorm2_sqr(u) = eigmax(u' * u)
+opnorm1(u) = sum(abs, u)
+opnorm1(u::AbstractMatrix) = maximum(sum(abs, u; dims = 1))
+opnormInf(u::AbstractVector) = maximum(abs, u)
+opnormInf(u::AbstractMatrix) = maximum(sum(abs, u; dims = 2))
 
 # integrate the provided norm |Δ|^p_p over the domain
 function _integral_convergence_measure(norm_p, cell_ids, cell_updates, dA)
@@ -683,12 +683,12 @@ end
 
 # L1 norm = maximum absolute column sum (integrated)
 function _l1_convergence_measure(cell_ids, cell_updates, dA)
-    return _integral_convergence_measure(_opnorm1, cell_ids, cell_updates, dA)
+    return _integral_convergence_measure(opnorm1, cell_ids, cell_updates, dA)
 end
 
 # L2 norm = sqrt of largest eigenvalue of u'u
 function _l2_convergence_measure(cell_ids, cell_updates, dA)
-    return sqrt.(_integral_convergence_measure(_opnorm2_sqr, cell_ids, cell_updates, dA))
+    return sqrt.(_integral_convergence_measure(opnorm2_sqr, cell_ids, cell_updates, dA))
 end
 
 # LInf norm = absolute maximum row sum (over whole domain)
@@ -698,7 +698,7 @@ function _lInf_convergence_measure(cell_ids, cell_updates, dA)
         return tmapreduce(max, cell_ids) do id
             id == 0 && return zero(dA)
             du = total_update(cell_updates[id])[n]
-            return _opnormInf(du)
+            return opnormInf(du)
         end
     end
     return bounds
