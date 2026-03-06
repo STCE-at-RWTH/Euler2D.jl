@@ -34,6 +34,7 @@ function F_euler(u::ConservedProps, gas, scale)
     return F_euler(nondimensionalize(u, scale), gas)
 end
 
+# why do I still have this
 select_space_dim(F_e, dim) = F_e[:, dim]
 
 # do we need the multiple eigenvalues in the middle? I do not know...

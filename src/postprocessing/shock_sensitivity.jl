@@ -3,6 +3,7 @@ module ShockSensitivity
 using LinearAlgebra
 
 using DifferentiationInterface
+using Integrals
 using SimpleNonlinearSolve
 using StaticArrays
 
@@ -15,10 +16,37 @@ using Euler2D: fdiff_backend
 
 using .CannyShockSensor: hugoniot_equation_relative_err
 
+"""
+    F_euler_θ
+
+Changes `u` to the coordinate system given with ``e_1 = n`` or by some basis matrix `B` and then calculates `F_euler`.
+"""
+function F_euler_ξ1(u, gas)
+    return F_euler(u, gas)[:, 1]
+end
+
+function F_euler_ξ1(u, new_coordinates, gas)
+    return F_euler(change_space_coordinates(u, new_coordinates), gas)[:, 1]
+end
+
+function _avg_jacobian_igrand(ϑ, params)
+    (uL, uR, gas) = params
+    arg = ϑ * uL + (1 - ϑ) * uR
+    return jacobian(F_euler_ξ1, fdiff_backend, arg, Constant(gas))
+end
+
+function avg_jacobian_F_euler(qL, qR, gas)
+    domain = (0.0, 1.0)
+    problem = IntegralProblem(_avg_jacobian_igrand, domain, (qL, qR, gas))
+    sol = solve(problem, HCubatureJL())
+    @assert SciMLBase.successful_retcode(sol)
+    return sol.u
+end
+
 _F_e1(u, gas) = F_euler(u, gas)[:, 1]
 
 function _∇F_e1(u, gas)
-    return DifferentiationInterface.jacobian(_F_e1, fdiff_backend, u, Constant(gas))
+    return jacobian(_F_e1, fdiff_backend, u, Constant(gas))
 end
 
 function _F_e1_and_jvp(u, udot, gas)

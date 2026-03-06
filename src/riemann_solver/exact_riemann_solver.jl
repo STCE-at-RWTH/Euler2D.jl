@@ -74,24 +74,49 @@ function JumpRatios(uL::AbstractVector, uR::AbstractVector, gas)
 end
 
 """
-    riemann_problem_has_solution(uL, uR, gas)
-    test_for_vacuum_in_solution(uL, uR, gas) 
+    riemann_problem_has_solution(qL, qR, gas)
 
-Theorem 18.6 in Smoller. Test if the Riemann problem between states ``u_L`` and ``u_R`` will yield a vacuum state, 
+Theorem 18.6 in Smoller. Test if the Riemann problem between states ``q_L`` and ``q_R`` will yield a vacuum state, 
 or if the solution will yield a solution composed of shocks, simple waves / rarefaction waves, and contact discontinuities.
 
 See also: [`test_for_vacuum_in_solution`](@ref)
 """
-function riemann_problem_has_solution(uL, uR, gas)
-    cL = dimensionless_speed_of_sound(uL, gas)
-    cR = dimensionless_speed_of_sound(uR, gas)
-    vL = uL[2] / uL[1]
-    vR = uR[2] / uR[1]
+function riemann_problem_has_solution(qL, qR, gas)
+    cL = dimensionless_speed_of_sound(qL, gas)
+    cR = dimensionless_speed_of_sound(qR, gas)
+    vL = qL[2] / qL[1]
+    vR = qR[2] / qR[1]
     return vR - vL < 2 / (gas.γ - 1) * (cL + cR)
 end
 
-function test_for_vacuum_in_solution(uL, uR, gas)
-    return !riemann_problem_has_solution(uL, uR, gas)
+"""
+    riemann_problem_has_solution(uL, uR, e1, gas)
+
+Test if the normal-oriented Riemann problem between ``u_L`` and ``u_R`` has a solution.
+``e_1`` is the normal axis written in the standard basis `I`.
+
+See also: [`test_for_vacuum_in_solution`](@ref)
+"""
+function riemann_problem_has_solution(uL, uR, e1, gas)
+    qL = change_space_coordinates(uL, e1)
+    qR = change_space_coordinates(uR, e1)
+    return riemann_problem_has_solution(qL, qR, gas)
+end
+
+"""
+    test_for_vacuum_in_solution(qL, qR, gas) 
+    test_for_vacuum_in_solution(uL, uR, e1, gas) 
+
+Test if the Riemann problem yields a vacuum state between ``u_L`` and ``u_R``.
+
+See also: [`riemann_problem_has_solution`](@ref)
+"""
+function test_for_vacuum_in_solution(uL, uR, e1, gas)
+    return !riemann_problem_has_solution(uL, uR, e1, gas)
+end
+
+function test_for_vacuum_in_solution(qL, qR, gas)
+    return !riemann_problem_has_solution(qL, qR, gas)
 end
 
 function f_1(x, gas)

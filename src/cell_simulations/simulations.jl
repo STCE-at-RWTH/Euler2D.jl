@@ -350,7 +350,7 @@ function estimate_∇u_in_rectangular_cell(
     sim,
     n,
     boundary_conditions,
-    gas,
+    gas;
 )
     _, active_cells = nth_step(sim, n)
     nbrs = neighbor_cells(cell, active_cells, boundary_conditions, gas)

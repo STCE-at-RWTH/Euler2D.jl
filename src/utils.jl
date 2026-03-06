@@ -26,7 +26,7 @@ The columns of ``V`` are the basis vectors written in the standard Cartesian bas
 
 See also [`translate_velocity_coordinates`](@ref), [`change_space_coordinates_and_shift_v`](@ref).
 """
-function change_space_coordinates(u, V::AbstractMatrix)
+function change_space_coordinates(u, V::Union{AbstractMatrix,UniformScaling})
     ρv_new = PlanePolygons.change_basis(select_middle(u), V)
     return vcat_state_components(u[begin], ρv_new, u[end])
 end
