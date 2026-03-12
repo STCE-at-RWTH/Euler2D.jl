@@ -12,6 +12,18 @@ function vcat_state_components(ρ, ρv::SVector{S, T}, ρE) where {S, T}
     return SVector{S + 2}(ρ, ρv..., ρE)
 end
 
+## SIMPLE LINEAR APPROXIMATION
+
+struct LinAppx{XT, YT, DYT}
+    x0::XT
+    y0::YT
+    Dy::DYT
+end
+
+function (f_appx::LinAppx{XT, YT, DYT})(x) where {XT, YT, DYT}
+    return f_appx.y0 + f_appx.Dy * (x - f_appx.x0)
+end
+
 ### CHANGE COORDINATE VECTORS FOR VELOCITY SPACE
 
 """
@@ -138,10 +150,6 @@ function bcast_min(a, b)
     return min.(a, b)
 end
 ###
-
-function free_space_dims(N, d)
-    return ((i + 1 for i in 1:N if i ≠ d)...,)
-end
 
 function boundary_velocity_scaling(T, dim, rev)
     return SVector(
