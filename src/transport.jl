@@ -7,6 +7,7 @@ Outputs a matrix with one column for each space dimension.
 This implementation will strip out units, and convert down to metric base units in the process. 
 """
 function F_euler(u::SVector{S,T}, gas) where {S,T}
+function F_euler(u::SVector{S, T}, gas) where {S, T}
     ρv = select_middle(u)
     v = ρv / u[1]
     P = dimensionless_pressure(u, gas)
@@ -23,8 +24,8 @@ function F_euler(u, gas)
     P = dimensionless_pressure(u, gas)
     # shout out broadcast fusion
     @. F[begin, :] = ρv
-    F[begin+1:end-1, :] .= (ρv .* ρv') ./ ρ
-    F[begin+1:end-1, :] += I * P
+    F[(begin + 1):(end - 1), :] .= (ρv .* ρv') ./ ρ
+    F[(begin + 1):(end - 1), :] += I * P
     c1 = (ρE + P) / ρ
     @. F[end, :] = ρv * c1
     return F
@@ -51,21 +52,21 @@ function eigenvalues_∇F_euler(u, dim, gas::CaloricallyPerfectGas)
 end
 
 function eigenvalues_∇F_euler(
-    u::ConservedProps{N,T,Q1,Q2,Q3},
-    dim,
-    gas::CaloricallyPerfectGas,
-) where {N,T,Q1,Q2,Q3}
+        u::ConservedProps{N, T, Q1, Q2, Q3},
+        dim,
+        gas::CaloricallyPerfectGas,
+    ) where {N, T, Q1, Q2, Q3}
     v = ustrip.(ShockwaveProperties._units_v, velocity(u))
     a = ustrip(ShockwaveProperties._units_v, speed_of_sound(u, gas))
     return SVector(v[dim] - a, ntuple(Returns(v[dim]), N)..., v[dim] + a)
 end
 
 """
-  eigenvectors_∇F_euler(u, gas)
+    eigenvectors_∇F_euler(u, gas)
 
 Compute the eigenvectors of the Jacobian of the Euler equations flux.
 """
-function eigenvectors_∇F_euler(u::SVector{3,T}, gas) where {T}
+function eigenvectors_∇F_euler(u::SVector{3, T}, gas) where {T}
     v = u[2] / u[1]
     a = dimensionless_speed_of_sound(u, gas)
     H = dimensionless_total_enthalpy_density(u, gas) / u[1]
@@ -78,7 +79,7 @@ end
 """
 Compute the eigenvectors of the Jacobian of the x-component of the Euler equations flux.
 """
-function eigenvectors_∇F_euler(u::SVector{4,T}, gas) where {T}
+function eigenvectors_∇F_euler(u::SVector{4, T}, gas) where {T}
     v1 = u[2] / u[1]
     v2 = u[3] / u[1]
     a = dimensionless_speed_of_sound(u, gas)
@@ -95,7 +96,7 @@ end
 
 Compute the eigenvectors of the Jacobian of the y-component of the Euler equations flux.
 """
-function eigenvectors_∇G_euler(u::SVector{4,T}, gas) where {T}
+function eigenvectors_∇G_euler(u::SVector{4, T}, gas) where {T}
     v1 = u[2] / u[1]
     v2 = u[3] / u[1]
     a = dimensionless_speed_of_sound(u, gas)

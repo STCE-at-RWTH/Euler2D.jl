@@ -1,5 +1,5 @@
 # IMPLEMENTATION OF
-# Canny-Edge-Detection/Rankine-Hugoniot-conditions unified shock sensor for inviscid and viscous flows  
+# Canny-Edge-Detection/Rankine-Hugoniot-conditions unified shock sensor for inviscid and viscous flows
 # Takeshi R. Fujimoto ∗, Taro Kawasaki 1, Keiichi Kitamura
 # Journal of Computational Physics, 396, pp. 264 - 279
 #
@@ -23,8 +23,8 @@ using Euler2D: translate_velocity_coordinates, change_space_coordinates_and_shif
 
 export find_shock_in_timestep, extract_bow_shock_interpolation
 
-_diff_op(T) = SVector{3,T}(-one(T), zero(T), one(T))
-_avg_op(T) = SVector{3,T}(one(T), 2 * one(T), one(T))
+_diff_op(T) = SVector{3, T}(-one(T), zero(T), one(T))
+_avg_op(T) = SVector{3, T}(one(T), 2 * one(T), one(T))
 
 _sobel_X(T) = _diff_op(T) * _avg_op(T)'
 _sobel_Y(T) = _avg_op(T) * _diff_op(T)'
@@ -33,19 +33,19 @@ _sobel_Y(T) = _avg_op(T) * _diff_op(T)'
 # makes the whole "symmetry about y=0" thing work
 # WILL NOT WORK WITH OFFSETARRAYS
 function _pad_by_copying_outwards!(target, pad_size)
-    for i = pad_size-1:-1:0
+    for i in (pad_size - 1):-1:0
         @views begin
-            target[begin+i, :] = target[begin+i+1, :]
-            target[end-i, :] = target[end-i-1, :]
-            target[:, begin+i] = target[:, begin+i+1]
-            target[:, end-i] = target[:, end-i-1]
+            target[begin + i, :] = target[begin + i + 1, :]
+            target[end - i, :] = target[end - i - 1, :]
+            target[:, begin + i] = target[:, begin + i + 1]
+            target[:, end - i] = target[:, end - i - 1]
         end
     end
     return nothing
 end
 
-_convolve_op(mat, op) = @tullio out[i, j] := mat[i+k+1, j+l+1] * op[k+2, l+2]
-_convolve_op!(res, mat, op) = @tullio res[i, j] = mat[i+k+1, j+l+1] * op[k+2, l+2]
+_convolve_op(mat, op) = @tullio out[i, j] := mat[i + k + 1, j + l + 1] * op[k + 2, l + 2]
+_convolve_op!(res, mat, op) = @tullio res[i, j] = mat[i + k + 1, j + l + 1] * op[k + 2, l + 2]
 
 _d_dx_convolve(mat) = _convolve_op(mat, _sobel_X(eltype(mat)))
 _d_dy_convolve(mat) = _convolve_op(mat, _sobel_Y(eltype(mat)))
@@ -120,8 +120,8 @@ function is_edge_candidate(dP2_view, θ)
     @assert size(dP2_view) == (3, 3)
     grid_theta = gradient_grid_direction(θ)
     local idx = CartesianIndex(2, 2)
-    return dP2_view[idx+grid_theta] < dP2_view[idx] &&
-           dP2_view[idx-grid_theta] < dP2_view[idx]
+    return dP2_view[idx + grid_theta] < dP2_view[idx] &&
+        dP2_view[idx - grid_theta] < dP2_view[idx]
 end
 
 function _shock_velocity(θij, u1, u2, gas)
@@ -208,13 +208,13 @@ Stores zero if the cell in question is not active.
 Stores results in `result`. Returns `result`.
 """
 function _pressure_field!(
-    result,
-    csim::CellBasedEulerSim,
-    n::Integer,
-    gas::CaloricallyPerfectGas,
-)
+        result,
+        csim::CellBasedEulerSim,
+        n::Integer,
+        gas::CaloricallyPerfectGas,
+    )
     _, cells = nth_step(csim, n)
-    for i ∈ eachindex(result, csim.cell_ids)
+    for i in eachindex(result, csim.cell_ids)
         if csim.cell_ids[i] == 0
             result[i] = zero(eltype(result))
         else
@@ -227,7 +227,7 @@ function _pressure_field!(
 end
 
 function _fill_pfield_and_pad!(pfield, pad_size, sim, t, gas)
-    p_nopad = @view pfield[(begin+pad_size):(end-pad_size), (begin+pad_size):(end-pad_size)]
+    p_nopad = @view pfield[(begin + pad_size):(end - pad_size), (begin + pad_size):(end - pad_size)]
     @assert size(p_nopad) == size(sim.cell_ids)
     _pressure_field!(p_nopad, sim, t, gas)
     _pad_by_copying_outwards!(pfield, pad_size)
@@ -236,16 +236,16 @@ function _fill_pfield_and_pad!(pfield, pad_size, sim, t, gas)
 end
 
 function find_shock_in_timestep(
-    sim::CellBasedEulerSim{T,C},
-    t,
-    gas;
-    rh_rel_error_max = 0.5,
-    continuous_variation_thold = 0.05,
-) where {T,C}
+        sim::CellBasedEulerSim{T, C},
+        t,
+        gas;
+        rh_rel_error_max = 0.5,
+        continuous_variation_thold = 0.05,
+    ) where {T, C}
     N_pad = 2
     # padding size is 2 on either size, hence we need 2*N_pad extra values
     pfield = Matrix{T}(undef, grid_size(sim) .+ 2 * N_pad)
-    pfield_nopad = @view pfield[(begin+N_pad):(end-N_pad), (begin+N_pad):(end-N_pad)]
+    pfield_nopad = @view pfield[(begin + N_pad):(end - N_pad), (begin + N_pad):(end - N_pad)]
     _fill_pfield_and_pad!(pfield, N_pad, sim, t, gas)
 
     # find the gradients via the sobel operators
@@ -254,11 +254,11 @@ function find_shock_in_timestep(
     dPdy = _d_dy_convolve(pfield)
     dP2 = dPdx .^ 2 .+ dPdy .^ 2
     @assert size(dPdx) == size(dPdy) == (size(sim.cell_ids) .+ 2)
-    dPdx_nopad = @view dPdx[begin+1:end-1, begin+1:end-1]
-    dPdy_nopad = @view dPdy[begin+1:end-1, begin+1:end-1]
+    dPdx_nopad = @view dPdx[(begin + 1):(end - 1), (begin + 1):(end - 1)]
+    dPdy_nopad = @view dPdy[(begin + 1):(end - 1), (begin + 1):(end - 1)]
     candidates = Matrix{Bool}(undef, grid_size(sim))
-    for i ∈ eachindex(IndexCartesian(), candidates, dPdx_nopad, dPdy_nopad)
-        window = i:(i+CartesianIndex(2, 2))
+    for i in eachindex(IndexCartesian(), candidates, dPdx_nopad, dPdy_nopad)
+        window = i:(i + CartesianIndex(2, 2))
         θ = atan(dPdy_nopad[i], dPdx_nopad[i])
         candidates[i] = is_edge_candidate(@view(dP2[window]), θ)
     end
@@ -268,20 +268,20 @@ function find_shock_in_timestep(
 
     @assert (
         size(sim.cell_ids) ==
-        size(candidates) ==
-        size(pfield_nopad) ==
-        size(dPdx_nopad) ==
-        size(dPdy_nopad)
+            size(candidates) ==
+            size(pfield_nopad) ==
+            size(dPdx_nopad) ==
+            size(dPdy_nopad)
     )
 
-    for i ∈ eachindex(
-        IndexCartesian(),
-        sim.cell_ids,
-        candidates,
-        pfield_nopad,
-        dPdx_nopad,
-        dPdy_nopad,
-    )
+    for i in eachindex(
+            IndexCartesian(),
+            sim.cell_ids,
+            candidates,
+            pfield_nopad,
+            dPdx_nopad,
+            dPdy_nopad,
+        )
         if !candidates[i]
             continue
         end
@@ -290,17 +290,17 @@ function find_shock_in_timestep(
         Δi = gradient_grid_direction(θ)
         # make sure we can look up i±θij and that neither of those cells are empty
         if !(
-            (checkbounds(Bool, candidates, i + Δi) && sim.cell_ids[i+Δi] != 0) &&
-            (checkbounds(Bool, candidates, i - Δi) && sim.cell_ids[i-Δi] != 0)
-        )
+                (checkbounds(Bool, candidates, i + Δi) && sim.cell_ids[i + Δi] != 0) &&
+                    (checkbounds(Bool, candidates, i - Δi) && sim.cell_ids[i - Δi] != 0)
+            )
             candidates[i] = false
             n_no_shock += 1
             continue
         end
 
         _, cells = nth_step(sim, t)
-        u_A = cells[sim.cell_ids[i-Δi]].u
-        u_B = cells[sim.cell_ids[i+Δi]].u
+        u_A = cells[sim.cell_ids[i - Δi]].u
+        u_B = cells[sim.cell_ids[i + Δi]].u
         abs_relative_err = hugoniot_equation_relative_err(u_A, u_B, gas)
         if abs_relative_err >= rh_rel_error_max
             candidates[i] = false
@@ -336,7 +336,7 @@ function extract_bow_shock_points(sim, sensor_info; gap_size = 8)
     _, cells = nth_step(sim, 1)
     size_diff = grid_size(sim) .- size(sensor_info.candidates)
     Δi, Δj = div.(size_diff, 2)
-    ids_view = @view sim.cell_ids[begin+Δi:end-Δi, begin+Δj:end-Δj]
+    ids_view = @view sim.cell_ids[(begin + Δi):(end - Δi), (begin + Δj):(end - Δj)]
     @assert size(ids_view) == size(sensor_info.candidates)
     @assert size(ids_view) .+ size_diff == grid_size(sim)
     # TODO maybe implement gap finding?

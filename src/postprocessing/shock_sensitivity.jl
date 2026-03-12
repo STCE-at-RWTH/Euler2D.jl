@@ -12,6 +12,7 @@ using PlanePolygons
 using Euler2D
 using Euler2D: CannyShockSensor, ShockInterpolation
 using Euler2D: CaloricallyPerfectGas
+using Euler2D: change_space_coordinates
 using Euler2D: fdiff_backend
 
 using .CannyShockSensor: hugoniot_equation_relative_err
@@ -80,15 +81,15 @@ Fields
 - `Udot_L, `Udot_R`: the (estimated) value of the accumulated tangent of `U` on either side of the shock.
 - `dU_Lds`, `dU_Rds`: the (estimated) value of `∇U` along `n` on either side of the shock.
 """
-struct ShockSensitivityStep{N,T,GAS_T}
-    n::SVector{2,T} # the new choice of +x for this calculation in STANDARD BASIS
+struct ShockSensitivityStep{N, T, GAS_T}
+    n::SVector{2, T} # the new choice of +x for this calculation in STANDARD BASIS
     gas::GAS_T
-    U_L::SVector{N,T}
-    U_R::SVector{N,T}
-    Udot_L::SVector{N,T}
-    Udot_R::SVector{N,T}
-    dU_Lds::SVector{N,T}
-    dU_Rds::SVector{N,T}
+    U_L::SVector{N, T}
+    U_R::SVector{N, T}
+    Udot_L::SVector{N, T}
+    Udot_R::SVector{N, T}
+    dU_Lds::SVector{N, T}
+    dU_Rds::SVector{N, T}
 end
 
 """
@@ -133,7 +134,7 @@ end
 
 Compute `ΔΓdot` from `Γdot`.
 """
-function (ΔΓdot_data::ShockSensitivityStep{N,T,G})(Γdot) where {N,T,G}
+function (ΔΓdot_data::ShockSensitivityStep{N, T, G})(Γdot) where {N, T, G}
     dU_L_dp = _total_dp_U(ΔΓdot_data.dU_Lds, Γdot, ΔΓdot_data.Udot_L)
     dU_R_dp = _total_dp_U(ΔΓdot_data.dU_Rds, Γdot, ΔΓdot_data.Udot_R)
     F_L, dF_L_dp = _F_e1_and_jvp(ΔΓdot_data.U_L, dU_L_dp, ΔΓdot_data.gas)

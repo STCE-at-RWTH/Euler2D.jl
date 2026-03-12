@@ -60,7 +60,7 @@ nneighbors(::FluxEdge{N}) where {N} = N
 
 Indicates that this axis has some prescribed left and right edge boundary conditions.
 """
-struct EdgeBoundary{L<:Edge,R<:Edge} <: BoundaryCondition
+struct EdgeBoundary{L <: Edge, R <: Edge} <: BoundaryCondition
     left::L
     right::R
 end
@@ -74,14 +74,14 @@ is enforced by using a phantom cell.
 struct StrongWall <: PhantomEdge{1} end
 
 function phantom_cell(
-    ::StrongWall,
-    u::AbstractArray{T,2},
-    dim,
-    gas::CaloricallyPerfectGas,
-) where {T}
+        ::StrongWall,
+        u::AbstractArray{T, 2},
+        dim,
+        gas::CaloricallyPerfectGas,
+    ) where {T}
     # HACK this isn't good.
     phantom = reshape(u, length(u))
-    phantom[1+dim] *= -1
+    phantom[1 + dim] *= -1
     return phantom
 end
 
@@ -116,11 +116,11 @@ This BC does not require velocity vector reversal at the right edge.
 reverse_right_edge(::FixedPhantomOutside) = false
 
 function phantom_cell(
-    bc::FixedPhantomOutside,
-    u::AbstractArray{T,2},
-    dim,
-    gas::CaloricallyPerfectGas,
-) where {T}
+        bc::FixedPhantomOutside,
+        u::AbstractArray{T, 2},
+        dim,
+        gas::CaloricallyPerfectGas,
+    ) where {T}
     return state_to_vector(bc.prescribed_state)
 end
 
@@ -142,11 +142,11 @@ function phantom_cell(bc::ExtrapolateToPhantom, u, dim, gas::CaloricallyPerfectG
 end
 
 function phantom_cell(
-    ::ExtrapolateToPhantom,
-    u::ConservedProps,
-    dim,
-    gas::CaloricallyPerfectGas,
-)
+        ::ExtrapolateToPhantom,
+        u::ConservedProps,
+        dim,
+        gas::CaloricallyPerfectGas,
+    )
     #TODO update ShockwaveProperties to have copy and parametrized methods for construction
     return u
 end
@@ -175,19 +175,19 @@ function SupersonicInflow(s::PrimitiveProps, gas::CaloricallyPerfectGas)
 end
 
 function phantom_cell(
-    bc::SupersonicInflow,
-    u::AbstractArray{T,2},
-    dim,
-    gas::CaloricallyPerfectGas,
-) where {T}
+        bc::SupersonicInflow,
+        u::AbstractArray{T, 2},
+        dim,
+        gas::CaloricallyPerfectGas,
+    ) where {T}
     return state_to_vector(bc.prescribed_state)
 end
 
 function phantom_cell(
-    bc::SupersonicInflow,
-    u::ConservedProps,
-    dim,
-    gas::CaloricallyPerfectGas,
-)
+        bc::SupersonicInflow,
+        u::ConservedProps,
+        dim,
+        gas::CaloricallyPerfectGas,
+    )
     return bc.prescribed_state
 end

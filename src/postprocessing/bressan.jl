@@ -14,10 +14,10 @@ using StaticArrays
 using Euler2D
 using PlanePolygons
 
-struct FieldInterpolationBressan{T,DV,NEPS,FIELD,DFIELD,REGION_T}
-    cell_centers::Tuple{DV,DV}
-    shock_aabb::SClosedPolygon{4,T}
-    ε::SVector{T,NEPS}
+struct FieldInterpolationBressan{T, DV, NEPS, FIELD, DFIELD, REGION_T}
+    cell_centers::Tuple{DV, DV}
+    shock_aabb::SClosedPolygon{4, T}
+    ε::SVector{T, NEPS}
     field::FIELD
     dfield::DFIELD
     shift_regions::Vector{REGION_T}
@@ -29,7 +29,7 @@ function poly_aabb(polys...)
     x2 = typemin(T)
     y1 = typemax(T)
     y2 = typemin(T)
-    for pt ∈ Iterators.flatmap(edge_starts, polys)
+    for pt in Iterators.flatmap(edge_starts, polys)
         x1 = min(x1, pt[1])
         x2 = max(x2, pt[1])
         y1 = min(y1, pt[2])
@@ -67,9 +67,9 @@ function _untwist_shifted_shock(Γ1, Γ2, s1, s2)
 end
 
 function shifted_regions(Γ1, Γ2, s)
-    s_first = s[begin:end-1]
-    s_second = s[begin+1:end]
-    mapreduce((s1, s2) -> _untwist_shifted_shock(Γ1, Γ2, s1, s2), vcat, s_first, s_second)
+    s_first = s[begin:(end - 1)]
+    s_second = s[(begin + 1):end]
+    return mapreduce((s1, s2) -> _untwist_shifted_shock(Γ1, Γ2, s1, s2), vcat, s_first, s_second)
 end
 
 end

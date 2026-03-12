@@ -1,13 +1,10 @@
+module ExactRiemannSolver
 # Method skeleton for the exact Riemann solver.
 # following the derviations in Smoller 1994
 # Shock Waves and Reaction-Diffisuion Equations
-
-module ExactRiemannSolver
-
 using LinearAlgebra
 using SimpleNonlinearSolve
 using StaticArrays
-
 using PlanePolygons: change_of_basis_matrix, orthonormal_basis
 using Euler2D: Euler2D
 using Euler2D: dimensionless_velocity, dimensionless_pressure
@@ -32,8 +29,7 @@ _τ(gas) = (gas.γ - 1) / (2 * gas.γ)
 _x(uL, uR, gas) = -log(_π(uL, uR, gas))
 
 """
-  density_bound_uR(uL, gas)
-
+    density_bound_uR(uL, gas)
 Compute and upper bound for the density of a post-shock state. I think.
 """
 density_bound_uR(uL, gas) = (uL[1], _β(gas) * uL[1])
@@ -218,18 +214,18 @@ function solve_for_jump_parameters(qL, qR, gas)
     Q_jump = JumpRatios(qL, qR, gas)
     x0 = @SVector ones(eltype(qL), 3)
     G(x, Q) =
-        let gas = gas
-            # 18.62 stuff - A = 0
-            v1 = f_1(x[1], gas) * exp(x[2]) * f_3(x[3], gas) - smoller_riemann_A(Q)
-            # 18.61: stuff - B = 0 
-            v2 = exp(x[3] - x[1]) - smoller_riemann_B(Q)
-            # 18.63: stuff - C = 0
-            v3 =
-                h_1(x[1], gas) +
-                sqrt(smoller_riemann_B(Q) / smoller_riemann_A(Q)) *
-                h_1(x[1] + log(smoller_riemann_B(Q)), gas) - smoller_riemann_C(Q)
-            return SVector(v1, v2, v3)
-        end
+    let gas = gas
+        # 18.62 stuff - A = 0
+        v1 = f_1(x[1], gas) * exp(x[2]) * f_3(x[3], gas) - smoller_riemann_A(Q)
+        # 18.61: stuff - B = 0
+        v2 = exp(x[3] - x[1]) - smoller_riemann_B(Q)
+        # 18.63: stuff - C = 0
+        v3 =
+            h_1(x[1], gas) +
+            sqrt(smoller_riemann_B(Q) / smoller_riemann_A(Q)) *
+            h_1(x[1] + log(smoller_riemann_B(Q)), gas) - smoller_riemann_C(Q)
+        return SVector(v1, v2, v3)
+    end
     nonlinear_system = NonlinearProblem(G, x0, Q_jump)
     solution = solve(nonlinear_system, SimpleNewtonRaphson())
     @assert SciMLBase.successful_retcode(solution.retcode)
@@ -377,7 +373,7 @@ function solve_riemann_problem(ray, qL, qR, gas)
 
     shear_v_L = popfirst(dimensionless_velocity(qL))
     shear_v_R = popfirst(dimensionless_velocity(qR))
-    if ray < contact_speed
+    return if ray < contact_speed
         # 1-family
         if has_one_shock
             if ray < sL_1
@@ -430,12 +426,12 @@ function solve_riemann_problem(ray, qL, qR, gas)
     end
 end
 
-end
+export u_riemann, ϕ_exact
 
 function u_riemann(uL, uR, n, gas)
     qL = change_space_coordinates(uL, n)
     qR = change_space_coordinates(uR, n)
-    q_riemann = ExactRiemannSolver.solve_riemann_problem(0, qL, qR, gas)
+    q_riemann = solve_riemann_problem(0, qL, qR, gas)
     u_riemann = change_space_coordinates(q_riemann, n, SVector(1.0, 0.0))
     return u_riemann
 end
@@ -448,4 +444,5 @@ Compute the value of ``F(u)\\cdot n`` on a boundary with unit normal ``n`` using
 """
 function ϕ_exact(uL, uR, n, gas)
     return F_euler(u_riemann(uL, uR, n, gas), gas) * n
+end
 end

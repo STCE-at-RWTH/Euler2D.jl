@@ -35,7 +35,7 @@ function intersection_point_jacobian(point, poly1, poly2)
     J = zeros(eltype(point), (2, 2 * N))
     foreach(enumerate(zip(edge_starts(poly1), edge_ends(poly1)))) do (i, (p1, p2))
         if is_other_point_on_line(Line(p1, p2 - p1), point)
-            for ell2 ∈
+            for ell2 in
                 Iterators.filter(ℓ -> is_other_point_on_line(ℓ, point), edge_lines(poly2))
                 jac = DifferentiationInterface.jacobian(fdiff_backend, vcat(p1, p2)) do vals
                     q1 = vals[SVector(1, 2)]
@@ -43,8 +43,8 @@ function intersection_point_jacobian(point, poly1, poly2)
                     return line_intersect(Line(q1, q2 - q1), ell2)
                 end
                 j = ((i + 1) % N) + 1
-                J[2*i-1:2*i] = jac[SVector(1, 2)]
-                J[2*j-1:2*j] = jac[SVector(3, 4)]
+                J[(2 * i - 1):(2 * i)] = jac[SVector(1, 2)]
+                J[(2 * j - 1):(2 * j)] = jac[SVector(3, 4)]
             end
         end
     end
@@ -52,45 +52,45 @@ function intersection_point_jacobian(point, poly1, poly2)
 end
 
 function intersection_point_jacobian(
-    point,
-    poly1::SizedClockwiseOrientedPolygon{N,T},
-    poly2,
-) where {N,T}
+        point,
+        poly1::SizedClockwiseOrientedPolygon{N, T},
+        poly2,
+    ) where {N, T}
     J = @SArray zeros(T, 2, 2 * N)
-    for (i, (p1, p2)) ∈ enumerate(zip(edge_starts(poly1), edge_ends(poly1)))
+    for (i, (p1, p2)) in enumerate(zip(edge_starts(poly1), edge_ends(poly1)))
         if !is_other_point_on_line(Line(p1, p2 - p1), point)
             continue
         end
-        for ℓ2 ∈ Iterators.filter(ℓ -> is_other_point_on_line(ℓ, point), edge_lines(poly2))
+        for ℓ2 in Iterators.filter(ℓ -> is_other_point_on_line(ℓ, point), edge_lines(poly2))
             jac = DifferentiationInterface.jacobian(fdiff_backend, vcat(p1, p2)) do vals
                 q1 = vals[SVector(1, 2)]
                 q2 = vals[SVector(3, 4)]
                 return line_intersect(Line(q1, q2 - q1), ℓ2)
             end
             j = ((i + 1) % N) + 1
-            @reset J[2*i-1:2*i] = jac[SVector(1, 2)]
-            @reset J[2*j-1:2*j] = jac[SVector(3, 4)]
+            @reset J[(2 * i - 1):(2 * i)] = jac[SVector(1, 2)]
+            @reset J[(2 * j - 1):(2 * j)] = jac[SVector(3, 4)]
         end
     end
     return J
 end
 
 function intersection_point_gradient(
-    point,
-    poly1::SClosedPolygon{N,T},
-    shift_dirs,
-    poly2,
-) where {N,T}
+        point,
+        poly1::SClosedPolygon{N, T},
+        shift_dirs,
+        poly2,
+    ) where {N, T}
     @assert N == length(shift_dirs)
     J = @SArray zeros(T, 2, N)
     # A and B are on i-th edge of poly1
-    for (i, (A, B)) ∈ enumerate(zip(edge_starts(poly1), edge_ends(poly1), shift_dirs))
+    for (i, (A, B)) in enumerate(zip(edge_starts(poly1), edge_ends(poly1), shift_dirs))
         ℓ_AB = Line(A, B - A)
         if !is_other_point_on_line(ℓ_AB, point)
             continue
         end
         # the jacobian actually ends up being either all zeros on only having two nonzero columns?
-        for ℓ_BC ∈ edge_lines(poly2)
+        for ℓ_BC in edge_lines(poly2)
             if !is_other_point_on_line(ℓ_BC, point)
                 continue
             end
@@ -143,7 +143,7 @@ We assume that `poly1` is what is shifted and that `poly2` remains constant.
 Uses finite differences. There is almost certainly an AD-based solution here...
 however, we are interested in some amount of "smoothing", in case the intersection area is not very large.
 """
-function intersection_area_gradient(poly1::SClosedPolygon{N,T}, s_dirs, poly2) where {N,T}
+function intersection_area_gradient(poly1::SClosedPolygon{N, T}, s_dirs, poly2) where {N, T}
     grad = @SVector zeros(T, N)
     h = fdiff_eps(zero(T))
     s = @SVector zeros(T, N)
@@ -167,19 +167,19 @@ end
 
 Not fully implemented???? Da hecc
 """
-struct CoarseQuadCell{T,NSEEDS,NTANGENTS} <: FVMCell{T}
+struct CoarseQuadCell{T, NSEEDS, NTANGENTS} <: FVMCell{T}
     id::Int
-    boundary::SClosedPolygon{4,T}
-    u::SVector{4,T}
-    u̇::SMatrix{4,NSEEDS,T,NTANGENTS}
+    boundary::SClosedPolygon{4, T}
+    u::SVector{4, T}
+    u̇::SMatrix{4, NSEEDS, T, NTANGENTS}
     #TODO this is a problem if NV is not 4!
-    du_dvtxs::SMatrix{4,8,T,32}
+    du_dvtxs::SMatrix{4, 8, T, 32}
 end
 
 Euler2D.cell_boundary_polygon(cell::CoarseQuadCell) = cell.boundary
 
-function Euler2D.update_dtype(::Type{CoarseQuadCell{T,NS,NT}}) where {T,NS,NT}
-    return Tuple{SVector{4,T},SVector{4,T},SMatrix{4,NS,T,NT},SMatrix{4,NS,T,NT}}
+function Euler2D.update_dtype(::Type{CoarseQuadCell{T, NS, NT}}) where {T, NS, NT}
+    return Tuple{SVector{4, T}, SVector{4, T}, SMatrix{4, NS, T, NT}, SMatrix{4, NS, T, NT}}
 end
 
 function coarse_cell_neighbor_data(c1, c2)
@@ -190,12 +190,12 @@ function coarse_cell_neighbor_data(c1, c2)
     e2 = cell_boundary_polygon(c2)
     # TODO remove hardcoded direction data please
     dirs = (:south, :west, :north, :east)
-    for (dir, p1, p2) ∈ zip(dirs, edge_starts(e1), edge_ends(e1))
-        for (q1, q2) ∈ zip(edge_ends(e2), edge_starts(e2))
+    for (dir, p1, p2) in zip(dirs, edge_starts(e1), edge_ends(e1))
+        for (q1, q2) in zip(edge_ends(e2), edge_starts(e2))
             if (
-                are_points_collinear_between(p1, p2, q1, q2) ||
-                are_points_collinear_between(q1, q2, p1, p2)
-            )
+                    are_points_collinear_between(p1, p2, q1, q2) ||
+                        are_points_collinear_between(q1, q2, p1, p2)
+                )
                 return (dir, p1, p2)
             end
         end
@@ -204,12 +204,12 @@ function coarse_cell_neighbor_data(c1, c2)
 end
 
 function compute_coarse_cell_contents(
-    coarse_cell_boundary,
-    sim::CellBasedEulerSim{T,TangentQuadCell{T,NSEEDS,NTANGENTS}},
-    tstep,
-    boundary_conditions,
-    gas,
-) where {T,NSEEDS,NTANGENTS}
+        coarse_cell_boundary,
+        sim::CellBasedEulerSim{T, TangentQuadCell{T, NSEEDS, NTANGENTS}},
+        tstep,
+        boundary_conditions,
+        gas,
+    ) where {T, NSEEDS, NTANGENTS}
     A, dA = DifferentiationInterface.value_and_gradient(
         poly_area,
         fdiff_backend,
@@ -263,7 +263,7 @@ function create_empty_coarse_cell_polys(shock_interp, num_cells_y, cell_width; s
     s_range = range(; start = 0.0, stop = s_max, length = num_pts_y)
     shock_point(s) = begin
         if s < 0
-            return SMatrix{2,2,Float64,4}(1.0, 0.0, 0.0, -1.0) * shock_interp(-s)
+            return SMatrix{2, 2, Float64, 4}(1.0, 0.0, 0.0, -1.0) * shock_interp(-s)
         else
             return shock_interp(s)
         end
@@ -271,26 +271,26 @@ function create_empty_coarse_cell_polys(shock_interp, num_cells_y, cell_width; s
     Δs = step(s_range)
     all_s = -Δs:Δs:s_max
     Δx = Point(cell_width, 0.0)
-    return mapreduce(vcat, zip(all_s[begin:end-1], all_s[begin+1:end])) do (s0, s1)
+    return mapreduce(vcat, zip(all_s[begin:(end - 1)], all_s[(begin + 1):end])) do (s0, s1)
         return [
             SClosedPolygon(
-                shock_point(s0) + i * Δx,
-                shock_point(s0) + (i - 1) * Δx,
-                shock_point(s1) + (i - 1) * Δx,
-                shock_point(s1) + i * Δx,
-            ) for i ∈ 0:2
+                    shock_point(s0) + i * Δx,
+                    shock_point(s0) + (i - 1) * Δx,
+                    shock_point(s1) + (i - 1) * Δx,
+                    shock_point(s1) + i * Δx,
+                ) for i in 0:2
         ]
     end
 end
 
 function populate_coarse_cell(
-    id,
-    cell_poly,
-    sim::CellBasedEulerSim{T,TangentQuadCell{T,NSEEDS,NTANGENTS}},
-    tstep,
-    boundary_conditions,
-    gas,
-) where {T,NSEEDS,NTANGENTS}
+        id,
+        cell_poly,
+        sim::CellBasedEulerSim{T, TangentQuadCell{T, NSEEDS, NTANGENTS}},
+        tstep,
+        boundary_conditions,
+        gas,
+    ) where {T, NSEEDS, NTANGENTS}
     needs_flip = all(pt -> pt[2] ≤ 0.0, edge_starts(cell_poly))
     # TODO this assumes that there's always a StrongWall at y=0!
     # THIS WILL NOT WORK FOR THE EDNEY INTERACTIONS! BE WARNED!
@@ -312,30 +312,30 @@ struct DualNodeKind{S} end
 
 const DUAL_GRAPH_NODE_TYPE = Tuple{
     DualNodeKind{S},
-    Union{Nothing,CoarseQuadCell{T,NS,NTANGENTS},SVector{4,T}},
-} where {S,T,NS,NTANGENTS}
+    Union{Nothing, CoarseQuadCell{T, NS, NTANGENTS}, SVector{4, T}},
+} where {S, T, NS, NTANGENTS}
 
 const AMBIENT_BC_DUAL_IDX = 0
 
 function populate_coarse_cell_graph(
-    coarse_cells,
-    sim::CellBasedEulerSim{T,TangentQuadCell{T,NS,NTANGENTS}},
-    free_stream_conditions,
-    boundary_conditions,
-) where {T,NS,NTANGENTS}
+        coarse_cells,
+        sim::CellBasedEulerSim{T, TangentQuadCell{T, NS, NTANGENTS}},
+        free_stream_conditions,
+        boundary_conditions,
+    ) where {T, NS, NTANGENTS}
     g = MetaGraph(
         DiGraph(),
         Int,
-        DUAL_GRAPH_NODE_TYPE{S,T,NS,NTANGENTS} where {S},
-        Tuple{Symbol,Point{T},Point{T}},
+        DUAL_GRAPH_NODE_TYPE{S, T, NS, NTANGENTS} where {S},
+        Tuple{Symbol, Point{T}, Point{T}},
     )
-    for cell ∈ coarse_cells
+    for cell in coarse_cells
         g[cell.id] = (DualNodeKind{:cell}(), cell)
     end
     g[AMBIENT_BC_DUAL_IDX] = (DualNodeKind{:boundary_ambient}(), free_stream_conditions)
     phantom_idx = 1000 * nv(g) + 1
-    for cell ∈ coarse_cells
-        for other ∈ coarse_cells
+    for cell in coarse_cells
+        for other in coarse_cells
             val = coarse_cell_neighbor_data(cell, other)
             if !isnothing(val)
                 g[cell.id, other.id] = val
@@ -343,13 +343,13 @@ function populate_coarse_cell_graph(
         end
         dirs = (:south, :west, :north, :east)
         poly = cell_boundary_polygon(cell)
-        for (p1, p2, dir, t, n) ∈ zip(
-            edge_starts(poly),
-            edge_ends(poly),
-            dirs,
-            edge_tangents(poly),
-            outward_edge_normals(poly),
-        )
+        for (p1, p2, dir, t, n) in zip(
+                edge_starts(poly),
+                edge_ends(poly),
+                dirs,
+                edge_tangents(poly),
+                outward_edge_normals(poly),
+            )
             # TODO fix hardcoded directions and properties here
             if cell.id % 3 == 1 && dir == :west
                 g[cell.id, AMBIENT_BC_DUAL_IDX] = (dir, p1, p2)
@@ -361,16 +361,16 @@ function populate_coarse_cell_graph(
 end
 
 function make_coarse_cell_graph(
-    shock_interp,
-    sim,
-    tstep,
-    free_stream_conditions,
-    boundary_conditions,
-    gas,
-    num_cells_pos_y,
-    cell_width;
-    s_max = 1.0,
-)
+        shock_interp,
+        sim,
+        tstep,
+        free_stream_conditions,
+        boundary_conditions,
+        gas,
+        num_cells_pos_y,
+        cell_width;
+        s_max = 1.0,
+    )
     empty_polys_enumerated = collect(
         enumerate(
             create_empty_coarse_cell_polys(
@@ -455,14 +455,14 @@ _u_idx(::DualNodeKind{:cell}, id, nbr) = nbr
 _u_idx(::DualNodeKind{:boundary_ambient}, id, nbr) = 1
 
 function _compute_ϕ(
-    ϕ,
-    ::DualNodeKind{:cell},
-    cell_data,
-    ::DualNodeKind{:cell},
-    other_data,
-    edge_data,
-    gas,
-)
+        ϕ,
+        ::DualNodeKind{:cell},
+        cell_data,
+        ::DualNodeKind{:cell},
+        other_data,
+        edge_data,
+        gas,
+    )
     (L, n̂, t̂, ê1) = _edge_basis(edge_data)
     u_L = project_state_to_orthonormal_basis(cell_data.u, n̂)
     u_R = project_state_to_orthonormal_basis(other_data.u, n̂)
@@ -471,14 +471,14 @@ function _compute_ϕ(
 end
 
 function _compute_ϕ(
-    ϕ,
-    ::DualNodeKind{:cell},
-    cell_data,
-    ::DualNodeKind{:boundary_vN},
-    ::Nothing,
-    edge_data,
-    gas,
-)
+        ϕ,
+        ::DualNodeKind{:cell},
+        cell_data,
+        ::DualNodeKind{:boundary_vN},
+        ::Nothing,
+        edge_data,
+        gas,
+    )
     (L, n̂, t̂, ê1) = _edge_basis(edge_data)
     u_L = project_state_to_orthonormal_basis(cell_data.u, n̂)
     u_R = project_state_to_orthonormal_basis(cell_data.u, n̂)
@@ -487,14 +487,14 @@ function _compute_ϕ(
 end
 
 function _compute_ϕ(
-    ϕ,
-    ::DualNodeKind{:cell},
-    cell_data,
-    ::DualNodeKind{:boundary_ambient},
-    other_data,
-    edge_data,
-    gas,
-)
+        ϕ,
+        ::DualNodeKind{:cell},
+        cell_data,
+        ::DualNodeKind{:boundary_ambient},
+        other_data,
+        edge_data,
+        gas,
+    )
     (L, n̂, t̂, ê1) = _edge_basis(edge_data)
     u_L = project_state_to_orthonormal_basis(cell_data.u, n̂)
     u_R = project_state_to_orthonormal_basis(other_data, n̂)
@@ -503,14 +503,14 @@ function _compute_ϕ(
 end
 
 function _compute_ϕ(
-    ϕ,
-    ::DualNodeKind{:cell},
-    cell_data,
-    ::Union{DualNodeKind{:boundary_sym},DualNodeKind{:boundary_body}},
-    ::Nothing,
-    edge_data,
-    gas,
-)
+        ϕ,
+        ::DualNodeKind{:cell},
+        cell_data,
+        ::Union{DualNodeKind{:boundary_sym}, DualNodeKind{:boundary_body}},
+        ::Nothing,
+        edge_data,
+        gas,
+    )
     (L, n̂, t̂, ê1) = _edge_basis(edge_data)
     u_L = project_state_to_orthonormal_basis(cell_data.u, n̂)
     ρv = select_middle(cell_data.u)
@@ -522,14 +522,14 @@ function _compute_ϕ(
 end
 
 function _compute_grad_ϕ_edge(
-    ϕ,
-    ::DualNodeKind{:cell},
-    cell_data,
-    ::DualNodeKind{:cell},
-    other_data,
-    edge_data,
-    gas,
-)
+        ϕ,
+        ::DualNodeKind{:cell},
+        cell_data,
+        ::DualNodeKind{:cell},
+        other_data,
+        edge_data,
+        gas,
+    )
     blob = _marshal_edge_data(edge_data)
     dϕ_dedge = jacobian(
         fdiff_backend,
@@ -548,14 +548,14 @@ function _compute_grad_ϕ_edge(
 end
 
 function _compute_grad_ϕ_edge(
-    ϕ,
-    ::DualNodeKind{:cell},
-    cell_data,
-    ::Union{DualNodeKind{:boundary_sym},DualNodeKind{:boundary_body}},
-    ::Nothing,
-    edge_data,
-    gas,
-)
+        ϕ,
+        ::DualNodeKind{:cell},
+        cell_data,
+        ::Union{DualNodeKind{:boundary_sym}, DualNodeKind{:boundary_body}},
+        ::Nothing,
+        edge_data,
+        gas,
+    )
     blob = _marshal_edge_data(edge_data)
     dϕ_dedge = jacobian(fdiff_backend, blob, Constant(cell_data.u)) do v, u
         p1, p2 = _unmarshal_edge_data(v)
@@ -572,14 +572,14 @@ function _compute_grad_ϕ_edge(
 end
 
 function _compute_grad_ϕ_u(
-    ϕ,
-    ::DualNodeKind{:cell},
-    cell_data,
-    ::DualNodeKind{:cell},
-    other_data,
-    edge_data,
-    gas,
-)
+        ϕ,
+        ::DualNodeKind{:cell},
+        cell_data,
+        ::DualNodeKind{:cell},
+        other_data,
+        edge_data,
+        gas,
+    )
     (L, n̂, t̂, ê1) = _edge_basis(edge_data)
     dϕ_dcell = jacobian(fdiff_backend, cell_data.u, Constant(other_data.u)) do u, u_other
         u_L = project_state_to_orthonormal_basis(u, n̂)
@@ -599,14 +599,14 @@ function _compute_grad_ϕ_u(
 end
 
 function _compute_grad_ϕ_u(
-    ϕ,
-    ::DualNodeKind{:cell},
-    cell_data,
-    ::DualNodeKind{:boundary_ambient},
-    other_data,
-    edge_data,
-    gas,
-)
+        ϕ,
+        ::DualNodeKind{:cell},
+        cell_data,
+        ::DualNodeKind{:boundary_ambient},
+        other_data,
+        edge_data,
+        gas,
+    )
     (L, n̂, t̂, ê1) = _edge_basis(edge_data)
     dϕ_dcell = jacobian(fdiff_backend, cell_data.u) do u
         u_L = project_state_to_orthonormal_basis(u, n̂)
@@ -626,14 +626,14 @@ function _compute_grad_ϕ_u(
 end
 
 function _compute_grad_ϕ_u(
-    ϕ,
-    ::DualNodeKind{:cell},
-    cell_data,
-    ::Union{DualNodeKind{:boundary_sym},DualNodeKind{:boundary_body}},
-    ::Nothing,
-    edge_data,
-    gas,
-)
+        ϕ,
+        ::DualNodeKind{:cell},
+        cell_data,
+        ::Union{DualNodeKind{:boundary_sym}, DualNodeKind{:boundary_body}},
+        ::Nothing,
+        edge_data,
+        gas,
+    )
     (L, n̂, t̂, ê1) = _edge_basis(edge_data)
     dϕ_dcell = jacobian(fdiff_backend, cell_data.u) do u
         u_L = project_state_to_orthonormal_basis(u, n̂)
@@ -648,14 +648,14 @@ function _compute_grad_ϕ_u(
 end
 
 function _compute_grad_ϕ_u(
-    ϕ,
-    ::DualNodeKind{:cell},
-    cell_data,
-    ::DualNodeKind{:boundary_vN},
-    ::Nothing,
-    edge_data,
-    gas,
-)
+        ϕ,
+        ::DualNodeKind{:cell},
+        cell_data,
+        ::DualNodeKind{:boundary_vN},
+        ::Nothing,
+        edge_data,
+        gas,
+    )
     (L, n̂, t̂, ê1) = _edge_basis(edge_data)
     dϕ_dcell = jacobian(fdiff_backend, cell_data.u) do u
         u_L = project_state_to_orthonormal_basis(u, n̂)
@@ -710,14 +710,14 @@ function boundary_integral_gradient(ϕ, dual, id, gas)
         local (k, l) = _edge_point_indices[dir]
         # reversed numbering in the cell on the other side!
         local (n, m) = _edge_point_indices[_edge_opposites[dir]]
-        ddpts[:, (2*k-1):2*k] += dLϕ_dpts[:, SVector(1, 2)]
-        ddpts[:, (2*l-1):2*l] += dLϕ_dpts[:, SVector(3, 4)]
+        ddpts[:, (2 * k - 1):(2 * k)] += dLϕ_dpts[:, SVector(1, 2)]
+        ddpts[:, (2 * l - 1):(2 * l)] += dLϕ_dpts[:, SVector(3, 4)]
 
-        ddpts[:, (2*k-1):2*k] += dϕ_dui * dual[i][2].du_dvtxs[:, (2*k-1):2*k]
-        ddpts[:, (2*l-1):2*l] += dϕ_dui * dual[i][2].du_dvtxs[:, (2*l-1):2*l]
+        ddpts[:, (2 * k - 1):(2 * k)] += dϕ_dui * dual[i][2].du_dvtxs[:, (2 * k - 1):(2 * k)]
+        ddpts[:, (2 * l - 1):(2 * l)] += dϕ_dui * dual[i][2].du_dvtxs[:, (2 * l - 1):(2 * l)]
 
-        ddpts[:, (2*k-1):2*k] += dϕ_duj * dual[j][2].du_dvtxs[:, (2*m-1):2*m]
-        ddpts[:, (2*l-1):2*l] += dϕ_duj * dual[j][2].du_dvtxs[:, (2*n-1):2*n]
+        ddpts[:, (2 * k - 1):(2 * k)] += dϕ_duj * dual[j][2].du_dvtxs[:, (2 * m - 1):(2 * m)]
+        ddpts[:, (2 * l - 1):(2 * l)] += dϕ_duj * dual[j][2].du_dvtxs[:, (2 * n - 1):(2 * n)]
     end
     return ddparams, ddpts
 end

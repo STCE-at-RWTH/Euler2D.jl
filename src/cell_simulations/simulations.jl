@@ -24,13 +24,13 @@ Represents a completed simulation of the Euler equations on a mesh of 2-dimensio
 - `density_field, momentum_density_field, total_internal_energy_density_field`: Compute quantities at a given time step.
 - `pressure_field, velocity_field, mach_number_field`: Compute quantities at a given time step.
 """
-struct CellBasedEulerSim{T,C<:FVMCell}
-    ncells::Tuple{Int,Int}
+struct CellBasedEulerSim{T, C <: FVMCell}
+    ncells::Tuple{Int, Int}
     nsteps::Int
-    bounds::NTuple{2,Tuple{T,T}}
+    bounds::NTuple{2, Tuple{T, T}}
     tsteps::Vector{T}
-    cell_ids::Array{Int,2}
-    cells::Array{Dict{Int64,C},1}
+    cell_ids::Array{Int, 2}
+    cells::Array{Dict{Int64, C}, 1}
 end
 
 @enum EulerSimulationMode::UInt8 begin
@@ -39,10 +39,10 @@ end
 end
 
 # check the simulation mode of a cell type or simulation
-_sim_mode(::Type{TangentQuadCell{T,N1,N2}}) where {T,N1,N2} = TANGENT
+_sim_mode(::Type{TangentQuadCell{T, N1, N2}}) where {T, N1, N2} = TANGENT
 _sim_mode(::Type{PrimalQuadCell{T}}) where {T} = PRIMAL
-_sim_mode(::T) where {T<:FVMCell} = _sim_mode(T)
-_sim_mode(::CellBasedEulerSim{T,C}) where {T,C} = _sim_mode(C)
+_sim_mode(::T) where {T <: FVMCell} = _sim_mode(T)
+_sim_mode(::CellBasedEulerSim{T, C}) where {T, C} = _sim_mode(C)
 
 """
     n_space_dims(::CellBasedEulerSim)
@@ -92,7 +92,7 @@ Return `StepRange` of all the cell center positions for the `n`th space dimensio
 """
 function cell_centers(sim, dim)
     ifaces = cell_boundaries(sim, dim)
-    return ifaces[begin:end-1] .+ step(ifaces) / 2
+    return ifaces[begin:(end - 1)] .+ step(ifaces) / 2
 end
 
 function cell_centers(e::CellBasedEulerSim)
@@ -108,213 +108,15 @@ function nth_step(csim::CellBasedEulerSim, n)
     return csim.tsteps[n], csim.cells[n]
 end
 
-eachstep(csim::CellBasedEulerSim) = (nth_step(csim, n) for n ∈ 1:n_tsteps(csim))
+eachstep(csim::CellBasedEulerSim) = (nth_step(csim, n) for n in 1:n_tsteps(csim))
 
 """
-    density_field(csim::CellBasedEulerSim, n)
+    minimum_cell_size(sim::CellBasedEulerSim)
 
-Compute the density field for a cell-based Euler simulation `csim` at time step `n`.
+Compute the minimum of all `dx` and `dy`.
+
+See also: [`maximum_cell_size`](@ref)
 """
-function density_field(csim::CellBasedEulerSim{T}, n::Integer) where {T}
-    _, u_cells = nth_step(csim, n)
-    ρ = Array{Union{T,Nothing},2}(undef, grid_size(csim))
-    fill!(ρ, nothing)
-    for i ∈ eachindex(IndexCartesian(), csim.cell_ids)
-        csim.cell_ids[i] == 0 && continue
-        u = u_cells[csim.cell_ids[i]].u
-        ρ[i] = u[1]
-    end
-    return ρ
-end
-
-"""
-    density_field(csim::CellBasedEulerSim, scale, n)
-
-Compute the density field for a cell-based Euler simulation `csim` and redimensionalize it at time step `n`.
-"""
-function density_field(
-    csim::CellBasedEulerSim{T},
-    n::Integer,
-    scale::EulerEqnsScaling,
-) where {T}
-    return map(density_field(csim, n)) do ρ
-        isnothing(ρ) && return nothing
-        return ρ * density_scale(scale)
-    end
-end
-
-"""
-    momentum_density_field(csim::CellBasedEulerSim, n)
-
-Compute the dimensionless momentum density field for a cell-based Euler simulation `csim` at time step `n`.
-"""
-function momentum_density_field(csim::CellBasedEulerSim{T}, n::Integer) where {T}
-    _, u_cells = nth_step(csim, n)
-    ρv = Array{T,3}(undef, (2, grid_size(csim)...))
-    fill!(ρv, nothing)
-    for i ∈ eachindex(IndexCartesian(), csim.cell_ids)
-        csim.cell_ids[i] == 0 && continue
-        u = u_cells[csim.cell_ids[i]].u
-        ρv[:, i] = select_middle(u)
-    end
-    return ρv
-end
-
-"""
-    momentum_density_field(csim::CellBasedEulerSim, scale, n)
-
-Compute the momentum density field for a cell-based Euler simulation `csim` and redimensionalize it at time step `n`.
-"""
-function momentum_density_field(
-    csim::CellBasedEulerSim{T},
-    n::Integer,
-    scale::EulerEqnsScaling,
-) where {T}
-    return map(momentum_density_field(csim, n)) do ρv
-        isnothing(ρv) && return nothing
-        return ρv * density_scale(scale) * velocity_scale(scale)
-    end
-end
-
-"""
-    velocity_field(csim::CellBasedEulerSim, n)
-
-Compute the dimensionless velocity field for a cell-based Euler simulation `csim` at time step `n`.
-"""
-function velocity_field(csim::CellBasedEulerSim{T}, n::Integer) where {T}
-    _, u_cells = nth_step(csim, n)
-    v = Array{Union{T,Nothing},3}(undef, (2, grid_size(csim)...))
-    fill!(v, nothing)
-    for i ∈ eachindex(IndexCartesian(), csim.cell_ids)
-        csim.cell_ids[i] == 0 && continue
-        u = u_cells[csim.cell_ids[i]].u
-        v[:, i] = select_middle(u) / first(u)
-    end
-    return v
-end
-
-"""
-    velocity_field(csim::CellBasedEulerSim, scale, n)
-
-Compute the velocity field for a cell-based Euler simulation `csim` and redimensionalize it at time step `n`.
-"""
-function velocity_field(
-    csim::CellBasedEulerSim{T},
-    n::Integer,
-    scale::EulerEqnsScaling,
-) where {T}
-    return map(velocity_field(csim, n)) do v
-        isnothing(v) && return nothing
-        return v * velocity_scale(scale)
-    end
-end
-
-"""
-    total_internal_energy_density_field(csim::CellBasedEulerSim, n)
-
-Compute the dimensionless total internal energy density field for a cell-based Euler simulation at time step `n`.
-"""
-function total_internal_energy_density_field(
-    csim::CellBasedEulerSim{T},
-    n::Integer,
-) where {T}
-    _, u_cells = nth_step(csim, n)
-    ρE = Array{Union{T,Nothing},2}(undef, grid_size(csim))
-    fill!(ρE, nothing)
-    for i ∈ eachindex(IndexCartesian(), csim.cell_ids)
-        csim.cell_ids[i] == 0 && continue
-        u = u_cells[csim.cell_ids[i]].u
-        ρE[i] = last(u)
-    end
-    return ρE
-end
-
-"""
-    total_internal_energy_density_field(csim::CellBasedEulerSim, scale, n)
-
-Compute the total internal energy density field for a cell-based Euler simulation `csim` and redimensionalize it at time step `n`.
-"""
-function total_internal_energy_density_field(
-    csim::CellBasedEulerSim{T},
-    n::Integer,
-    scale::EulerEqnsScaling,
-) where {T}
-    return map(total_internal_energy_density_field(csim, n)) do ρE
-        isnothing(ρE) && return nothing
-        return ρE * energy_density_scale(scale)
-    end
-end
-
-"""
-    pressure_field(csim::CellBasedEulerSim, n, gas)
-
-Compute the dimensionless pressure field for a cell-based Euler simulation `csim` at time step `n` in gas `gas`.
-"""
-function pressure_field(
-    csim::CellBasedEulerSim{T},
-    n::Integer,
-    gas::CaloricallyPerfectGas,
-) where {T}
-    _, u_cells = nth_step(csim, n)
-    P = Array{Union{T,Nothing},2}(undef, grid_size(csim))
-    fill!(P, nothing)
-    for i ∈ eachindex(IndexCartesian(), csim.cell_ids)
-        csim.cell_ids[i] == 0 && continue
-        u = u_cells[csim.cell_ids[i]].u
-        P[i] = dimensionless_pressure(u, gas)
-    end
-    return P
-end
-
-"""
-    pressure_field(csim::CellBasedEulerSim, scale, n)
-
-Compute the total internal energy density field for a cell-based Euler simulation `csim` and redimensionalize it at time step `n`.
-"""
-function pressure_field(
-    csim::CellBasedEulerSim{T},
-    n::Integer,
-    gas::CaloricallyPerfectGas,
-    scale::EulerEqnsScaling,
-) where {T}
-    return map(pressure_field(csim, n, gas)) do P
-        isnothing(P) && return nothing
-        return P * pressure_scale(scale)
-    end
-end
-
-"""
-    mach_number_field(csim::CellBasedEulerSim, n, gas)
-
-Compute the Mach number field for a cell-based Euler simulation `csim` at time step `n` in gas `gas`.
-"""
-function mach_number_field(
-    csim::CellBasedEulerSim{T},
-    n::Integer,
-    gas::CaloricallyPerfectGas,
-) where {T}
-    _, u_cells = nth_step(csim, n)
-    # is this a huge runtime problem? who can know.
-    M = Array{Union{T,Nothing},3}(undef, (2, grid_size(csim)...))
-    fill!(M, nothing)
-    for i ∈ eachindex(IndexCartesian(), csim.cell_ids)
-        csim.cell_ids[i] == 0 && continue
-        u = u_cells[csim.cell_ids[i]].u
-        a = dimensionless_speed_of_sound(u, gas)
-        M[:, i] = select_middle(u) / (first(u) * a)
-    end
-    return M
-end
-
-# for completeness
-# the scaling doesn't actually matter for the mach number
-mach_number_field(
-    csim::CellBasedEulerSim,
-    n::Integer,
-    gas::CaloricallyPerfectGas,
-    ::EulerEqnsScaling,
-) = mach_number_field(csim, n, gas)
-
 function minimum_cell_size(sim::CellBasedEulerSim)
     _, cells = nth_step(sim, 1)
     return tmapreduce(
@@ -327,6 +129,13 @@ function minimum_cell_size(sim::CellBasedEulerSim)
     end
 end
 
+"""
+    maximum_cell_size(sim::CellBasedEulerSim)
+
+Compute the maximum of all `dx` and `dy`.
+
+See also: [`minimum_cell_size`](@ref)
+"""
 function maximum_cell_size(sim::CellBasedEulerSim)
     _, cells = nth_step(sim, 1)
     return tmapreduce(
@@ -339,6 +148,90 @@ function maximum_cell_size(sim::CellBasedEulerSim)
     end
 end
 
+function cell_id_at(x, y, sim)
+    xs, ys = cell_boundaries(sim)
+    @assert first(xs) <= x <= last(xs) && first(ys) <= y <= last(ys)
+    Δi = floor(Int, (x - first(xs)) / step(xs))
+    Δj = floor(Int, (y - first(ys)) / step(ys))
+    return sim.cell_ids[begin + Δi, begin + Δj]
+end
+
+cell_id_at(pt, sim) = cell_id_at(pt..., sim)
+
+function u_at(x, y, sim, tstep)
+    id = cell_id_at(x, y, sim)
+    _, cells = nth_step(sim, tstep)
+    return cells[id].u
+end
+
+u_at(pt, sim::CellBasedEulerSim, n) = u_at(pt..., sim, n)
+
+function u_and_u̇_at(x, y, sim, tstep)
+    id = cell_id_at(x, y, sim)
+    _, cells = nth_step(sim, tstep)
+    c = cells[id]
+    return (c.u, c.u̇)
+end
+
+u_and_u̇_at(pt, sim::CellBasedEulerSim, n) = u_and_u̇_at(pt..., sim, n)
+
+
+function estimate_dudx_FD(cell_left, cell_right)
+    x1 = cell_center(cell_left)[1]
+    x2 = cell_center(cell_right)[1]
+    return (cell_right.u - cell_left.u) / (x2 - x1)
+end
+
+function estimate_dudy_FD(cell_left, cell_right)
+    y1 = cell_center(cell_left)[2]
+    y2 = cell_center(cell_right)[2]
+    return (cell_right.u - cell_left.u) / (y2 - y1)
+end
+
+function estimate_∇u(cell, nbrs, stencils)
+    stencil_x, stencil_y = stencils
+    dudx = if stencil_x == :left
+        estimate_dudx_FD(nbrs.west, cell)
+    elseif stencil_x == :right
+        estimate_dudx_FD(cell, nbrs.east)
+    else
+        estimate_dudx_FD(nbrs.west, nbrs.east)
+    end
+
+    dudy = if stencil_y == :left
+        estimate_dudy_FD(nbrs.south, cell)
+    elseif stencil_y == :right
+        estimate_dudy_FD(cell, nbrs.north)
+    else
+        estimate_dudy_FD(nbrs.south, nbrs.north)
+    end
+    return hcat(dudx, dudy)
+end
+
+"""
+    pick_stencil(dir)
+
+Given a direction `dir`, pick a gradient stencil that 
+will be a good estimate of the derivative in that direction.
+"""
+function pick_stencil(dir)
+    stencil_x = dir[1] < 0 ? :left : :right
+    stencil_y = dir[2] < 0 ? :left : :right
+    return stencil_x, stencil_y
+end
+
+function estimate_∇u_at(x, y, grad_stencil::NTuple{2, Symbol}, sim::CellBasedEulerSim, tstep, boundary_conditions, gas)
+    id = cell_id_at(x, y, sim)
+    _, cells = nth_step(sim, tstep)
+    c = cells[id]
+    nbrs = neighbor_cells(c, cells, boundary_conditions, gas)
+    return estimate_∇u(c, nbrs, grad_stencil)
+end
+
+function estimate_∇u_at(pt, grad_stencil::NTuple{2, Symbol}, sim::CellBasedEulerSim, tstep, boundary_conditions, gas)
+    return estimate_∇u_at(pt..., grad_stencil, sim, tstep, boundary_conditions, gas)
+end
+
 """
     estimate_∇u_in_rectangular_cell(cell, sim, n, boundary_conditions, gas)
 
@@ -346,12 +239,12 @@ Return an estimate for ``∇_x u`` in the given cell computed using finite diffe
 to the average values of the neighboring cells.
 """
 function estimate_∇u_in_rectangular_cell(
-    cell::RectangularFVMCell,
-    sim,
-    n,
-    boundary_conditions,
-    gas;
-)
+        cell::RectangularFVMCell,
+        sim,
+        n,
+        boundary_conditions,
+        gas
+    )
     _, active_cells = nth_step(sim, n)
     nbrs = neighbor_cells(cell, active_cells, boundary_conditions, gas)
     hx = cell.extent[1] + 0.5 * (nbrs.east.extent[1] + nbrs.west.extent[1])
@@ -386,35 +279,13 @@ end
 function _in_window(cell, window_x, window_y)
     return (
         window_x[1] ≤ cell.center[1] ≤ window_x[2] &&
-        window_y[1] ≤ cell.center[2] ≤ window_y[2]
+            window_y[1] ≤ cell.center[2] ≤ window_y[2]
     )
 end
 
-function u_at(x, y, sim, n)
-    xs, ys = cell_boundaries(sim)
-    _, cells = nth_step(sim, n)
-    @assert first(xs) <= x <= last(xs) && first(ys) <= y <= last(ys)
-    Δi = floor(Int, (x - first(xs)) / step(xs))
-    Δj = floor(Int, (y - first(ys)) / step(ys))
-    return cells[sim.cell_ids[begin+Δi, begin+Δj]].u
-end
-
-function u_and_u̇_at(x, y, sim, n)
-    xs, ys = cell_boundaries(sim)
-    _, cells = nth_step(sim, n)
-    @assert first(xs) <= x <= last(xs) && first(ys) <= y <= last(ys)
-    Δi = floor(Int, (x - first(xs)) / step(xs))
-    Δj = floor(Int, (y - first(ys)) / step(ys))
-    c = cells[sim.cell_ids[begin+Δi, begin+Δj]]
-    return (c.u, c.u̇)
-end
-
-u_at(pt, sim::CellBasedEulerSim, n) = u_at(pt..., sim, n)
-u_and_u̇_at(pt, sim::CellBasedEulerSim, n) = u_and_u̇_at(pt..., sim, n)
-
 # I am no longer satisfied that this implementation is correct
 # re: what happens when (x, y) lands on a boundary of the simulation?
-# TODO check that we are computing (phantom) neighbor cells correctly 
+# TODO check that we are computing (phantom) neighbor cells correctly
 # so that we can estimate gradients?
 function ∇u_at(x, y, sim, n, bcs, gas; padding = nothing)
     window = if isnothing(padding)
@@ -428,12 +299,12 @@ function ∇u_at(x, y, sim, n, bcs, gas; padding = nothing)
     contains_point = Iterators.filter(@view sim.cell_ids[slices...]) do id
         return (
             id != 0 &&
-            PlanePolygons.point_inside(cell_boundary_polygon(cells[id]), Point(x, y))
+                PlanePolygons.point_inside(cell_boundary_polygon(cells[id]), Point(x, y))
         )
     end
     counter = 0
-    acc = zero(SMatrix{4,2,Float64,8})
-    for id ∈ contains_point
+    acc = zero(SMatrix{4, 2, Float64, 8})
+    for id in contains_point
         counter += 1
         c = cells[id]
         @reset acc += estimate_∇u_in_rectangular_cell(c, sim, n, bcs, gas)
@@ -465,8 +336,8 @@ function all_cells_contained_by(poly, sim; padding = nothing)
     return Iterators.filter(@view sim.cell_ids[slices...]) do id
         return (
             id != 0 &&
-            _in_window(cells[id], window...) &&
-            is_cell_contained_by(cells[id], poly)
+                _in_window(cells[id], window...) &&
+                is_cell_contained_by(cells[id], poly)
         )
     end
 end
@@ -491,8 +362,8 @@ function all_cells_overlapping(poly, sim; padding = nothing)
     return Iterators.filter(@view sim.cell_ids[slices...]) do id
         return (
             id != 0 &&
-            _in_window(cells[id], window...) &&
-            is_cell_overlapping(cells[id], poly)
+                _in_window(cells[id], window...) &&
+                is_cell_overlapping(cells[id], poly)
         )
     end
 end
@@ -505,11 +376,11 @@ This quantity IS NOT volume-averaged! To get the volume-averaged quantity you MU
 the area of `poly`!
 """
 function total_mass_contained_by(
-    poly,
-    sim::CellBasedEulerSim{T,TangentQuadCell{T,NSEEDS,NP}},
-    tstep;
-    poly_bbox_padding = nothing,
-) where {T,NSEEDS,NP}
+        poly,
+        sim::CellBasedEulerSim{T, TangentQuadCell{T, NSEEDS, NP}},
+        tstep;
+        poly_bbox_padding = nothing,
+    ) where {T, NSEEDS, NP}
     contained = all_cells_contained_by(poly, sim; padding = poly_bbox_padding)
     overlapping = all_cells_overlapping(poly, sim; padding = poly_bbox_padding)
     _, cells = nth_step(sim, tstep)
@@ -517,15 +388,15 @@ function total_mass_contained_by(
     Udot_zero = @SArray zeros(T, 4, NSEEDS)
     U_contained, Udot_contained =
         mapreduce((a, b) -> a .+ b, contained; init = (U_zero, Udot_zero)) do id
-            A = cell_volume(cells[id])
-            return A .* (cells[id].u, cells[id].u̇)
-        end
+        A = cell_volume(cells[id])
+        return A .* (cells[id].u, cells[id].u̇)
+    end
 
     U_overlap, Udot_overlap =
         mapreduce((a, b) -> a .+ b, overlapping; init = (U_zero, Udot_zero)) do id
-            A = overlapping_cell_area(cells[id], poly)
-            return A .* (cells[id].u, cells[id].u̇)
-        end
+        A = overlapping_cell_area(cells[id], poly)
+        return A .* (cells[id].u, cells[id].u̇)
+    end
 
     return U_contained + U_overlap, Udot_contained + Udot_overlap
 end
@@ -541,13 +412,13 @@ This routine will estimate the gradient in each of the cells "overlapping" `poly
 This first-order estimate is only applied to the primal value!!
 """
 function total_mass_contained_by_with_gradient_estimates(
-    poly,
-    sim::CellBasedEulerSim{T,TangentQuadCell{T,NSEEDS,NP}},
-    tstep,
-    boundary_conditions,
-    gas;
-    poly_bbox_padding = nothing,
-) where {T,NSEEDS,NP}
+        poly,
+        sim::CellBasedEulerSim{T, TangentQuadCell{T, NSEEDS, NP}},
+        tstep,
+        boundary_conditions,
+        gas;
+        poly_bbox_padding = nothing,
+    ) where {T, NSEEDS, NP}
     contained = all_cells_contained_by(poly, sim; padding = poly_bbox_padding)
     overlapping = all_cells_overlapping(poly, sim; padding = poly_bbox_padding)
     _, cells = nth_step(sim, tstep)
@@ -555,24 +426,24 @@ function total_mass_contained_by_with_gradient_estimates(
     Udot_zero = @SArray zeros(T, 4, NSEEDS)
     U_contained, Udot_contained =
         mapreduce((a, b) -> a .+ b, contained; init = (U_zero, Udot_zero)) do id
-            A = cell_volume(cells[id])
-            return A .* (cells[id].u, cells[id].u̇)
-        end
+        A = cell_volume(cells[id])
+        return A .* (cells[id].u, cells[id].u̇)
+    end
 
     # BE WARNED, FUTURE SELF
     # Does not apply linear approximation to udot
     U_overlap, Udot_overlap =
         mapreduce((a, b) -> a .+ b, overlapping; init = (U_zero, Udot_zero)) do id
-            poly_cell = cell_boundary_polygon(cells[id])
-            isect = poly_intersection(poly, poly_cell)
-            A = poly_area(isect)
-            dudx = estimate_∇u_in_rectangular_cell(id, sim, tstep, boundary_conditions, gas)
-            u_isect =
-                inv(num_vertices(isect)) * sum(edge_starts(isect)) do pt
-                    return cells[id].u + dudx * (pt - cells[id].center)
-                end
-            return A .* (u_isect, cells[id].u̇)
+        poly_cell = cell_boundary_polygon(cells[id])
+        isect = poly_intersection(poly, poly_cell)
+        A = poly_area(isect)
+        dudx = estimate_∇u_in_rectangular_cell(id, sim, tstep, boundary_conditions, gas)
+        u_isect =
+            inv(num_vertices(isect)) * sum(edge_starts(isect)) do pt
+            return cells[id].u + dudx * (pt - cells[id].center)
         end
+        return A .* (u_isect, cells[id].u̇)
+    end
     return U_contained + U_overlap, Udot_contained + Udot_overlap
 end
 
@@ -581,7 +452,7 @@ end
 # Take the tape data stream and return a channel where simulation state can be queued then pushed.
 function _start_output_task(buffer_size, tstep_type, data_stream, empty_buffer_channel)
     taskref = Ref{Task}()
-    ch = Channel{Union{Symbol,tstep_type}}(
+    ch = Channel{Union{Symbol, tstep_type}}(
         buffer_size;
         taskref = taskref,
         spawn = true,
@@ -606,11 +477,12 @@ function write_tstep_to_stream(stream, t, global_cells)
     # maybe we also want to assert bitstype here
     @assert Base.isconcretetype(T)
     write(stream, t)
-    for (id, cell) ∈ global_cells
+    for (id, cell) in global_cells
         @assert id == cell.id
         # specify T to make the LSP happy; julia can infer it .n.
         write(stream, Ref{T}(cell))
     end
+    return
 end
 
 # for grouping some stuff together.
@@ -632,15 +504,15 @@ function advance_timing_infos!(infos)
 end
 
 function inform_timing_information(
-    infos,
-    maximum_wall_clock,
-    current_num_tsteps,
-    t,
-    Δt,
-    l1_conv,
-    l2_conv,
-    lInf_conv,
-)
+        infos,
+        maximum_wall_clock,
+        current_num_tsteps,
+        t,
+        Δt,
+        l1_conv,
+        l2_conv,
+        lInf_conv,
+    )
     total_duration = infos.current_wall_time - infos.start_time
     avg_dur = total_duration ÷ current_num_tsteps
     cur_dur = infos.current_wall_time - infos.previous_wall_time
@@ -650,7 +522,7 @@ function inform_timing_information(
     @info "Time step $current_num_tsteps (duration $cur_dur, avg. $avg_dur, remaining wall clock $r)" cur_t =
         t del_t = Δt nex_t = t + Δt l1_co = l1_conv l2_co = l2_conv lI_co = lInf_conv
 
-    nothing
+    return nothing
 end
 
 # check if there is a risk of the simulation being terminated
@@ -732,34 +604,36 @@ Keyword Arguments (and their default values)
 - `boundary_conditions = (Phantom, StrongWall, Phantom, Phantom, StrongWall)`: Can't save these to a file (sad)
 """
 function cell_simulation_config(; kwargs...)
-    cfg = Dict{Symbol,Any}([
-        :mode => PRIMAL,
-        :gas => DRY_AIR,
-        :scale => _SI_DEFAULT_SCALE,
-        :cfl_limit => 0.75,
-        :max_tsteps => typemax(Int),
-        :maximum_wall_duration => Hour(167),
-        :write_result => true,
-        :output_channel_size => 5,
-        :write_frequency => 1,
-        :output_tag => "cell_euler_sim",
-        :prepend_data_dir => true,
-        :show_info => true,
-        :show_detailed_info => false,
-        :info_frequency => 10,
-        :tasks_per_axis => Threads.nthreads(),
-        :convergence_test_freqency => 1,
-        :l1_thold => 5.0e-10,
-        :l2_thold => 1.0e-8,
-        :lInf_thold => 5.0e-8,
-        :boundary_conditions => (
-            ExtrapolateToPhantom(),
-            StrongWall(),
-            ExtrapolateToPhantom(),
-            ExtrapolateToPhantom(),
-            StrongWall(),
-        ),
-    ])
+    cfg = Dict{Symbol, Any}(
+        [
+            :mode => PRIMAL,
+            :gas => DRY_AIR,
+            :scale => _SI_DEFAULT_SCALE,
+            :cfl_limit => 0.75,
+            :max_tsteps => typemax(Int),
+            :maximum_wall_duration => Hour(167),
+            :write_result => true,
+            :output_channel_size => 5,
+            :write_frequency => 1,
+            :output_tag => "cell_euler_sim",
+            :prepend_data_dir => true,
+            :show_info => true,
+            :show_detailed_info => false,
+            :info_frequency => 10,
+            :tasks_per_axis => Threads.nthreads(),
+            :convergence_test_freqency => 1,
+            :l1_thold => 5.0e-10,
+            :l2_thold => 1.0e-8,
+            :lInf_thold => 5.0e-8,
+            :boundary_conditions => (
+                ExtrapolateToPhantom(),
+                StrongWall(),
+                ExtrapolateToPhantom(),
+                ExtrapolateToPhantom(),
+                StrongWall(),
+            ),
+        ]
+    )
     merge!(cfg, kwargs)
     return cfg
 end
@@ -793,7 +667,7 @@ function resume_simulation_from_file(file, T_end, config; T = Float64)
         throw(ArgumentError("Config dictionary must have boundary conditions available!"))
     end
     # add T_end to settings dict
-    sim_settings = Dict{Symbol,Any}([:T_end => T_end])
+    sim_settings = Dict{Symbol, Any}([:T_end => T_end])
     settings_and_config = merge(config, sim_settings)
     return _simulate(simulation, settings_and_config)
 end
@@ -825,15 +699,15 @@ Arguments
 - `config`: Config dict.
 """
 function start_simulation_from_initial_conditions(
-    u0,
-    params,
-    T_end,
-    obstacles,
-    bounds,
-    ncells,
-    boundary_conditions,
-    config,
-)
+        u0,
+        params,
+        T_end,
+        obstacles,
+        bounds,
+        ncells,
+        boundary_conditions,
+        config,
+    )
     N = length(ncells)
     @assert N == 2
     @assert length(bounds) == 2
@@ -849,18 +723,20 @@ function start_simulation_from_initial_conditions(
         CellBasedEulerSim((ncells...,), 1, bounds, [t0], global_cell_ids, [global_cells])
 
     # add some known items to the config dict... just in case?
-    sim_settings = Dict{Symbol,Any}([
-        :params => params,
-        :T_end => T_end,
-        :obstacles => obstacles,
-        :boundary_conditions => boundary_conditions,
-        :ncells => ncells,
-    ])
+    sim_settings = Dict{Symbol, Any}(
+        [
+            :params => params,
+            :T_end => T_end,
+            :obstacles => obstacles,
+            :boundary_conditions => boundary_conditions,
+            :ncells => ncells,
+        ]
+    )
     settings_and_config = merge(config, sim_settings)
     return _simulate(initial_sim, settings_and_config)
 end
 
-function _simulate(initial_state::CellBasedEulerSim{T,C}, config) where {T,C}
+function _simulate(initial_state::CellBasedEulerSim{T, C}, config) where {T, C}
     # set up counters
     # and start the timers
     n_computed_tsteps = 1
@@ -894,7 +770,7 @@ function _simulate(initial_state::CellBasedEulerSim{T,C}, config) where {T,C}
         show_info = config[:show_detailed_info],
     )
     partition_neighboring = partition_neighbor_map(cell_partitions)
-    updates_buffer = Dict{Int,update_dtype(first(cell_partitions))}()
+    updates_buffer = Dict{Int, update_dtype(first(cell_partitions))}()
     sizehint!(updates_buffer, n_global_cells)
 
     # if we are writing the result we should make sure there is a file available.
@@ -924,20 +800,20 @@ function _simulate(initial_state::CellBasedEulerSim{T,C}, config) where {T,C}
             n_space_dims(initial_state),
             grid_size(initial_state)...,
         )
-        for b ∈ initial_state.bounds
+        for b in initial_state.bounds
             write(tape_stream, b...)
         end
         write(tape_stream, global_cell_ids)
         # generate some output buffers in case we end up waiting on I/O
         idle_buffer_channel = Channel{OUTPUT_BUFFER_TYPE}(config[:output_channel_size])
-        for _ = 2:config[:output_channel_size]
+        for _ in 2:config[:output_channel_size]
             d = OUTPUT_BUFFER_TYPE()
             sizehint!(d, n_global_cells)
             put!(idle_buffer_channel, d)
         end
         writer_taskref, writer_channel = _start_output_task(
             config[:output_channel_size],
-            Tuple{T,OUTPUT_BUFFER_TYPE},
+            Tuple{T, OUTPUT_BUFFER_TYPE},
             tape_stream,
             idle_buffer_channel,
         )
@@ -945,7 +821,7 @@ function _simulate(initial_state::CellBasedEulerSim{T,C}, config) where {T,C}
         put!(writer_channel, (t, global_cells))
     end
 
-    # start the timer 
+    # start the timer
     timing_infos = TimeSteppingInfos()
     if config[:show_info]
         start_str = Dates.format(timing_infos.start_time, "HH:MM:SS.sss")
@@ -1006,10 +882,10 @@ function _simulate(initial_state::CellBasedEulerSim{T,C}, config) where {T,C}
             # exit status 2 for "finished at Nt=Nmax"
             time_stepping_status = 2
         elseif _simulation_too_slow(
-            timing_infos,
-            config[:maximum_wall_duration],
-            n_computed_tsteps,
-        )
+                timing_infos,
+                config[:maximum_wall_duration],
+                n_computed_tsteps,
+            )
             # exit status 3 for "out of wall clock time"
             time_stepping_status = 3
         elseif convergence_pass
@@ -1036,11 +912,11 @@ function _simulate(initial_state::CellBasedEulerSim{T,C}, config) where {T,C}
         # the number of time steps is 1 mod write frequency OR
         # time stepping will stop this iteration
         if (
-            config[:write_result] && (
-                ((n_computed_tsteps - 1) % config[:write_frequency] == 0) ||
-                time_stepping_status != 0
+                config[:write_result] && (
+                    ((n_computed_tsteps - 1) % config[:write_frequency] == 0) ||
+                        time_stepping_status != 0
+                )
             )
-        )
             put!(
                 writer_channel,
                 (t, collect_cell_partitions!(take!(idle_buffer_channel), cell_partitions)),
@@ -1082,17 +958,17 @@ end
 Load the time steps `k ∈ tstep_range` into the provided dict and vector of times `t`.
 """
 function _load_tsteps_from_file!(
-    cell_vals::Vector{Dict{Int,CellType}},
-    ts::Vector{T},
-    stream,
-    tstep_range,
-    n_active;
-    show_info = false,
-) where {CellType,T}
+        cell_vals::Vector{Dict{Int, CellType}},
+        ts::Vector{T},
+        stream,
+        tstep_range,
+        n_active;
+        show_info = false,
+    ) where {CellType, T}
     step_size_bytes = sizeof(T) + n_active * sizeof(CellType)
     skip_size = diff(vcat(0, tstep_range)) .- 1
     temp = Vector{CellType}(undef, n_active)
-    for i ∈ eachindex(tstep_range)
+    for i in eachindex(tstep_range)
         if skip_size[i] > 0
             skip(stream, skip_size[i] * step_size_bytes)
         end
@@ -1101,9 +977,9 @@ function _load_tsteps_from_file!(
             @info "Reading time step at " t = ts[i] skipped = skip_size[i]
         end
         read!(stream, temp)
-        cell_vals[i] = Dict{Int,CellType}()
+        cell_vals[i] = Dict{Int, CellType}()
         sizehint!(cell_vals[i], n_active)
-        for cell ∈ temp
+        for cell in temp
             cell_vals[i][cell.id] = cell
         end
     end
@@ -1135,7 +1011,7 @@ function load_cell_sim(path; steps = :all, T = Float64, show_info = true)
         if show_info
             @info "Loaded metadata for cell-based Euler simulation at $path." mode n_seeds n_t n_active n_dims ncells
         end
-        active_cell_ids = Array{Int,2}(undef, ncells...)
+        active_cell_ids = Array{Int, 2}(undef, ncells...)
         read!(f, active_cell_ids)
 
         (time_steps_to_read, n_t) = if steps == :all
@@ -1149,7 +1025,7 @@ function load_cell_sim(path; steps = :all, T = Float64, show_info = true)
         CellDType = if mode == PRIMAL
             PrimalQuadCell{T}
         else
-            TangentQuadCell{T,n_seeds,4 * n_seeds}
+            TangentQuadCell{T, n_seeds, 4 * n_seeds}
         end
 
         if show_info
@@ -1158,7 +1034,7 @@ function load_cell_sim(path; steps = :all, T = Float64, show_info = true)
         end
 
         time_steps = Vector{T}(undef, n_t)
-        cell_vals = Vector{Dict{Int,CellDType}}(undef, n_t)
+        cell_vals = Vector{Dict{Int, CellDType}}(undef, n_t)
         _load_tsteps_from_file!(
             cell_vals,
             time_steps,
@@ -1179,7 +1055,7 @@ function load_cell_sim(path; steps = :all, T = Float64, show_info = true)
     end
 end
 
-function write_cell_sim(path, sim::CellBasedEulerSim{T,C}) where {T,C}
+function write_cell_sim(path, sim::CellBasedEulerSim{T, C}) where {T, C}
     return open(path, "w") do f
         # how many time steps
         # what is the mode

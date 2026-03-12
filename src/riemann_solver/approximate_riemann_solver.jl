@@ -15,7 +15,7 @@ function roe_parameter_vector(u::ConservedProps, gas::CaloricallyPerfectGas)
     ) / sqrt(ustrip(ShockwaveProperties._units_ρ, density(u)))
 end
 
-function roe_parameter_vector(u::SVector{N,T}, gas::CaloricallyPerfectGas) where {N,T}
+function roe_parameter_vector(u::SVector{N, T}, gas::CaloricallyPerfectGas) where {N, T}
     ρH = dimensionless_total_enthalpy_density(u, gas)
     w = setindex(u, ρH, N) / sqrt(u[1])
     return w
@@ -55,8 +55,8 @@ function interface_signal_speeds(uL, uR, dim, gas::CaloricallyPerfectGas)
     λ_R = eigenvalues_∇F_euler(uR, dim, gas)
     # @assert length(λ_L) == length(λ_R) == length(λ_roe)
     # 2.24 from Vides, et al.
-    s_L = min((min(λ...) for λ ∈ zip(λ_L, λ_roe))...)
-    s_R = max((max(λ...) for λ ∈ zip(λ_roe, λ_R))...)
+    s_L = min((min(λ...) for λ in zip(λ_L, λ_roe))...)
+    s_R = max((max(λ...) for λ in zip(λ_roe, λ_R))...)
     return s_L, s_R
 end
 
