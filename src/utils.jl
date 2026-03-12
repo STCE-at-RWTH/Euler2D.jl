@@ -1,14 +1,14 @@
-n_space_dims(::ConservedProps{N,T,U1,U2,U3}) where {N,T,U1,U2,U3} = N
-quantity_types(::ConservedProps{N,T,U1,U2,U3}) where {N,T,U1,U2,U3} = (U1, U2, U3)
-quantity_types(::Type{ConservedProps{N,T,U1,U2,U3}}) where {N,T,U1,U2,U3} = (U1, U2, U3)
-numeric_dtype(::ConservedProps{N,T,U1,U2,U3}) where {N,T,U1,U2,U3} = T
-numeric_dtype(::Type{ConservedProps{N,T,U1,U2,U3}}) where {N,T,U1,U2,U3} = T
+n_space_dims(::ConservedProps{N, T, U1, U2, U3}) where {N, T, U1, U2, U3} = N
+quantity_types(::ConservedProps{N, T, U1, U2, U3}) where {N, T, U1, U2, U3} = (U1, U2, U3)
+quantity_types(::Type{ConservedProps{N, T, U1, U2, U3}}) where {N, T, U1, U2, U3} = (U1, U2, U3)
+numeric_dtype(::ConservedProps{N, T, U1, U2, U3}) where {N, T, U1, U2, U3} = T
+numeric_dtype(::Type{ConservedProps{N, T, U1, U2, U3}}) where {N, T, U1, U2, U3} = T
 
-u_array_space_dims(::AbstractArray{T,N}) where {T,N} = N - 1
-u_array_space_size(u::AbstractArray{T,N}) where {T,N} = size(u)[2:end]
+u_array_space_dims(::AbstractArray{T, N}) where {T, N} = N - 1
+u_array_space_size(u::AbstractArray{T, N}) where {T, N} = size(u)[2:end]
 
 vcat_state_components(ρ, ρv, ρE) = vcat(ρ, ρv, ρE)
-function vcat_state_components(ρ, ρv::SVector{S,T}, ρE) where {S,T}
+function vcat_state_components(ρ, ρv::SVector{S, T}, ρE) where {S, T}
     return SVector{S + 2}(ρ, ρv..., ρE)
 end
 
@@ -26,7 +26,7 @@ The columns of ``V`` are the basis vectors written in the standard Cartesian bas
 
 See also [`translate_velocity_coordinates`](@ref), [`change_space_coordinates_and_shift_v`](@ref).
 """
-function change_space_coordinates(u, V::Union{AbstractMatrix,UniformScaling})
+function change_space_coordinates(u, V::Union{AbstractMatrix, UniformScaling})
     ρv_new = PlanePolygons.change_basis(select_middle(u), V)
     return vcat_state_components(u[begin], ρv_new, u[end])
 end
@@ -90,10 +90,10 @@ end
 Shift the vertices of `poly` by `shift[i] * dirs[i]`.
 """
 function shift_polygon_vertices_in_direction(
-    poly::SizedClockwiseOrientedPolygon{NV},
-    dirs,
-    shift,
-) where {NV}
+        poly::SizedClockwiseOrientedPolygon{NV},
+        dirs,
+        shift,
+    ) where {NV}
     new_pts = map(edge_starts(poly), dirs, shift) do p, n, s_i
         p + s_i * n
     end
@@ -103,7 +103,7 @@ end
 
 ### FINITE DIFFS
 """Get an appropriate `ε` for finite differences around `arg`."""
-function fdiff_eps(arg::T) where {T<:Real}
+function fdiff_eps(arg::T) where {T <: Real}
     cbrt_eps = cbrt(eps(T))
     h = 2^(round(log2((1 + abs(arg)) * cbrt_eps)))
     return h
@@ -118,9 +118,9 @@ end
 A wrapper around two Dicts that will try to look up values in
 `primary` before `secondary`.
 """
-struct BackupDict{K,V} #<: AbstractDict{K,V}
-    primary::Dict{K,V}
-    secondary::Dict{K,V}
+struct BackupDict{K, V} #<: AbstractDict{K,V}
+    primary::Dict{K, V}
+    secondary::Dict{K, V}
 end
 
 function Base.getindex(bdict::BackupDict, key)
@@ -140,13 +140,15 @@ end
 ###
 
 function free_space_dims(N, d)
-    ((i + 1 for i ∈ 1:N if i ≠ d)...,)
+    return ((i + 1 for i in 1:N if i ≠ d)...,)
 end
 
 function boundary_velocity_scaling(T, dim, rev)
-    return SVector(ntuple(4) do i
-        (i == dim + 1) && rev ? -one(T) : one(T)
-    end)
+    return SVector(
+        ntuple(4) do i
+            (i == dim + 1) && rev ? -one(T) : one(T)
+        end
+    )
 end
 
 """
@@ -158,7 +160,7 @@ function split_svector(v)
     N = length(v) ÷ 2
     M = length(v)
     v1, v2 = @inbounds begin
-        (SVector{N}(@view v[1:N]), SVector{M - N}(@view v[N+1:M]))
+        (SVector{N}(@view v[1:N]), SVector{M - N}(@view v[(N + 1):M]))
     end
     return v1, v2
 end
@@ -168,33 +170,33 @@ end
 
 Select the middle of a vector `u`, returning a copy of `u[2:end-1]` if `u` is an `SVector`, otherwise a view of `u[2:end-1]`.
 """
-function select_middle(u::StaticVector{S,T}) where {S,T}
+function select_middle(u::StaticVector{S, T}) where {S, T}
     idxs = SVector{S - 2}(ntuple(i -> i + 1, S - 2))
     return u[idxs]
 end
-select_middle(u::AbstractVector) = @view u[2:end-1]
+select_middle(u::AbstractVector) = @view u[2:(end - 1)]
 
-ncols_smatrix(::SMatrix{M,N,T,L}) where {M,N,T,L} = N
-ncols_smatrix(::Type{SMatrix{M,N,T,L}}) where {M,N,T,L} = N
+ncols_smatrix(::SMatrix{M, N, T, L}) where {M, N, T, L} = N
+ncols_smatrix(::Type{SMatrix{M, N, T, L}}) where {M, N, T, L} = N
 
 """
     flip_velocity(u, dim)
 
 Flip the `dim`th velocity component of `u`. and return a copy. 
 """
-function flip_velocity(u::ConservedProps{N,T,U1,U2,U3}, dim::Int) where {N,T,U1,U2,U3}
+function flip_velocity(u::ConservedProps{N, T, U1, U2, U3}, dim::Int) where {N, T, U1, U2, U3}
     scaling = SVector(ntuple(i -> i == dim ? -one(T) : one(T), N))
     return ConservedProps(u.ρ, scaling .* u.ρv, u.ρE)
 end
 
-function flip_velocity(u::SVector{N,T}, dim::Int) where {N,T}
+function flip_velocity(u::SVector{N, T}, dim::Int) where {N, T}
     # momentum density vector is stored in u[2] and u[3]
     # or u[2:end-1] for higher-dimensional problems (not that we care)
     scaling = SVector(ntuple(i -> i == 1 + dim ? -one(T) : one(T), N))
     return u .* scaling
 end
 
-function flip_velocity(u::SMatrix{M,N,T,L}, dim::Int) where {M,N,T,L}
+function flip_velocity(u::SMatrix{M, N, T, L}, dim::Int) where {M, N, T, L}
     scaling = SDiagonal(ntuple(i -> i == 1 + dim ? -one(T) : one(T), M))
     return scaling * u
 end
