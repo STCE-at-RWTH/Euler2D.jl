@@ -20,8 +20,24 @@ struct LinAppx{XT, YT, DYT}
     Dy::DYT
 end
 
-function (f_appx::LinAppx{XT, YT, DYT})(x) where {XT, YT, DYT}
+function _lin_appx_mul_impl(f_appx, x)
     return f_appx.y0 + f_appx.Dy * (x - f_appx.x0)
+end
+
+function _lin_appx_eachslice_impl(f_appx, x)
+    return f_appx.y0 + mapreduce((Dy_k, dx_k) -> Dy_k * dx_k, +, eachslice(f_appx.Dy, dims = length(axes(f_appx.Dy))), (x - f_appx.x0))
+end
+
+function (f_appx::LinAppx)(x)
+    return _lin_appx_mul_impl(f_appx, x)
+end
+
+function (f_appx::LinAppx{<:AbstractVector, YT, <:AbstractArray{<:Number, N}})(x) where {YT, N}
+    if N == 2
+        return _lin_appx_mul_impl(f_appx, x)
+    else
+        return _lin_appx_eachslice_impl(f_appx, x)
+    end
 end
 
 ### CHANGE COORDINATE VECTORS FOR VELOCITY SPACE

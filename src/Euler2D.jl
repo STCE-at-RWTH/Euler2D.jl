@@ -14,14 +14,15 @@ using Statistics
 # Load before Tullio
 using LoopVectorization
 
-using Accessors: @set, @reset
+using Accessors: @reset, @set
 using DifferentiationInterface
 using ForwardDiff: ForwardDiff
+using Integrals
 using OhMyThreads: tforeach, tmap, tmapreduce, treduce
-using StaticArrays
-using Tullio
+using Optimization, OptimizationOptimJL
+using StaticArrays, Tullio
 using Unitful
-using Unitful: 𝐋, 𝐓, 𝐌, 𝚯, 𝐍
+using Unitful: 𝐋, 𝐓, 𝐌, 𝐍, 𝚯
 using Unitful: @derived_dimension, Density, Pressure, Velocity
 
 # STCE packages
@@ -38,7 +39,7 @@ export DRY_AIR
 
 # modules
 export CannyShockSensor, ShockInterpolation
-export ShockSensitivity, LocalPseudoinversion
+export LocalPseudoinversion, ShockSensitivity
 export FullPseudoinversion
 
 # methods
@@ -49,6 +50,7 @@ export eigenvectors_∇F_euler, eigenvectors_∇G_euler
 # dimension stuff
 export EulerEqnsScaling
 export nondimensionalize, redimensionalize
+export change_space_coordinates, change_space_coordinates_and_shift_v
 export length_scale, mass_scale, time_scale
 export density_scale, pressure_scale, velocity_scale
 export body_force_scale, energy_density_scale, specific_heat_capacity_scale

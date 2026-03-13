@@ -232,6 +232,17 @@ function estimate_∇u_at(pt, grad_stencil::NTuple{2, Symbol}, sim::CellBasedEul
     return estimate_∇u_at(pt..., grad_stencil, sim, tstep, boundary_conditions, gas)
 end
 
+function linear_approximate_u_at(pt, stencil_dir, sim::CellBasedEulerSim, tstep, boundary_conditions, gas)
+    id = cell_id_at(pt, sim)
+    _, cells = nth_step(sim, tstep)
+    c = cells[id]
+    nbrs = neighbor_cells(c, cells, boundary_conditions, gas)
+    stencil = pick_stencil(stencil_dir)
+    du = estimate_∇u(c, nbrs, stencil)
+    u = LinAppx(cell_center(c), c.u, du)(pt)
+    return LinAppx(pt, u, du)
+end
+
 """
     estimate_∇u_in_rectangular_cell(cell, sim, n, boundary_conditions, gas)
 
