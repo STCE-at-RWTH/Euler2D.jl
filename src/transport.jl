@@ -2,17 +2,27 @@
     F_euler(u, gas)
 
 Computes the value of the flux function ``F(u)`` for the Euler equations.
-Outputs a matrix with one column for each space dimension.
+Outputs a matrix with one _column_ for each space dimension.
 
 This implementation will strip out units, and convert down to metric base units in the process. 
 """
-function F_euler(u::SVector{S,T}, gas) where {S,T}
 function F_euler(u::SVector{S, T}, gas) where {S, T}
     ρv = select_middle(u)
-    v = ρv / u[1]
+    v = dimensionless_velocity(u)
     P = dimensionless_pressure(u, gas)
     ρv_flux = ρv * v' + I * P
     return vcat(ρv', ρv_flux, (v * (u[end] + P))')
+end
+
+"""
+    F_euler(u, new_coordinates, gas)
+
+Computes the value of the flux function ``F(u)`` for the Euler eqations,
+but converts `u` into a co-ordinate system given by `new_coordinates` first.
+"""
+function F_euler(u, new_coordinates, gas)
+    q = change_space_coordinates(u, new_coordinates)
+    return F_euler(q, gas)
 end
 
 # we could definitely clean up the allocs here but it's better than it was now
@@ -31,12 +41,13 @@ function F_euler(u, gas)
     return F
 end
 
-function F_euler(u::ConservedProps, gas, scale)
+function F_euler(u::ConservedProps, gas, scale::EulerEqnsScaling)
     return F_euler(nondimensionalize(u, scale), gas)
 end
 
 # why do I still have this
 select_space_dim(F_e, dim) = F_e[:, dim]
+
 
 # do we need the multiple eigenvalues in the middle? I do not know...
 """
@@ -106,4 +117,18 @@ function eigenvectors_∇G_euler(u::SVector{4, T}, gas) where {T}
     r3 = SVector(1.0, v1, v2, 0.5 * (v1 * v1 + v2 * v2))
     r4 = SVector(1.0, v1, v2 + a, H + a * v2)
     return hcat(r1, r2, r3, r4)
+end
+
+function _avg_jacobian_igrand(ϑ, params)
+    (uL, uR, gas) = params
+    arg = ϑ * uL + (1 - ϑ) * uR
+    return jacobian((u, gas) -> F_euler(u, gas)[:, 1], fdiff_backend, arg, Constant(gas))
+end
+
+function avg_jacobian_F_euler(qL, qR, gas)
+    domain = (0.0, 1.0)
+    problem = IntegralProblem(_avg_jacobian_igrand, domain, (qL, qR, gas))
+    sol = solve(problem, HCubatureJL())
+    @assert SciMLBase.successful_retcode(sol)
+    return sol.u
 end
