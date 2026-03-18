@@ -18,12 +18,10 @@ using Accessors: @reset, @set
 using DifferentiationInterface
 using ForwardDiff: ForwardDiff
 using Integrals
-using OhMyThreads: tforeach, tmap, tmapreduce, treduce
+using OhMyThreads: tforeach, tmap, tmapreduce
 using Optimization, OptimizationOptimJL
 using StaticArrays, Tullio
 using Unitful
-using Unitful: 𝐋, 𝐓, 𝐌, 𝐍, 𝚯
-using Unitful: @derived_dimension, Density, Pressure, Velocity
 
 # STCE packages
 using PlanePolygons
@@ -38,9 +36,8 @@ export ShockwaveProperties
 export DRY_AIR
 
 # modules
-export CannyShockSensor, ShockInterpolation
-export LocalPseudoinversion, ShockSensitivity
-export FullPseudoinversion
+export BowShockInterpolation, CannyShockSensor
+export FullPseudoinversion, LocalPseudoinversion
 
 # methods
 export F_euler

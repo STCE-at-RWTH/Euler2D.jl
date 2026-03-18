@@ -1,6 +1,6 @@
 # TODO extract this file to ShockwaveProperties.jl
 
-struct EulerEqnsScaling{T, Q1 <: Unitful.Length{T}, Q2 <: Density{T}, Q3 <: Velocity{T}}
+struct EulerEqnsScaling{T, Q1 <: Unitful.Length{T}, Q2 <: Unitful.Density{T}, Q3 <: Unitful.Velocity{T}}
     x_0::Q1
     ρ_0::Q2
     v_0::Q3
