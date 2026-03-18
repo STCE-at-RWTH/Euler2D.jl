@@ -1,14 +1,14 @@
-module ShockInterpolation
+module BowShockInterpolation
 
 # stdlib
 using LinearAlgebra
 
 # public packages
-using Accessors
+using Accessors, StaticArrays
 using DifferentiationInterface
 using Interpolations
 using Optimization, OptimizationOptimJL
-using StaticArrays
+
 
 # stce packages
 using PlanePolygons
@@ -18,8 +18,9 @@ using Euler2D
 using Euler2D: fdiff_backend
 using Euler2D.CannyShockSensor: extract_bow_shock_points
 
-export NPointBowShockInterpolation
-export n_points, y_knots, x_knots #, w_knots
+export ShockInterpolation
+export n_points, x_knots, y_knots  #, w_knots
+export interpolation_normals_at_points, interpolation_points
 
 
 function _pts_via_range_interp(xs, yrange, y_actual)
@@ -60,6 +61,7 @@ function _vt_and_pushforward_near_shock_from_theta(shock_pt, θ, Δξ, sim, tste
         _θ = _θ_and_u[1]
         _u = _θ_and_u[SVector(2, 3, 4, 5)]
         _e1 = dir_from_theta(_θ)
+        @assert norm(_e1) ≈ 1.0
         return vt_from_u_and_normal(_u, _e1)
     end
 
@@ -102,15 +104,24 @@ Hüser was heckin' right.
 struct ShockInterpolation{T}
     points::Vector{SVector{2, T}}
     normals::Vector{SVector{2, T}}
+
+    function ShockInterpolation{T}(points, normals) where {T}
+        if length(points) != length(normals)
+            throw(ArgumentError("There must be the same number of points and normal vectors."))
+        end
+        return new(points, normals)
+    end
 end
 
+
 function ShockInterpolation(
-        sim, sensor_info, N_points;
+        sim::CellBasedEulerSim{T, <:FVMCell{T}}, sensor_info, N_points;
         Cr = 1,
         bcs = (ExtrapolateToPhantom(), StrongWall(), ExtrapolateToPhantom(), ExtrapolateToPhantom(), StrongWall()),
         gas = DRY_AIR,
-        dropN = 1,
-    )
+        skipN = 0,
+        dropN = 0,
+    ) where {T}
     all_shock_points = extract_bow_shock_points(sim, sensor_info)
 
     # speed penalty on a reinterpret here should be ok
@@ -129,7 +140,7 @@ function ShockInterpolation(
         #slow interpolation
         _pts_via_gridded_interp(shock_xs, shock_ys, actual_ys)
     end
-    shock_points = map(SVector, @view(actual_xs[begin:(end - dropN)]), @view(actual_ys[begin:(end - dropN)]))
+    shock_points = map(SVector, @view(actual_xs[(begin + skipN):(end - dropN)]), @view(actual_ys[(begin + skipN):(end - dropN)]))
     # constant taken from Hüser
     dS = Cr * norm(minimum_cell_size(sim))^(1 / 2)
     optim_sols = map(shock_points) do pt
@@ -141,14 +152,13 @@ function ShockInterpolation(
     shock_normals = map(optim_sols) do sol
         dir_from_theta(only(sol.u))
     end
-    return ShockInterpolation(shock_points, shock_normals)
+    return ShockInterpolation{T}(shock_points, shock_normals)
 end
 
 # prefer methods to direct field access in case I can re-use some of these other methods later?
 x_knots(s::ShockInterpolation) = reinterpret(reshape, Float64, s.points)[1, :]
 y_knots(s::ShockInterpolation) = reinterpret(reshape, Float64, s.points)[2, :]
 function n_points(s::ShockInterpolation)
-    @assert length(s.points) == length(s.normals)
     return length(s.points)
 end
 
@@ -160,9 +170,10 @@ function interpolation_points(interp::ShockInterpolation)
 end
 
 function interpolation_segments(interp)
-    interp_pts = interpolation_points(interp)
-    p0 = SVector(pts[1][1], -pts[1][2])
-    pts = vcat(p0, interp_pts)
+    pts = collect(interpolation_points(interp))
+    p1 = first(pts)
+    p0 = SVector(p1[1], -p1[2])
+    pts = pushfirst!(pts, p0)
     return tuple.(@view(pts[begin:(end - 1)]), @view(pts[(begin + 1):end]))
 end
 
@@ -181,132 +192,11 @@ function interpolation_normal_axes_at_points(interp)
     return map((pt, dir) -> PlanePolygons.Line(pt, dir), pts, ns)
 end
 
-function _interpolation_segment(interp, y)
-    y0 = first(interp.ys)
-    if y < y0
-        return (SVector(first(interp.xs), -y0), SVector(first(interp.xs), y0))
-    elseif y > last(interp.ys)
-        return _interpolation_segment(interp, last(interp.ys))
-    end
+function linear_reconstruction_near(shock, Δξ, sim, tstep)
 
-    Δy = step(interp.ys)
-    n = min(interp.N, floor(Int, (y - y0) / Δy) + 1)
-    return (SVector(interp.xs[n], interp.ys[n]), SVector(interp.xs[n + 1], interp.ys[n + 1]))
 end
 
-function _interpolation_normal(interp, y)
-    return _segment_normal(_interpolation_segment(interp, y)...)
-end
-
-function bow_shock_point(interp, y)
-    y★ = y < 0 ? -y : y
-    p0, p1 = _interpolation_segment(interp, y★)
-    dy★ = y★ - p0[2]
-    s = dy★ / (p1[2] - p0[2])
-    x★ = p0[1] + s * (p1[1] - p0[1])
-    return SVector(x★, y < 0 ? -y★ : y★)
-end
-
-function bow_shock_normal(interp, y)
-    y★ = y < 0 ? -y : y
-    n = _interpolation_normal(interp, y★)
-    if y < 0
-        @reset n[2] = -1 * n[2]
-    end
-    return n
-end
-
-function shift_shock_interpolation_by_normals(interp, Δ)
-    ns = interpolation_normals_at_points(interp)
-    xs_shifted = map(x_knots(interp), ns) do x, n
-        return x + Δ * n[1]
-    end
-    ys_shifted = map(y_knots(interp), ns) do y, n
-        return y + Δ * n[2]
-    end
-    return NPointBowShockInterpolation(interp.N, ys_shifted, xs_shifted)
-end
-
-function _point_between_interpolations(pt, iL, iR)
-    sL = interpolation_segments(iL)
-    sR = interpolation_segments(iR)
-
-    return any(zip(sL, sR)) do (bc, ad)
-        poly = SClosedPolygon(ad[1], bc..., ad[2])
-        point_inside(poly, pt)
-    end
-end
-
-function point_between_interpolations(pt, interp_L, interp_R)
-    if pt[2] < 0
-        return _point_between_interpolations(SVector(pt[1], -pt[2]), interp_L, interp_R)
-    end
-    return _point_between_interpolations(pt, interp_L, interp_R)
-end
-
-function interpolation_length(interp)
-    pts = interpolation_points(interp)
-    # we want s=0 to correspond to y=0
-    pts[1] = SVector(pts[1][1], 0.0)
-    starts = @view pts[begin:(end - 1)]
-    ends = @view pts[begin + 1, end]
-    return mapreduce(+, starts, ends) do A, B
-        norm(B - A)
-    end
-end
-
-# we don't want the point, we want the value of t for both
-# lines, so that we can easily test if the point is on the segment or not
-function _line_intersect(ℓ1, ℓ2)
-    if vectors_parallel(direction_of(ℓ1), direction_of(ℓ2))
-        return PlanePolygons._POINT_DOES_NOT_EXIST(
-            PlanePolygons._numeric_dtype(point_on(ℓ1)),
-        )
-    end
-    d = point_on(ℓ2) - point_on(ℓ1)
-    A = hcat(direction_of(ℓ1), -1 * direction_of(ℓ2))
-    return A \ d
-end
-
-# test if line ℓ interesects line AB between A and B
-# and return the test result and the parameter value on ℓ
-# that yields the intersection point
-function _test_if_intersection_on_segment(A, B, ℓ)
-    ℓ_AB = PlanePolygons.Line(A, B - A)
-    t_B = (B - A)[1] / direction_of(ℓ_AB)[1]
-    t, s = _line_intersect(ℓ_AB, ℓ)
-    return (0 ≤ t ≤ t_B, s)
-end
-
-function _test_if_intersection_on_segment(x_A, y_A, x_B, y_B, line)
-    return _test_if_intersection_on_segment(SVector(x_A, y_A), SVector(x_B, y_B), line)
-end
-
-function interpolation_line_intersect(interp, line)
-    xs = x_knots(interp)
-    ys = y_knots(interp)
-
-    is_on, s =
-        _test_if_intersection_on_segment(first(xs), -first(ys), first(xs), first(ys), line)
-    is_on && return line(s)
-
-    for i in 1:(n_points(interp) - 1)
-        is_on, s = _test_if_intersection_on_segment(xs[i], ys[i], xs[i + 1], ys[i + 1], line)
-        is_on && return line(s)
-
-        is_on, s = _test_if_intersection_on_segment(xs[i], -ys[i], xs[i + 1], -ys[i + 1], line)
-        is_on && return line(s)
-    end
-
-    pN_A = SVector(xs[end - 1], ys[end - 1])
-    pN_B = SVector(xs[end], ys[end])
-    t, s = _line_intersect(PlanePolygons.Line(pN_A, pN_B - pN_A), line)
-    t ≥ 0 && return line(s)
-
-    pN_A_neg = SVector(xs[end - 1], -ys[end - 1])
-    pN_B_neg = SVector(xs[end], -ys[end])
-    _, s = _line_intersect(PlanePolygons.Line(pN_A_neg, pN_B_neg - pN_A_neg), line)
-    return line(s)
+function constant_reconstruction_near(shock, Δξ, sim, tstep)
 end
 
 end

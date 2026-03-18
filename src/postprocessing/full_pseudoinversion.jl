@@ -270,8 +270,8 @@ end
 
 Euler2D.cell_boundary_polygon(cell::PseudoinversionCell) = cell.boundary
 
-using Euler2D.ShockInterpolation: n_points, x_knots, y_knots
-using Euler2D.ShockInterpolation: interpolation_segments, interpolation_normals_at_points
+using Euler2D.BowShockInterpolation: n_points, x_knots, y_knots
+using Euler2D.BowShockInterpolation: interpolation_segments, interpolation_normals_at_points
 
 """
     pseudoinversion_cell_polys(bow_shock_interp, L)
@@ -393,7 +393,7 @@ function make_pseudoinversion_cells(
         gas,
     ) where {T, NS, NP}
     segments = interpolation_segments(bow_shock_interp)
-    corner_normals = interpolation_normals_at_points(bow_shock_interp)
+    corner_normals = collect(interpolation_normals_at_points(bow_shock_interp))
     pushfirst!(corner_normals, first(corner_normals) .* SVector(1, -1))
     normals_S = @view corner_normals[begin:(end - 1)]
     normals_N = @view corner_normals[(begin + 1):end]
@@ -439,7 +439,7 @@ function make_pseudoinversion_cells(
     return pinv_cells
 end
 
-using Euler2D: u_riemann
+using Euler2D.ExactRiemannSolver: u_riemann
 
 function _boundary_integral(cell_id, pinv_cells, gas)
     @assert cell_id % 4 == 3 || cell_id % 4 == 2
