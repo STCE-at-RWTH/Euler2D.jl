@@ -176,47 +176,71 @@ end
 u_and_u̇_at(pt, sim::CellBasedEulerSim, n) = u_and_u̇_at(pt..., sim, n)
 
 
-function estimate_dudx_FD(cell_left, cell_right)
+function estimate_dudx_FD(f, cell_left, cell_right)
     x1 = cell_center(cell_left)[1]
     x2 = cell_center(cell_right)[1]
-    return (cell_right.u - cell_left.u) / (x2 - x1)
+    return (f(cell_right) - f(cell_left)) / (x2 - x1)
 end
 
-function estimate_dudy_FD(cell_left, cell_right)
+function estimate_dudy_FD(f, cell_left, cell_right)
     y1 = cell_center(cell_left)[2]
     y2 = cell_center(cell_right)[2]
-    return (cell_right.u - cell_left.u) / (y2 - y1)
+    return (f(cell_right) - f(cell_left)) / (y2 - y1)
 end
 
 function estimate_∇u(cell, nbrs, stencils)
     stencil_x, stencil_y = stencils
     dudx = if stencil_x == :left
-        estimate_dudx_FD(nbrs.west, cell)
+        estimate_dudx_FD(c -> c.u, nbrs.west, cell)
     elseif stencil_x == :right
-        estimate_dudx_FD(cell, nbrs.east)
+        estimate_dudx_FD(c -> c.u, cell, nbrs.east)
     else
-        estimate_dudx_FD(nbrs.west, nbrs.east)
+        estimate_dudx_FD(c -> c.u, nbrs.west, nbrs.east)
     end
 
     dudy = if stencil_y == :left
-        estimate_dudy_FD(nbrs.south, cell)
+        estimate_dudy_FD(c -> c.u, nbrs.south, cell)
     elseif stencil_y == :right
-        estimate_dudy_FD(cell, nbrs.north)
+        estimate_dudy_FD(c -> c.u, cell, nbrs.north)
     else
-        estimate_dudy_FD(nbrs.south, nbrs.north)
+        estimate_dudy_FD(c -> c.u, nbrs.south, nbrs.north)
     end
     return hcat(dudx, dudy)
 end
 
+function estimate_∇udot(cell, nbrs, stencils)
+    stencil_x, stencil_y = stencils
+    dudx = if stencil_x == :left
+        estimate_dudx_FD(c -> c.u̇, nbrs.west, cell)
+    elseif stencil_x == :right
+        estimate_dudx_FD(c -> c.u̇, cell, nbrs.east)
+    else
+        estimate_dudx_FD(c -> c.u̇, nbrs.west, nbrs.east)
+    end
+
+    dudy = if stencil_y == :left
+        estimate_dudy_FD(c -> c.u̇, nbrs.south, cell)
+    elseif stencil_y == :right
+        estimate_dudy_FD(c -> c.u̇, cell, nbrs.north)
+    else
+        estimate_dudy_FD(c -> c.u̇, nbrs.south, nbrs.north)
+    end
+    if dudx isa SMatrix && dudy isa SMatrix
+        return _stack_smatrices(dudx, dudy)
+    else
+        return cat(dudx, dudy, dims = 3)
+    end
+end
+
 """
-    pick_stencil(dir)
+    pick_stencil(dir; central_thold = 0.05)
 
 Given a direction `dir`, pick a gradient stencil that 
 will be a good estimate of the derivative in that direction.
 """
-function pick_stencil(dir)
-    stencil_x = dir[1] < 0 ? :left : :right
-    stencil_y = dir[2] < 0 ? :left : :right
+function pick_stencil(dir; central_thold = 0.05)
+    stencil_x = abs(dir[1]) < central_thold ? :center : (dir[1] < 0 ? :left : :right)
+    stencil_y = abs(dir[2]) < central_thold ? :center : (dir[2] < 0 ? :left : :right)
     return stencil_x, stencil_y
 end
 
@@ -232,15 +256,39 @@ function estimate_∇u_at(pt, grad_stencil::NTuple{2, Symbol}, sim::CellBasedEul
     return estimate_∇u_at(pt..., grad_stencil, sim, tstep, boundary_conditions, gas)
 end
 
+function estimate_∇udot_at(x, y, grad_stencil::NTuple{2, Symbol}, sim::CellBasedEulerSim{T, <:TangentQuadCell}, tstep, boundary_conditions, gas) where {T}
+    id = cell_id_at(x, y, sim)
+    _, cells = nth_step(sim, tstep)
+    c = cells[id]
+    nbrs = neighbor_cells(c, cells, boundary_conditions, gas)
+    return estimate_∇udot(c, nbrs, grad_stencil)
+end
+
+function estimate_∇udot_at(pt, grad_stencil::NTuple{2, Symbol}, sim::CellBasedEulerSim, tstep, boundary_conditions, gas)
+    return estimate_∇u_at(pt..., grad_stencil, sim, tstep, boundary_conditions, gas)
+end
+
 function linear_approximate_u_at(pt, stencil_dir, sim::CellBasedEulerSim, tstep, boundary_conditions, gas)
     id = cell_id_at(pt, sim)
     _, cells = nth_step(sim, tstep)
     c = cells[id]
     nbrs = neighbor_cells(c, cells, boundary_conditions, gas)
     stencil = pick_stencil(stencil_dir)
+    # @show stencil_dir, stencil
     du = estimate_∇u(c, nbrs, stencil)
     u = LinAppx(cell_center(c), c.u, du)(pt)
     return LinAppx(pt, u, du)
+end
+
+function linear_approximate_udot_at(pt, stencil_dir, sim::CellBasedEulerSim, tstep, boundary_conditions, gas)
+    id = cell_id_at(pt, sim)
+    _, cells = nth_step(sim, tstep)
+    c = cells[id]
+    nbrs = neighbor_cells(c, cells, boundary_conditions, gas)
+    stencil = pick_stencil(stencil_dir)
+    dudot = estimate_∇udot(c, nbrs, stencil)
+    udot = LinAppx(cell_center(c), c.u̇, dudot)(pt)
+    return LinAppx(pt, udot, dudot)
 end
 
 """

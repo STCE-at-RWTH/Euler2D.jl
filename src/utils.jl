@@ -248,3 +248,9 @@ merge_values_tuple(arg1::Tuple, arg2::Tuple) = (arg1..., arg2...)
 const _dirs_bc_is_reversed = (north = true, south = false, east = false, west = true)
 const _dirs_dim = (north = 2, south = 2, east = 1, west = 1)
 const _dims_dirs = ((:west, :east), (:south, :north))
+
+# stacking smatrices
+
+function _stack_smatrices(A::SMatrix{M, N, T, L}, B::SMatrix{M, N, T, L}) where {M, N, T, L}
+    return SArray{Tuple{M, N, 2}, T, 3, 2 * L}(A..., B...)
+end
