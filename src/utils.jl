@@ -40,6 +40,24 @@ function (f_appx::LinAppx{<:AbstractVector, YT, <:AbstractArray{<:Number, N}})(x
     end
 end
 
+### EVIL DERIVATIVE NESTING
+
+function unwrap_derivative(x, f, order, backend, contexts...)
+    @assert order >= 0
+    if order == 2
+        return second_derivative(f, backend, x, contexts...)
+    elseif order == 1
+        return derivative(f, backend, x, contexts...)
+    elseif order == 0
+        return f(x, map(DifferentiationInterface.unwrap, contexts)...)
+    end
+    return derivative(unwrap_derivative, backend, x, Constant(f), Constant(order - 1), Constant(backend), map(Constant, contexts)...)
+end
+
+unwrap_derivative(x, f, ::Val{N}, backend, ctx...) where {N} = unwrap_derivative(x, f, N, backend, ctx...)
+
+###
+
 ### CHANGE COORDINATE VECTORS FOR VELOCITY SPACE
 
 """
@@ -109,6 +127,17 @@ function change_space_coordinates_and_shift_v(u_star, T_or_e1, v0)
 end
 
 ### END OF BASES
+
+### OPERATOR NORMS
+
+opnorm2_sqr(u) = eigmax(u' * u)
+opnorm2_sqr(u, A) = eigmax(u' * A * u)
+opnorm1(u) = sum(abs, u)
+opnorm1(u::AbstractMatrix) = maximum(sum(abs, u; dims = 1))
+opnormInf(u::AbstractVector) = maximum(abs, u)
+opnormInf(u::AbstractMatrix) = maximum(sum(abs, u; dims = 2))
+
+## END OPERATOR NORMS
 
 ### POLYGON UTILITIES
 

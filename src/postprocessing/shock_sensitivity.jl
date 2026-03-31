@@ -10,7 +10,7 @@ using StaticArrays
 using PlanePolygons
 
 using Euler2D
-using Euler2D: CannyShockSensor, ShockInterpolation
+using Euler2D: BowShockInterpolation, CannyShockSensor
 using Euler2D: CaloricallyPerfectGas
 using Euler2D: change_space_coordinates
 using Euler2D: fdiff_backend

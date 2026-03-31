@@ -17,17 +17,17 @@ using LoopVectorization
 using Accessors: @reset, @set
 using DifferentiationInterface
 using ForwardDiff: ForwardDiff
-using Integrals
 using OhMyThreads: tforeach, tmap, tmapreduce
-using Optimization, OptimizationOptimJL
-using StaticArrays, Tullio
-using Unitful
+using Integrals, Optimization, OptimizationOptimJL
+using StaticArrays
+using StaticArrays: sacollect
+using Tullio, Unitful
 
 # STCE packages
 using PlanePolygons
 using ShockwaveProperties
-# using ShockwaveProperties: MomentumDensity, EnergyDensity
 using SimpleIntegration
+
 
 const fdiff_backend = AutoForwardDiff()
 
@@ -85,6 +85,7 @@ include("utils.jl")
 include("nondimensionalization.jl")
 include("transport.jl")
 include("boundary_conditions.jl")
+include("weno.jl")
 
 include("riemann_solver/approximate_riemann_solver.jl")
 include("riemann_solver/exact_riemann_solver.jl")
@@ -101,6 +102,9 @@ include("postprocessing/shock_sensitivity.jl")
 include("postprocessing/local_pseudoinversion.jl")
 include("postprocessing/full_pseudoinversion.jl")
 include("postprocessing/bressan.jl")
+
+# internal modules
+using .WENOReconstruction
 
 const _SI_DEFAULT_SCALE = EulerEqnsScaling(1.0u"m", 1.0u"kg/m^3", 1.0u"m/s")
 

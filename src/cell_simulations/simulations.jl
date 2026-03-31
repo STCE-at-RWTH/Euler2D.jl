@@ -265,7 +265,7 @@ function estimate_∇udot_at(x, y, grad_stencil::NTuple{2, Symbol}, sim::CellBas
 end
 
 function estimate_∇udot_at(pt, grad_stencil::NTuple{2, Symbol}, sim::CellBasedEulerSim, tstep, boundary_conditions, gas)
-    return estimate_∇u_at(pt..., grad_stencil, sim, tstep, boundary_conditions, gas)
+    return estimate_∇udot_at(pt..., grad_stencil, sim, tstep, boundary_conditions, gas)
 end
 
 function linear_approximate_u_at(pt, stencil_dir, sim::CellBasedEulerSim, tstep, boundary_conditions, gas)
@@ -289,6 +289,65 @@ function linear_approximate_udot_at(pt, stencil_dir, sim::CellBasedEulerSim, tst
     dudot = estimate_∇udot(c, nbrs, stencil)
     udot = LinAppx(cell_center(c), c.u̇, dudot)(pt)
     return LinAppx(pt, udot, dudot)
+end
+
+function _weno_approximate_at(f, x, y, sim::CellBasedEulerSim, tstep, weno_order::Val{R}) where {R}
+    id = cell_id_at(x, y, sim)
+    _, cells = nth_step(sim, tstep)
+    cell = cells[id]
+    cell_ids_view = @view sim.cell_ids[((cell.idx - CartesianIndex(R - 1, R - 1)):(cell.idx + CartesianIndex(R - 1, R - 1)))]
+    xs = sacollect(SVector{2 * R - 1}, cell_center(cells[i])[1] for i in @view(cell_ids_view[:, R]))
+    ys = sacollect(SVector{2 * R - 1}, cell_center(cells[i])[2] for i in @view(cell_ids_view[R, :]))
+    u_appx_x_gen = (
+        begin
+                u_slice = sacollect(SVector{2 * R - 1}, f(cells[i]) for i in @view cell_ids_view[:, j])
+                weno_reconstruct_at(x, u_slice, xs)
+            end for j in 1:(2 * R - 1)
+    )
+    u_appxs_x = sacollect(SVector{2 * R - 1}, u_appx_x_gen)
+    u_appx = weno_reconstruct_at(y, u_appxs_x, ys)
+    return u_appx
+end
+
+"""
+    weno_approximate_u_at(x, y, sim::CellBasedEulerSim, tstep, [weno_order::Val{R}=Val{3}()])
+    weno_approximate_u_at(pt, sim::CellBasedEulerSim, tstep, [weno_order::Val{R}=Val{3}()])
+
+Approximate ``u`` at the point ``(x, y)`` using a WENO approximation of order `R` of the data in `sim`.
+"""
+function weno_approximate_u_at(x, y, sim::CellBasedEulerSim, tstep, weno_order::Val{R} = Val(3)) where {R}
+    return _weno_approximate_at(c -> c.u, x, y, sim, tstep, weno_order)
+end
+
+function weno_approximate_u_at(pt, sim::CellBasedEulerSim, tstep, weno_order::Val{R} = Val(3)) where {R}
+    return weno_approximate_u_at(pt..., sim, tstep, weno_order)
+end
+
+"""
+    weno_approximate_u_at(x, y, sim::CellBasedEulerSim, tstep, [weno_order::Val{R}=Val{3}()])
+    weno_approximate_u_at(pt, sim::CellBasedEulerSim, tstep, [weno_order::Val{R}=Val{3}()])
+
+Approximate ``u̇`` at the point ``(x, y)`` using a WENO approximation of order `R` of the data in `sim`.
+"""
+function weno_approximate_udot_at(x, y, sim::CellBasedEulerSim, tstep, weno_order::Val{R} = Val{3}()) where {R}
+    return _weno_approximate_at(c -> c.u̇, x, y, sim, tstep, weno_order)
+end
+
+function weno_approximate_udot_at(pt, sim::CellBasedEulerSim, tstep, weno_order::Val{R} = Val{3}()) where {R}
+    return weno_approximate_udot_at(pt..., sim, tstep, weno_order)
+end
+
+"""
+    weno_approximate_u_at(x, y, βdot, sim::CellBasedEulerSim, tstep, [weno_order::Val{R}=Val{3}()])
+
+Approximate ``u̇`` at the point ``(x, y)`` using a WENO approximation of order `R` of the data in `sim`.
+"""
+function weno_approximate_udot_at(x, y, βdot, sim::CellBasedEulerSim, tstep, weno_order::Val{R} = Val{3}()) where {R}
+    return _weno_approximate_at(c -> c.u̇ * βdot, x, y, sim, tstep, weno_order)
+end
+
+function weno_approximate_udot_at(pt, βdot::AbstractArray, sim::CellBasedEulerSim, tstep, weno_order::Val{R} = Val{3}()) where {R}
+    return weno_approximate_udot_at(pt..., βdot, sim, tstep, weno_order)
 end
 
 """
@@ -591,12 +650,6 @@ function _simulation_too_slow(infos, maximum_wall_clock, current_num_tsteps)
     avg_dur = total_duration ÷ current_num_tsteps
     return (current_num_tsteps + 4) * avg_dur > maximum_wall_clock
 end
-
-opnorm2_sqr(u) = eigmax(u' * u)
-opnorm1(u) = sum(abs, u)
-opnorm1(u::AbstractMatrix) = maximum(sum(abs, u; dims = 1))
-opnormInf(u::AbstractVector) = maximum(abs, u)
-opnormInf(u::AbstractMatrix) = maximum(sum(abs, u; dims = 2))
 
 # integrate the provided norm |Δ|^p_p over the domain
 function _integral_convergence_measure(norm_p, cell_ids, cell_updates, dA)

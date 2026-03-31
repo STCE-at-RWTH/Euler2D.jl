@@ -6,7 +6,8 @@ using LinearAlgebra
 # public packages
 using Accessors, StaticArrays
 using DifferentiationInterface
-using Interpolations
+using Interpolations: interpolate, scale
+using Interpolations: BSpline, Gridded, Linear
 using Optimization, OptimizationOptimJL
 
 
@@ -16,6 +17,7 @@ using PlanePolygons
 # e2d
 using Euler2D
 using Euler2D: fdiff_backend
+using Euler2D: weno_approximate_u_at
 using Euler2D.CannyShockSensor: extract_bow_shock_points
 
 export ShockInterpolation
@@ -44,17 +46,20 @@ end
 function _vt_near_shock_from_theta(shock_pt, θ, Δξ, sim, tstep, bcs, gas)
     n = dir_from_theta(θ)
     Δpt = Δξ * n
-    u_linear_appx = Euler2D.linear_approximate_u_at(shock_pt + Δpt, Δpt, sim, tstep, bcs, gas)
-    return vt_from_u_and_normal(u_linear_appx.y0, n)
+    u_weno_appx = weno_approximate_u_at(shock_pt + Δpt, sim, tstep)
+    return vt_from_u_and_normal(u_weno_appx, n)
 end
 
 function _vt_and_pushforward_near_shock_from_theta(shock_pt, θ, Δξ, sim, tstep, bcs, gas)
     n, dn = value_and_derivative(dir_from_theta, fdiff_backend, θ)
     Δpt = Δξ * n
     dΔpt = Δξ * dn
-    u_linear_appx = Euler2D.linear_approximate_u_at(shock_pt + Δpt, Δpt, sim, tstep, bcs, gas)
-    dudθ = u_linear_appx.Dy * dΔpt
-    _marshalled = SVector(θ, u_linear_appx.y0...)
+    # u_linear_appx = Euler2D.linear_approximate_u_at(shock_pt + Δpt, Δpt, sim, tstep, bcs, gas)
+    (u_appx, (dudθ,)) = value_and_pushforward(weno_approximate_u_at, fdiff_backend, shock_pt + Δpt, (dΔpt,), Constant(sim), Constant(tstep))
+
+    # dudθ = u_linear_appx.Dy * dΔpt
+    # _marshalled = SVector(θ, u_linear_appx.y0...)
+    _marshalled = SVector(θ, u_appx...)
     _marshalled_seed = SVector(one(θ), dudθ...)
 
     vt, dvt_dθ = value_and_pushforward(AutoForwardDiff(), _marshalled, (_marshalled_seed,)) do _θ_and_u
@@ -112,7 +117,6 @@ struct ShockInterpolation{T}
         return new(points, normals)
     end
 end
-
 
 function ShockInterpolation(
         sim::CellBasedEulerSim{T, <:FVMCell{T}}, sensor_info, N_points;
@@ -198,5 +202,4 @@ end
 
 function constant_reconstruction_near(shock, Δξ, sim, tstep)
 end
-
 end

@@ -4,7 +4,6 @@ using LinearAlgebra
 
 using Accessors
 using DifferentiationInterface
-using ForwardDiff: ForwardDiff
 using Graphs
 using MetaGraphsNext
 using OhMyThreads: tmap, tmapreduce
