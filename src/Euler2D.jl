@@ -40,9 +40,11 @@ export BowShockInterpolation, CannyShockSensor
 export FullPseudoinversion, LocalPseudoinversion
 
 # methods
-export F_euler
+export F_euler, ∇F_euler
 export interface_signal_speeds
-export eigenvectors_∇F_euler, eigenvectors_∇G_euler
+export eigenvalues_∇F_euler, eigenvalues_∇G_euler
+export left_eigenvectors_∇F_euler, right_eigenvectors_∇F_euler
+export left_eigenvectors_∇G_euler, right_eigenvectors_∇G_euler
 
 # dimension stuff
 export EulerEqnsScaling

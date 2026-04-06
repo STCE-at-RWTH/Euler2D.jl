@@ -281,5 +281,9 @@ const _dims_dirs = ((:west, :east), (:south, :north))
 # stacking smatrices
 
 function _stack_smatrices(A::SMatrix{M, N, T, L}, B::SMatrix{M, N, T, L}) where {M, N, T, L}
-    return SArray{Tuple{M, N, 2}, T, 3, 2 * L}(A..., B...)
+    return SArray{Tuple{M, N, 2}, T}(A..., B...)
+end
+
+function _stack_smatrices(A::SMatrix{M, N, T, L}, B::SMatrix{M, N, T, L}, C::SMatrix{M, N, T, L}) where {M, N, T, L}
+    return SArray{Tuple{M, N, 3}, T}(A..., B..., C...)
 end

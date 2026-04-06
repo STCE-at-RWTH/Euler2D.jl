@@ -48,6 +48,21 @@ end
 # why do I still have this
 select_space_dim(F_e, dim) = F_e[:, dim]
 
+function ∇F_euler(u, dim, gas)
+    return jacobian((x, g, d) -> F_euler(x, g)[:, d], fdiff_backend, u, Constant(gas), Constant(dim))
+end
+
+function ∇F_euler(u, gas)
+    return stack(map(d -> ∇F_euler(u, d, gas), 1:(length(u) - 2)); dims = 3)
+end
+
+function ∇F_euler(u::SVector{N}, gas) where {N}
+    jacs = ntuple(N - 2) do i
+        ∇F_euler(u, i, gas)
+    end
+    return _stack_smatrices(jacs...)
+end
+
 
 # do we need the multiple eigenvalues in the middle? I do not know...
 """
@@ -55,12 +70,14 @@ select_space_dim(F_e, dim) = F_e[:, dim]
 
 Computes the eigenvalues of the Jacobian of the Euler flux function in dimension `dim`.
 """
-function eigenvalues_∇F_euler(u, dim, gas::CaloricallyPerfectGas)
-    ρv = select_middle(u)
-    v = ρv / u[1]
+function eigenvalues_∇F_euler(u, dim, gas)
+    v = dimensionless_velocity(u)
     a = dimensionless_speed_of_sound(u, gas)
     return SVector(v[dim] - a, ntuple(Returns(v[dim]), length(v))..., v[dim] + a)
 end
+
+eigenvalues_∇F_euler(u, gas) = eigenvalues_∇F_euler(u, 1, gas)
+eigenvalues_∇G_euler(u, gas) = eigenvalues_∇F_euler(u, 2, gas)
 
 function eigenvalues_∇F_euler(
         u::ConservedProps{N, T, Q1, Q2, Q3},
@@ -72,12 +89,7 @@ function eigenvalues_∇F_euler(
     return SVector(v[dim] - a, ntuple(Returns(v[dim]), N)..., v[dim] + a)
 end
 
-"""
-    eigenvectors_∇F_euler(u, gas)
-
-Compute the eigenvectors of the Jacobian of the Euler equations flux.
-"""
-function eigenvectors_∇F_euler(u::SVector{3, T}, gas) where {T}
+function right_eigenvectors_∇F_euler(u::SVector{3, T}, gas) where {T}
     v = u[2] / u[1]
     a = dimensionless_speed_of_sound(u, gas)
     H = dimensionless_total_enthalpy_density(u, gas) / u[1]
@@ -88,26 +100,63 @@ function eigenvectors_∇F_euler(u::SVector{3, T}, gas) where {T}
 end
 
 """
-Compute the eigenvectors of the Jacobian of the x-component of the Euler equations flux.
+    right_eigenvectors_∇F_euler(u, gas)
+
+Compute the _right_ eigenvectors of the Jacobian of the x-component of the Euler equations flux.
+Ordering of the eigenvectors is the same as in [Shu et al.](https://doi.org/10.1016/0168-9274(92)90066-M).
+
+See also: [`F_euler`](@ref), [`eigenvalues_∇F_euler`](@ref), [`left_eigenvectors_∇F_euler`](@ref)
 """
-function eigenvectors_∇F_euler(u::SVector{4, T}, gas) where {T}
-    v1 = u[2] / u[1]
-    v2 = u[3] / u[1]
-    a = dimensionless_speed_of_sound(u, gas)
+function right_eigenvectors_∇F_euler(u::SVector{4, T}, gas) where {T}
+    v1, v2 = dimensionless_velocity(u)
+    q = v1^2 + v2^2
+    c = dimensionless_speed_of_sound(u, gas)
     H = dimensionless_total_enthalpy_density(u, gas) / u[1]
-    r1 = SVector(1.0, v1 - a, v2, H - a * v1)
-    r2 = SVector(1.0, v1, v2, 0.5 * (v1 * v1 + v2 * v2))
-    r3 = SVector(0.0, 0.0, 1.0, v2)
-    r4 = SVector(1.0, v1 + a, v2, H + a * v1)
+    r1 = @SArray [1.0; v1 - c; v2; H - c * v1]
+    r2 = @SArray [0.0; 0.0; 1.0; v2]
+    r3 = @SArray [1.0; v1; v2; 0.5 * q]
+    r4 = @SArray [1.0; v1 + c; v2; H + c * v1]
     return hcat(r1, r2, r3, r4)
 end
 
 """
-  eigenvectors_∇G_euler(u, gas)
+    left_eigenvectors_∇F_euler(u, gas)
 
-Compute the eigenvectors of the Jacobian of the y-component of the Euler equations flux.
+Compute the _left_ eigenvectors of the Jacobian of the x-component of the Euler equations flux.
+Ordering of the eigenvectors is the same as in [Shu et al](https://doi.org/10.1016/0168-9274(92)90066-M).
+
+!!! warning
+
+    There may be a printing error in that reference! ``R^{-1}_{1,2}`` is missing a minus sign.
+
+See also: [`F_euler`](@ref), [`eigenvalues_∇F_euler`](@ref), [`right_eigenvectors_∇F_euler`](@ref)
 """
-function eigenvectors_∇G_euler(u::SVector{4, T}, gas) where {T}
+function left_eigenvectors_∇F_euler(u::SVector{4, T}, gas) where {T}
+    v1, v2 = dimensionless_velocity(u)
+    q = v1^2 + v2^2
+    c = dimensionless_speed_of_sound(u, gas)
+    b1 = (gas.γ - 1) / c^2
+    b2 = 0.5 * q * b1
+    r1 = 0.5 * @SArray [b2 + v1 / c ;; -(b1 * v1 + 1 / c) ;; -b1 * v2 ;; b1]
+    r2 = 0.5 * @SArray [-2 * v2 ;; 0 ;; 2 ;; 0]
+    r3 = 0.5 * @SArray [2 * (1 - b2) ;; 2 * b1 * v1 ;; 2 * b1 * v2 ;; -2 * b1 ]
+    r4 = 0.5 * @SArray [b2 - v1 / c ;; -(b1 * v1 - 1 / c) ;; -b1 * v2 ;; b1]
+    return vcat(r1, r2, r3, r4)
+end
+
+"""
+    right_eigenvectors_∇G_euler(u, gas)
+
+Compute the _right_ eigenvectors of the Jacobian of the y-component of the Euler equations flux.
+Ordering of the eigenvectors is the same as in [Shu et al.](https://doi.org/10.1016/0168-9274(92)90066-M).
+
+!!! warning
+
+    There may be a printing error in that reference! ``R^{-1}_{1,2}`` is missing a minus sign.
+
+See also: [`F_euler`](@ref), [`eigenvalues_∇G_euler`](@ref), [`left_eigenvectors_∇G_euler`](@ref)
+"""
+function right_eigenvectors_∇G_euler(u::SVector{4, T}, gas) where {T}
     v1 = u[2] / u[1]
     v2 = u[3] / u[1]
     a = dimensionless_speed_of_sound(u, gas)
@@ -116,7 +165,7 @@ function eigenvectors_∇G_euler(u::SVector{4, T}, gas) where {T}
     r2 = SVector(0.0, 1.0, 0.0, v1)
     r3 = SVector(1.0, v1, v2, 0.5 * (v1 * v1 + v2 * v2))
     r4 = SVector(1.0, v1, v2 + a, H + a * v2)
-    return hcat(r1, r2, r3, r4)
+    return mapreduce(normalize, hcat, (r1, r2, r3, r4))
 end
 
 function _avg_jacobian_igrand(ϑ, params)
