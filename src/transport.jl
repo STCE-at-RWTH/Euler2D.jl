@@ -133,15 +133,15 @@ See also: [`F_euler`](@ref), [`eigenvalues_∇F_euler`](@ref), [`right_eigenvect
 """
 function left_eigenvectors_∇F_euler(u::SVector{4, T}, gas) where {T}
     v1, v2 = dimensionless_velocity(u)
-    q = v1^2 + v2^2
+    q_sqr = v1^2 + v2^2
     c = dimensionless_speed_of_sound(u, gas)
     b1 = (gas.γ - 1) / c^2
-    b2 = 0.5 * q * b1
-    r1 = 0.5 * @SArray [b2 + v1 / c ;; -(b1 * v1 + 1 / c) ;; -b1 * v2 ;; b1]
-    r2 = 0.5 * @SArray [-2 * v2 ;; 0 ;; 2 ;; 0]
-    r3 = 0.5 * @SArray [2 * (1 - b2) ;; 2 * b1 * v1 ;; 2 * b1 * v2 ;; -2 * b1 ]
-    r4 = 0.5 * @SArray [b2 - v1 / c ;; -(b1 * v1 - 1 / c) ;; -b1 * v2 ;; b1]
-    return vcat(r1, r2, r3, r4)
+    b2 = 0.5 * q_sqr * b1
+    l1 = 0.5 * @SArray [b2 + v1 / c ;; -(b1 * v1 + 1 / c) ;; -b1 * v2 ;; b1]
+    l2 = @SArray [-v2 ;; 0 ;; 1 ;; 0]
+    l3 = @SArray [(1 - b2) ;; b1 * v1 ;; b1 * v2 ;; -b1 ]
+    l4 = 0.5 * @SArray [b2 - v1 / c ;; -(b1 * v1 - 1 / c) ;; -b1 * v2 ;; b1]
+    return vcat(l1, l2, l3, l4)
 end
 
 """

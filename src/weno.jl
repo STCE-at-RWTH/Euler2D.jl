@@ -160,7 +160,6 @@ function weno3_smoothness_prefactors(ℓ)
     return weno3_smoothness_prefactors()[ℓ]
 end
 
-
 using Euler2D: opnorm2_sqr
 
 function weno3_smoothness(u_Sk, k)
@@ -186,9 +185,6 @@ function _weno_smoothness_ℓ(r, k, ℓ)
 end
 
 function _weno_smoothness(u_Sk, r, k, ℓs)
-    if length(ℓs) == 2
-        return weno3_smoothness(u_Sk, k)
-    end
     return sum(ℓs) do ℓ
         A = _weno_smoothness_ℓ(r, k, ℓ)
         return opnorm2_sqr(u_Sk, A)

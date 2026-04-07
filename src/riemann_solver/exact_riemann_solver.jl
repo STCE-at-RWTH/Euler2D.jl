@@ -5,19 +5,32 @@ module ExactRiemannSolver
 using LinearAlgebra
 using SimpleNonlinearSolve
 using StaticArrays
-using PlanePolygons: change_of_basis_matrix, orthonormal_basis
 using Euler2D: Euler2D
-using Euler2D: dimensionless_velocity, dimensionless_pressure
-using Euler2D: dimensionless_speed_of_sound, F_euler
+using Euler2D: dimensionless_pressure, dimensionless_speed_of_sound, dimensionless_velocity
+using Euler2D: F_euler
 using Euler2D: select_middle, change_space_coordinates
 
-"""Pressure ratio ``P_r/P_l`` abbreviated ``π``"""
-function _π(uL, uR, gas)
-    return dimensionless_pressure(uR, gas) / dimensionless_pressure(uL, gas)
+# SMOLLER IS EVIL
+# THE SITUATION GETS FLIPPED FOR 3-SHOCKS
+
+"""
+    _π(u1, u2, gas)
+
+Pressure ratio ``P_2/P_1`` abbreviated ``π``. `u1` is the pre-shock state, `u2` is the post-shock state,
+considering that particles cross 1- and 3-shocks in opposite directions.
+"""
+function _π(u1, u2, gas)
+    return dimensionless_pressure(u2, gas) / dimensionless_pressure(u1, gas)
 end
 
-"""Density ratio ``ρ_r/ρ_l`` abbreviated ``z``"""
-_z(uL, uR) = first(uR) / first(uL)
+"""
+    _z(u1, u2)
+
+Density ratio ``ρ_2/ρ_1`` abbreviated ``z``.
+
+See [`_π`](@ref).
+"""
+_z(u1, u2) = first(u2) / first(u1)
 
 """Common coefficient computed from ``γ``"""
 _β(gas) = (gas.γ + 1) / (gas.γ - 1)
@@ -194,7 +207,7 @@ Corallary 18.7 in Smoller. Test if the 3-wave in the solution to the Riemann pro
 The states ``q`` are already projected into interface-normal co-ordinates.
 """
 function test_3_wave_for_rarefaction(qL, qR, gas)
-    return test_3_wave_for_rarefaction(JumpRatios(qL, qR, gas), gas)
+    return test_3_wave_for_rarefaction(JumpRatios(qR, qL, gas), gas)
 end
 
 function test_3_wave_for_rarefaction(jumps, gas)

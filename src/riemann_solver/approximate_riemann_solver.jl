@@ -1,46 +1,4 @@
 """
-    roe_parameter_vector(u, gas)
-
-Switch from conservation properties `u` to ``[√ρ, √ρ ⋅ v..., √ρ ⋅ H ]``.
-We compute enthalphy density `ρH` as the sum of internal energy density and pressure.
-
-See Equations 10 and 11 in Roe.
-"""
-function roe_parameter_vector(u::ConservedProps, gas::CaloricallyPerfectGas)
-    ρH = ustrip(u"J/m^3", total_enthalpy_density(u, gas))
-    return SVector{n_space_dims(u) + 2}(
-        ustrip(ShockwaveProperties._units_ρ, density(u)),
-        ustrip.(ShockwaveProperties._units_ρv, momentum_density(u))...,
-        ρH,
-    ) / sqrt(ustrip(ShockwaveProperties._units_ρ, density(u)))
-end
-
-function roe_parameter_vector(u::SVector{N, T}, gas::CaloricallyPerfectGas) where {N, T}
-    ρH = dimensionless_total_enthalpy_density(u, gas)
-    w = setindex(u, ρH, N) / sqrt(u[1])
-    return w
-end
-
-"""
-    roe_matrix_eigenvalues(uL, uR, dims, gas)
-
-Find the eigenvalues of the Roe matrix at the boundary determined by ``uL`` and ``uR``. 
-"""
-function roe_matrix_eigenvalues(uL, uR, dim, gas::CaloricallyPerfectGas)
-    wL = roe_parameter_vector(uL, gas)
-    wR = roe_parameter_vector(uR, gas)
-    w̄ = (wL + wR) / 2
-    v̄ = select_middle(w̄) / w̄[1]
-    H̄ = w̄[end] / w̄[1]
-    a = sqrt((gas.γ - 1) * (H̄ - (v̄ ⋅ v̄) / 2))
-    return if v̄ isa SVector
-        vcat(SVector(v̄[dim] - a), v̄[dim] * ones(typeof(v̄)), SVector(v̄[dim] + a))
-    else
-        vcat(v̄[dim] - a, fill(v̄[dim], length(v̄)), v̄[dim] + a)
-    end
-end
-
-"""
     interface_signal_speeds(uL, uR, dim, gas)
 
 Compute the left and right signal speeds at the interface between `uL` and `uR` in dimension `dim`.

@@ -89,6 +89,7 @@ include("transport.jl")
 include("boundary_conditions.jl")
 include("weno.jl")
 
+include("riemann_solver/roe_matrices.jl")
 include("riemann_solver/approximate_riemann_solver.jl")
 include("riemann_solver/exact_riemann_solver.jl")
 
