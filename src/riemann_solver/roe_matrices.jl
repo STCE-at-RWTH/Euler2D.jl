@@ -184,3 +184,17 @@ end
 roe_average_eigenvalues(uL, uR, dim::Number, gas) = roe_average_eigenvalues(roe_parameter_mean(uL, uR, gas), dim, gas)
 roe_average_eigenvalues(uL, uR, gas) = roe_average_eigenvalues(roe_parameter_mean(uL, uR, gas), 1, gas)
 roe_average_eigenvalues(w_roe, gas) = roe_average_eigenvalues(w_roe, 1, gas)
+
+"""
+    roe_matrix_eigendecomposition(w_roe, gas)
+"""
+function roe_matrix_eigendecomposition(w_roe, gas)
+    L = left_eigenvectors_roe_average_F_euler(w_roe, gas)
+    Λ = roe_average_eigenvalues(w_roe, gas)
+    R = right_eigenvectors_roe_average_F_euler(w_roe, gas)
+    return L, Λ, R
+end
+
+function roe_matrix_eigendecomposition(uL, uR, gas)
+    return roe_matrix_eigendecomposition(roe_parameter_mean(uL, uR, gas), gas)
+end

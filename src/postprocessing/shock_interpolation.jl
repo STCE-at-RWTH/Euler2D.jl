@@ -46,7 +46,7 @@ end
 function _vt_near_shock_from_theta(shock_pt, θ, Δξ, sim, tstep, bcs, gas)
     n = dir_from_theta(θ)
     Δpt = Δξ * n
-    u_weno_appx = weno_approximate_u_at(shock_pt + Δpt, sim, tstep)
+    u_weno_appx = weno_approximate_u_at(shock_pt + Δpt, sim, tstep, gas)
     return vt_from_u_and_normal(u_weno_appx, n)
 end
 
@@ -55,7 +55,7 @@ function _vt_and_pushforward_near_shock_from_theta(shock_pt, θ, Δξ, sim, tste
     Δpt = Δξ * n
     dΔpt = Δξ * dn
     # u_linear_appx = Euler2D.linear_approximate_u_at(shock_pt + Δpt, Δpt, sim, tstep, bcs, gas)
-    (u_appx, (dudθ,)) = value_and_pushforward(weno_approximate_u_at, fdiff_backend, shock_pt + Δpt, (dΔpt,), Constant(sim), Constant(tstep))
+    (u_appx, (dudθ,)) = value_and_pushforward(weno_approximate_u_at, fdiff_backend, shock_pt + Δpt, (dΔpt,), Constant(sim), Constant(tstep), Constant(gas))
 
     # dudθ = u_linear_appx.Dy * dΔpt
     # _marshalled = SVector(θ, u_linear_appx.y0...)

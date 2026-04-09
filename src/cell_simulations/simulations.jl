@@ -291,64 +291,159 @@ function linear_approximate_udot_at(pt, stencil_dir, sim::CellBasedEulerSim, tst
     return LinAppx(pt, udot, dudot)
 end
 
-function _weno_approximate_at(f, x, y, sim::CellBasedEulerSim, tstep, weno_order::Val{R}) where {R}
+function weno_approximate_u_at(x, y, sim::CellBasedEulerSim, tstep, gas, weno_order::Val{R} = Val(3)) where {R}
     id = cell_id_at(x, y, sim)
     _, cells = nth_step(sim, tstep)
-    cell = cells[id]
-    cell_ids_view = @view sim.cell_ids[((cell.idx - CartesianIndex(R - 1, R - 1)):(cell.idx + CartesianIndex(R - 1, R - 1)))]
-    xs = sacollect(SVector{2 * R - 1}, cell_center(cells[i])[1] for i in @view(cell_ids_view[:, R]))
-    ys = sacollect(SVector{2 * R - 1}, cell_center(cells[i])[2] for i in @view(cell_ids_view[R, :]))
-    u_appx_x_gen = (
-        begin
-                u_slice = sacollect(SVector{2 * R - 1}, f(cells[i]) for i in @view cell_ids_view[:, j])
-                weno_reconstruct_at(x, u_slice, xs)
-            end for j in 1:(2 * R - 1)
+    idx = cells[id].idx
+    # we look at an 2R x 2R box so that we can choose an upwind stencil each time
+    # TODO do we want to shift these stencils if the point (x, y) is closer to one edge of the cell?
+    stencil_range = (idx - CartesianIndex(R - 1, R - 1)):(idx + CartesianIndex(R, R))
+    ids_view = @view sim.cell_ids[stencil_range]
+    i_min = Tuple(cells[ids_view[begin, R]].idx)[1]
+    i_max = Tuple(cells[ids_view[end, R]].idx)[1]
+    # wind going to the right
+    rc_x_plus = WENOReconstructor{R}(x, cell_boundaries(sim, 1)[i_min:i_max])
+    # wind going to the left
+    rc_x_minus = WENOReconstructor{R}(x, cell_boundaries(sim, 1)[(i_min + 1):(i_max + 1)])
+
+    u_appx_xs = map(eachslice(ids_view; dims = 2)) do ids_slice
+        u_x_slice = ntuple(2 * R) do i
+            cells[ids_slice[i]].u
+        end |> SVector
+        local local_wind = roe_matrix_eigendecomposition(u_x_slice[R], u_x_slice[R + 1], gas)
+        local u = weno_reconstruct_at(rc_x_plus, rc_x_minus, u_x_slice, local_wind...)
+        return change_space_coordinates(u, SVector(0, 1))
+    end
+
+    j_min = Tuple(cells[ids_view[R, begin]].idx)[2]
+    j_max = Tuple(cells[ids_view[R, end]].idx)[2]
+    rc_y_plus = WENOReconstructor{R}(y, cell_boundaries(sim, 2)[j_min:j_max])
+    rc_y_minus = WENOReconstructor{R}(y, cell_boundaries(sim, 2)[(j_min + 1):(j_max + 1)])
+    local_wind = roe_matrix_eigendecomposition(u_appx_xs[R], u_appx_xs[R + 1], gas)
+    u = weno_reconstruct_at(rc_y_plus, rc_y_minus, u_appx_xs, local_wind...)
+    return change_space_coordinates(u, SVector(0, -1))
+end
+
+function _weno_u_from_marshal(u_flat, rc_plus, rc_minus, gas, dir)
+    u = reinterpret(SVector{4, eltype(u_flat)}, u_flat)
+    r = WENOReconstruction.reconstruction_order(rc_plus)
+    local_wind = roe_matrix_eigendecomposition(u[r], u[r + 1], gas)
+    return change_space_coordinates(weno_reconstruct_at(rc_plus, rc_minus, u, local_wind...), dir)
+end
+
+function weno_approximate_u_and_udot_at(x::Real, y::Real, sim::CellBasedEulerSim{T, C}, tstep, gas, weno_order::Val{R} = Val(3)) where {T, C, R}
+    id = cell_id_at(x, y, sim)
+    _, cells = nth_step(sim, tstep)
+    idx = cells[id].idx
+    # we look at an 2R x 2R box so that we can choose an upwind stencil each time
+    # TODO do we want to shift these stencils if the point (x, y) is closer to one edge of the cell?
+    stencil_range = (idx - CartesianIndex(R - 1, R - 1)):(idx + CartesianIndex(R, R))
+    ids_view = @view sim.cell_ids[stencil_range]
+    i_min = Tuple(cells[ids_view[begin, R]].idx)[1]
+    i_max = Tuple(cells[ids_view[end, R]].idx)[1]
+    # wind going to the right
+    rc_x_plus = WENOReconstructor{R}(x, cell_boundaries(sim, 1)[i_min:i_max])
+    # wind going to the left
+    rc_x_minus = WENOReconstructor{R}(x, cell_boundaries(sim, 1)[(i_min + 1):(i_max + 1)])
+
+    NSEEDS = n_seeds(C)
+    u_marshalled = Vector{T}(undef, 4 * 2 * R)
+    pushforwards_marshalled = ntuple(i -> Vector{T}(undef, 4 * 2 * R), NSEEDS)
+    u_appx_xs = map(eachslice(ids_view; dims = 2)) do ids_slice
+        for i in eachindex(ids_slice)
+            c = cells[ids_slice[i]]
+            u_marshalled[(4 * (i - 1) + 1):(4 * i)] = c.u
+            for j in 1:NSEEDS
+                pushforwards_marshalled[j][(4 * (i - 1) + 1):(4 * i)] = c.u̇[:, j]
+            end
+        end
+        local (_u, _pfs) = value_and_pushforward(
+            _weno_u_from_marshal, fdiff_backend, u_marshalled, pushforwards_marshalled,
+            Constant(rc_x_plus), Constant(rc_x_minus), Constant(gas), Constant(SVector(0.0, 1.0))
+        )
+        return _u, hcat(_pfs...)
+    end
+
+    j_min = Tuple(cells[ids_view[R, begin]].idx)[2]
+    j_max = Tuple(cells[ids_view[R, end]].idx)[2]
+    rc_y_plus = WENOReconstructor{R}(y, cell_boundaries(sim, 2)[j_min:j_max])
+    rc_y_minus = WENOReconstructor{R}(y, cell_boundaries(sim, 2)[(j_min + 1):(j_max + 1)])
+
+    for i in eachindex(u_appx_xs)
+        (_u_i, _udot_i) = u_appx_xs[i]
+        u_marshalled[(4 * (i - 1) + 1):(4 * i)] = _u_i
+        for j in 1:NSEEDS
+            pushforwards_marshalled[j][(4 * (i - 1) + 1):(4 * i)] = _udot_i[:, j]
+        end
+    end
+    (u, u_pfs) = value_and_pushforward(
+        _weno_u_from_marshal, fdiff_backend, u_marshalled, pushforwards_marshalled,
+        Constant(rc_y_plus), Constant(rc_y_minus), Constant(gas), Constant(SVector(0.0, -1.0))
     )
-    u_appxs_x = sacollect(SVector{2 * R - 1}, u_appx_x_gen)
-    u_appx = weno_reconstruct_at(y, u_appxs_x, ys)
-    return u_appx
+    return u, hcat(u_pfs...)
 end
 
-#TODO DO AD ON THE APPROXIMATION WITH UDOT DO NOT INTERPOLATE THE TANGENT PLEASE AND THANK YOU
-"""
-    weno_approximate_u_at(x, y, sim::CellBasedEulerSim, tstep, [weno_order::Val{R}=Val{3}()])
-    weno_approximate_u_at(pt, sim::CellBasedEulerSim, tstep, [weno_order::Val{R}=Val{3}()])
+function weno_approximate_u_and_udot_at(x::Real, y::Real, βdot::AbstractVector, sim::CellBasedEulerSim{T, C}, tstep, gas, weno_order::Val{R} = Val(3)) where {T, C, R}
+    id = cell_id_at(x, y, sim)
+    _, cells = nth_step(sim, tstep)
+    idx = cells[id].idx
+    # we look at an 2R x 2R box so that we can choose an upwind stencil each time
+    # TODO do we want to shift these stencils if the point (x, y) is closer to one edge of the cell?
+    stencil_range = (idx - CartesianIndex(R - 1, R - 1)):(idx + CartesianIndex(R, R))
+    ids_view = @view sim.cell_ids[stencil_range]
+    i_min = Tuple(cells[ids_view[begin, R]].idx)[1]
+    i_max = Tuple(cells[ids_view[end, R]].idx)[1]
+    # wind going to the right
+    rc_x_plus = WENOReconstructor{R}(x, cell_boundaries(sim, 1)[i_min:i_max])
+    # wind going to the left
+    rc_x_minus = WENOReconstructor{R}(x, cell_boundaries(sim, 1)[(i_min + 1):(i_max + 1)])
 
-Approximate ``u`` at the point ``(x, y)`` using a WENO approximation of order `R` of the data in `sim`.
-"""
-function weno_approximate_u_at(x, y, sim::CellBasedEulerSim, tstep, weno_order::Val{R} = Val(3)) where {R}
-    return _weno_approximate_at(c -> c.u, x, y, sim, tstep, weno_order)
+    u_marshalled = Vector{T}(undef, 4 * 2 * R)
+    pushforwards_marshalled = Vector{T}(undef, 4 * 2 * R)
+    u_appx_xs = map(eachslice(ids_view; dims = 2)) do ids_slice
+        for i in eachindex(ids_slice)
+            c = cells[ids_slice[i]]
+            u_marshalled[(4 * (i - 1) + 1):(4 * i)] = c.u
+            pushforwards_marshalled[(4 * (i - 1) + 1):(4 * i)] = c.u̇ * βdot
+        end
+        local (_u, (_pf,)) = value_and_pushforward(
+            _weno_u_from_marshal, fdiff_backend, u_marshalled, (pushforwards_marshalled,),
+            Constant(rc_x_plus), Constant(rc_x_minus), Constant(gas), Constant(SVector(0.0, 1.0))
+        )
+        return _u, _pf
+    end
+
+    j_min = Tuple(cells[ids_view[R, begin]].idx)[2]
+    j_max = Tuple(cells[ids_view[R, end]].idx)[2]
+    rc_y_plus = WENOReconstructor{R}(y, cell_boundaries(sim, 2)[j_min:j_max])
+    rc_y_minus = WENOReconstructor{R}(y, cell_boundaries(sim, 2)[(j_min + 1):(j_max + 1)])
+
+    for i in eachindex(u_appx_xs)
+        (_u_i, _udot_i) = u_appx_xs[i]
+        u_marshalled[(4 * (i - 1) + 1):(4 * i)] = _u_i
+        pushforwards_marshalled[(4 * (i - 1) + 1):(4 * i)] = _udot_i
+    end
+    (u, (u_pf,)) = value_and_pushforward(
+        _weno_u_from_marshal, fdiff_backend, u_marshalled, (pushforwards_marshalled,),
+        Constant(rc_y_plus), Constant(rc_y_minus), Constant(gas), Constant(SVector(0.0, -1.0))
+    )
+    return u, u_pf
 end
 
-function weno_approximate_u_at(pt, sim::CellBasedEulerSim, tstep, weno_order::Val{R} = Val(3)) where {R}
-    return weno_approximate_u_at(pt..., sim, tstep, weno_order)
+function weno_approximate_u_at(pt, sim::CellBasedEulerSim, tstep, gas, weno_order::Val{R} = Val(3)) where {R}
+    return weno_approximate_u_at(pt..., sim, tstep, gas, weno_order)
 end
 
-"""
-    weno_approximate_u_at(x, y, sim::CellBasedEulerSim, tstep, [weno_order::Val{R}=Val{3}()])
-    weno_approximate_u_at(pt, sim::CellBasedEulerSim, tstep, [weno_order::Val{R}=Val{3}()])
-
-Approximate ``u̇`` at the point ``(x, y)`` using a WENO approximation of order `R` of the data in `sim`.
-"""
-function weno_approximate_udot_at(x, y, sim::CellBasedEulerSim, tstep, weno_order::Val{R} = Val{3}()) where {R}
-    return _weno_approximate_at(c -> c.u̇, x, y, sim, tstep, weno_order)
+function weno_approximate_u_and_udot_at(pt, sim::CellBasedEulerSim{T, C}, tstep, gas, weno_order::Val{R} = Val(3)) where {T, C, R}
+    return weno_approximate_u_and_udot_at(pt..., sim, tstep, gas, weno_order)
 end
 
-function weno_approximate_udot_at(pt, sim::CellBasedEulerSim, tstep, weno_order::Val{R} = Val{3}()) where {R}
-    return weno_approximate_udot_at(pt..., sim, tstep, weno_order)
+function weno_approximate_u_and_udot_at(pt, pf::AbstractVector, sim::CellBasedEulerSim{T, C}, tstep, gas, weno_order::Val{R} = Val(3)) where {T, C, R}
+    return weno_approximate_u_and_udot_at(pt..., pf, sim, tstep, gas, weno_order)
 end
 
-"""
-    weno_approximate_u_at(x, y, βdot, sim::CellBasedEulerSim, tstep, [weno_order::Val{R}=Val{3}()])
-
-Approximate ``u̇`` at the point ``(x, y)`` using a WENO approximation of order `R` of the data in `sim`.
-"""
-function weno_approximate_udot_at(x, y, βdot, sim::CellBasedEulerSim, tstep, weno_order::Val{R} = Val{3}()) where {R}
-    return _weno_approximate_at(c -> c.u̇ * βdot, x, y, sim, tstep, weno_order)
-end
-
-function weno_approximate_udot_at(pt, βdot::AbstractArray, sim::CellBasedEulerSim, tstep, weno_order::Val{R} = Val{3}()) where {R}
-    return weno_approximate_udot_at(pt..., βdot, sim, tstep, weno_order)
+function weno_approximate_udot_at(args...)
+    return last(weno_approximate_u_and_udot_at(args...))
 end
 
 """
