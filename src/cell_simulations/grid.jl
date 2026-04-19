@@ -19,31 +19,31 @@ Subtypes implement:
 - `store_owned_cell_update!(p, id, update)`: Store an update for owned cell `id`.
 - ``
 """
-abstract type AbstractCellGridPartition{T,U} end
+abstract type AbstractCellGridPartition{T, U} end
 
-struct CellGridPartition{T,U} <: AbstractCellGridPartition{T,U}
+struct CellGridPartition{T, U} <: AbstractCellGridPartition{T, U}
     id::Int
     # which slice of the global grid was copied into this partition?
-    global_extent::NTuple{2,NTuple{2,Int}}
+    global_extent::NTuple{2, NTuple{2, Int}}
     # which (global) indices is this partition responsible for updating?
-    global_computation_indices::NTuple{2,NTuple{2,Int}}
+    global_computation_indices::NTuple{2, NTuple{2, Int}}
     # which (local) indices is this partition responsible for updating?
-    computation_indices::NTuple{2,NTuple{2,Int}}
+    computation_indices::NTuple{2, NTuple{2, Int}}
     # what cell IDs were copied into this partition?
-    cells_copied_ids::Array{Int,2}
-    cells_map::Dict{Int,T}
-    cells_update::Dict{Int,U}
+    cells_copied_ids::Array{Int, 2}
+    cells_map::Dict{Int, T}
+    cells_update::Dict{Int, U}
 
     function CellGridPartition(
-        id,
-        global_extent,
-        global_computation_indices,
-        computation_indices,
-        cells_copied_ids,
-        cells_map::Dict{Int,T},
-        cells_update::Dict{Int},
-    ) where {T<:FVMCell}
-        return new{T,update_dtype(T)}(
+            id,
+            global_extent,
+            global_computation_indices,
+            computation_indices,
+            cells_copied_ids,
+            cells_map::Dict{Int, T},
+            cells_update::Dict{Int},
+        ) where {T <: FVMCell}
+        return new{T, update_dtype(T)}(
             id,
             global_extent,
             global_computation_indices,
@@ -55,27 +55,27 @@ struct CellGridPartition{T,U} <: AbstractCellGridPartition{T,U}
     end
 end
 
-struct FastCellGridPartition{T,U} <: AbstractCellGridPartition{T,U}
+struct FastCellGridPartition{T, U} <: AbstractCellGridPartition{T, U}
     id::Int
 
     owned_ids::Vector{Int}
-    owned_cells::Dict{Int,T}
-    owned_update::Dict{Int,U}
+    owned_cells::Dict{Int, T}
+    owned_update::Dict{Int, U}
 
     neighbor_ids::Vector{Int}
-    neighbor_cells::Dict{Int,T}
-    neighbors_update::Dict{Int,U}
+    neighbor_cells::Dict{Int, T}
+    neighbors_update::Dict{Int, U}
 
     function FastCellGridPartition(
-        id,
-        owned_ids,
-        owned_cells::Dict{Int,T},
-        owned_update,
-        neighbor_ids,
-        neighbor_cells::Dict{Int,T},
-        neighbors_update,
-    ) where {T<:FVMCell}
-        return new{T,update_dtype(T)}(
+            id,
+            owned_ids,
+            owned_cells::Dict{Int, T},
+            owned_update,
+            neighbor_ids,
+            neighbor_cells::Dict{Int, T},
+            neighbors_update,
+        ) where {T <: FVMCell}
+        return new{T, update_dtype(T)}(
             id,
             owned_ids,
             owned_cells,
@@ -93,15 +93,15 @@ end
 Create a partition with fast lookup and initialize the update dictionaries to the appropriate zeros.
 """
 function FastCellGridPartition(
-    id,
-    owned_cells::Dict{Int,T},
-    neighbor_cells::Dict{Int,T},
-) where {T<:FVMCell}
+        id,
+        owned_cells::Dict{Int, T},
+        neighbor_cells::Dict{Int, T},
+    ) where {T <: FVMCell}
     U = update_dtype(T)
     owned_ids = sort!(collect(keys(owned_cells)))
     neighbor_ids = sort!(collect(keys(neighbor_cells)))
-    owned_update = Dict{Int,U}()
-    neighbor_update = Dict{Int,U}()
+    owned_update = Dict{Int, U}()
+    neighbor_update = Dict{Int, U}()
     sizehint!(owned_update, length(owned_ids))
     sizehint!(neighbor_update, length(neighbor_ids))
     foreach(id -> owned_update[id] = zero_cell_update(U), owned_ids)
@@ -123,14 +123,14 @@ end
 
 Underlying numeric data type of this partition.
 """
-numeric_dtype(::AbstractCellGridPartition{T,U}) where {T,U} = numeric_dtype(T)
-numeric_dtype(::Type{<:AbstractCellGridPartition{T,U}}) where {T,U} = numeric_dtype(T)
+numeric_dtype(::AbstractCellGridPartition{T, U}) where {T, U} = numeric_dtype(T)
+numeric_dtype(::Type{<:AbstractCellGridPartition{T, U}}) where {T, U} = numeric_dtype(T)
 
-cell_type(::AbstractCellGridPartition{T,U}) where {T,U} = T
-cell_type(::Type{<:AbstractCellGridPartition{T,U}}) where {T,U} = T
+cell_type(::AbstractCellGridPartition{T, U}) where {T, U} = T
+cell_type(::Type{<:AbstractCellGridPartition{T, U}}) where {T, U} = T
 
-update_dtype(::AbstractCellGridPartition{T,U}) where {T,U} = U
-update_dtype(::Type{<:AbstractCellGridPartition{T,U}}) where {T,U} = U
+update_dtype(::AbstractCellGridPartition{T, U}) where {T, U} = U
+update_dtype(::Type{<:AbstractCellGridPartition{T, U}}) where {T, U} = U
 
 owned_cell_count(p::AbstractCellGridPartition) = count(≠(0), owned_cell_ids(p))
 
@@ -204,17 +204,17 @@ Store `cell_update` for `cell_id` after computing it.
 Store `cell_update` for `cell_id` only in dimension `dim` at splitting level `s` after computing it.
 """
 function store_cell_update!(partition::CellGridPartition, id, Δu)
-    partition.cells_update[id] = Δu
+    return partition.cells_update[id] = Δu
 end
 
 function store_cell_update!(partition::FastCellGridPartition, id, Δu)
-    partition.owned_update[id] = Δu
+    return partition.owned_update[id] = Δu
 end
 
 function split_axis(len, n)
     l = len ÷ n
     rem = len - (n * l)
-    tpl_ranges = [(i * l + 1, (i + 1) * l) for i = 0:(n-1)]
+    tpl_ranges = [(i * l + 1, (i + 1) * l) for i in 0:(n - 1)]
     if rem > 0
         tpl_ranges[end] = (l * (n - 1) + 1, len)
     end
@@ -253,11 +253,11 @@ end
 # TODO if we want to move beyond a structured grid, we have to redo this method. I have no idea how to do this.
 
 function partition_cell_list(
-    global_active_cells,
-    global_cell_ids,
-    partitions_per_axis;
-    show_info = false,
-)
+        global_active_cells,
+        global_cell_ids,
+        partitions_per_axis;
+        show_info = false,
+    )
     # minimum partition size includes i - 1 and i + 1 neighbors
     grid_size = size(global_cell_ids)
     all_part = split_axis.(grid_size, partitions_per_axis)
@@ -282,11 +282,11 @@ function partition_cell_list(
         task_cell_ids = global_cell_ids[range(task_x...), range(task_y...)]
         # total number of cells this task has a copy of
         task_cell_count = count(>(0), task_cell_ids)
-        cell_ids_map = Dict{Int,cell_type}()
-        cell_updates_map = Dict{Int,update_type}()
+        cell_ids_map = Dict{Int, cell_type}()
+        cell_updates_map = Dict{Int, update_type}()
         sizehint!(cell_ids_map, task_cell_count)
         sizehint!(cell_updates_map, task_cell_count)
-        for i ∈ eachindex(task_cell_ids)
+        for i in eachindex(task_cell_ids)
             cell_id = task_cell_ids[i]
             cell_id == 0 && continue
             cell_ids_map[cell_id] = global_active_cells[cell_id]
@@ -307,11 +307,11 @@ function partition_cell_list(
 end
 
 function fast_partition_cell_list(
-    global_active_cells,
-    global_cell_ids,
-    partitions_per_axis;
-    show_info = true,
-)
+        global_active_cells,
+        global_cell_ids,
+        partitions_per_axis;
+        show_info = true,
+    )
     grid_size = size(global_cell_ids)
     all_part = split_axis.(grid_size, partitions_per_axis)
 
@@ -321,9 +321,9 @@ function fast_partition_cell_list(
     if show_info
         smalllest_partition, biggest_partition =
             extrema(Iterators.product(all_part...)) do (part_x, part_y)
-                sz = (part_x[2] - part_x[1] + 1) * (part_y[2] - part_y[1] + 1)
-                return sz
-            end
+            sz = (part_x[2] - part_x[1] + 1) * (part_y[2] - part_y[1] + 1)
+            return sz
+        end
         @info "Partioning global cell grid into $(*(length.(all_part)...)) partitions." CELL_TYPE UPDATE_TYPE smalllest_partition biggest_partition
     end
     partition_infos = Iterators.product(all_part...) |> enumerate |> collect
@@ -344,7 +344,7 @@ function fast_partition_cell_list(
         global_owned_idxs = CartesianIndices(parentindices(partition_owned_cell_ids))
         owned_active_cells = 0
         shared_active_cells = 0
-        for i ∈ global_covered_idxs
+        for i in global_covered_idxs
             id = global_cell_ids[i]
             id == 0 && continue
             if i ∈ global_owned_idxs
@@ -354,12 +354,12 @@ function fast_partition_cell_list(
             end
         end
         # cells that this partition is responsible for computing the updates to
-        partition_compute_cells = Dict{Int,CELL_TYPE}()
+        partition_compute_cells = Dict{Int, CELL_TYPE}()
         sizehint!(partition_compute_cells, owned_active_cells)
         # cells that OTHER partitions are responsible for but this partition needs to know about
-        partition_shared_cells = Dict{Int,CELL_TYPE}()
+        partition_shared_cells = Dict{Int, CELL_TYPE}()
         sizehint!(partition_shared_cells, shared_active_cells)
-        for i ∈ global_covered_idxs
+        for i in global_covered_idxs
             id = global_cell_ids[i]
             id == 0 && continue
             if i ∈ global_owned_idxs
@@ -387,9 +387,11 @@ end
 Test that the computation regions of the partitions in `p` do not share any cell ids.
 """
 function _verify_partitioning(p)
-    return all(Iterators.filter(Iterators.product(p, p)) do (p1, p2)
-        p1.id != p2.id
-    end) do (p1, p2)
+    return all(
+        Iterators.filter(Iterators.product(p, p)) do (p1, p2)
+            p1.id != p2.id
+        end
+    ) do (p1, p2)
         c1 = owned_cell_ids(p1)
         c2 = owned_cell_ids(p2)
         return !any(c1) do v1
@@ -403,9 +405,11 @@ function _verify_partitioning(p)
 end
 
 function _verify_fastpartitioning(p, global_cells)
-    no_overlap = all(Iterators.filter(Iterators.product(p, p)) do (p1, p2)
-        p1.id != p2.id
-    end) do (p1, p2)
+    no_overlap = all(
+        Iterators.filter(Iterators.product(p, p)) do (p1, p2)
+            p1.id != p2.id
+        end
+    ) do (p1, p2)
         shared12 = intersect(keys(p1.owned_cells), keys(p2.neighbor_cells))
         shared21 = intersect(keys(p2.owned_cells), keys(p1.neighbor_cells))
         return all(owned_cell_ids(p1)) do cell_id
@@ -422,24 +426,27 @@ end
 Returns a `partition id => list of neighboring partition indices` given a vector of partitions.
 """
 function partition_neighbor_map(partitions)
-    return Dict([
-        p.id => [
-            p2.id for p2 ∈ Iterators.filter(partitions) do other
-                return any(cell_id -> owns_cell(p, cell_id), other.neighbor_ids)
-            end
-        ] for p ∈ partitions
-    ])
+    return Dict(
+        [
+            p.id => [
+                    p2.id for p2 in Iterators.filter(partitions) do other
+                        return any(cell_id -> owns_cell(p, cell_id), other.neighbor_ids)
+                end
+                ] for p in partitions
+        ]
+    )
 end
 
 function collect_cell_partition!(global_cells, partition::CellGridPartition)
     data_region = owned_cell_ids(partition)
-    for id ∈ data_region
+    for id in data_region
         global_cells[id] = partition.cells_map[id]
     end
+    return
 end
 
 function collect_cell_partition!(global_cells, partition::FastCellGridPartition)
-    merge!(global_cells, partition.owned_cells)
+    return merge!(global_cells, partition.owned_cells)
 end
 
 """
@@ -461,20 +468,21 @@ end
 Merges a collection of partitions into one dict for shared lookup.
 """
 function collect_cell_partitions(cell_partitions, n_active_cells)
-    u_global = Dict{Int64,cell_type(first(cell_partitions))}()
+    u_global = Dict{Int64, cell_type(first(cell_partitions))}()
     sizehint!(u_global, n_active_cells)
     return collect_cell_partitions!(u_global, cell_partitions)
 end
 
 function collect_cell_partition_update!(Δu_global, partition::CellGridPartition)
     data_region = owned_cell_ids(partition)
-    for id ∈ data_region
+    for id in data_region
         Δu_global[id] = partition.cells_update[id]
     end
+    return
 end
 
 function collect_cell_partition_update!(Δu_global, partition::FastCellGridPartition)
-    merge!(Δu_global, partition.owned_update)
+    return merge!(Δu_global, partition.owned_update)
 end
 
 """
@@ -496,7 +504,7 @@ end
 Merges all of the updates for a collection of partitions into one dict for shared lookup.
 """
 function collect_cell_partition_updates(cell_partitions, n_active_cells)
-    Δu_global = Dict{Int64,update_dtype(first(cell_partitions))}()
+    Δu_global = Dict{Int64, update_dtype(first(cell_partitions))}()
     sizehint!(Δu_global, n_active_cells)
     return collect_cell_partition_updates!(Δu_global, cell_partitions)
 end
@@ -510,7 +518,7 @@ Will compute phantoms as necessary from `boundary_conditions` and `gas`.
 """
 function neighbor_cells(cell, active_cells, boundary_conditions, gas)
     neighbors = cell.neighbors
-    map((ntuple(i -> ((keys(neighbors)[i], neighbors[i])), 4))) do (dir, (kind, id))
+    return map((ntuple(i -> ((keys(neighbors)[i], neighbors[i])), 4))) do (dir, (kind, id))
         res = if kind == BOUNDARY_CONDITION
             @inbounds phantom_neighbor(cell, dir, boundary_conditions[id], gas)
         else
@@ -521,14 +529,14 @@ function neighbor_cells(cell, active_cells, boundary_conditions, gas)
 end
 
 function compute_partition_update_and_max_Δt!(
-    partition::AbstractCellGridPartition,
-    dim,
-    splitting_level,
-    boundary_conditions,
-    gas::CaloricallyPerfectGas,
-)
+        partition::AbstractCellGridPartition,
+        dim,
+        splitting_level,
+        boundary_conditions,
+        gas::CaloricallyPerfectGas,
+    )
     Δt_max = typemax(numeric_dtype(partition))
-    for cell_id ∈ owned_cell_ids(partition)
+    for cell_id in owned_cell_ids(partition)
         cell = get_cell(partition, cell_id)
         nbrs = neighbor_cells(cell, copied_cells(partition), boundary_conditions, gas)
         cell_Δt_max, cell_Δu = compute_cell_update_and_max_Δt(cell, dim, nbrs, gas)
@@ -553,13 +561,13 @@ to other partitions.
 Returns the number of cells updated.
 """
 function propagate_updates_to!(
-    dest::CellGridPartition{T},
-    src::CellGridPartition{T},
-) where {T}
+        dest::CellGridPartition{T},
+        src::CellGridPartition{T},
+    ) where {T}
     count = 0
     src_compute = owned_cell_ids(src)
-    for src_id ∈ src_compute
-        for dest_id ∈ dest.cells_copied_ids
+    for src_id in src_compute
+        for dest_id in dest.cells_copied_ids
             if src_id == dest_id
                 dest.cells_update[src_id] = src.cells_update[src_id]
                 count += 1
@@ -572,7 +580,7 @@ end
 function propagate_updates_to!(dest::FastCellGridPartition, src::FastCellGridPartition)
     count = 0
     shared_keys = Iterators.filter(k -> owns_cell(src, k), dest.neighbor_ids)
-    for k ∈ shared_keys
+    for k in shared_keys
         count += 1
         dest.neighbors_update[k] = src.owned_update[k]
     end
@@ -580,23 +588,25 @@ function propagate_updates_to!(dest::FastCellGridPartition, src::FastCellGridPar
 end
 
 function apply_partition_update!(partition::CellGridPartition, dim, Δt, split_level)
-    for (k, v) ∈ partition.cells_update
+    for (k, v) in partition.cells_update
         partition.cells_map[k] =
             update_cell(partition.cells_map[k], v, Δt, dim, split_level)
     end
+    return
 end
 
 function apply_partition_update!(partition::FastCellGridPartition, dim, Δt, split_level)
-    for id ∈ partition.owned_ids
+    for id in partition.owned_ids
         Δu = partition.owned_update[id]
         partition.owned_cells[id] =
             update_cell(partition.owned_cells[id], Δu, Δt, dim, split_level)
     end
-    for id ∈ partition.neighbor_ids
+    for id in partition.neighbor_ids
         Δu = partition.neighbors_update[id]
         partition.neighbor_cells[id] =
             update_cell(partition.neighbor_cells[id], Δu, Δt, dim, split_level)
     end
+    return
 end
 
 """
@@ -617,13 +627,13 @@ Performs the update step via Strang splitting!
 Returns the time step size and the maximum update size in each dimension.
 """
 function step_cell_simulation_with_strang_splitting!(
-    cell_partitions,
-    partition_neighboring,
-    Δt_maximum,
-    boundary_conditions,
-    cfl_limit,
-    gas::CaloricallyPerfectGas,
-)
+        cell_partitions,
+        partition_neighboring,
+        Δt_maximum,
+        boundary_conditions,
+        cfl_limit,
+        gas::CaloricallyPerfectGas,
+    )
     T = numeric_dtype(eltype(cell_partitions))
     # 1. Calculate updates
     # 2. Share update
@@ -649,7 +659,7 @@ function step_cell_simulation_with_strang_splitting!(
     # propagate between neighboring partitions
     # and apply
     tforeach(cell_partitions) do p
-        for src_idx ∈ partition_neighboring[p.id]
+        for src_idx in partition_neighboring[p.id]
             propagate_updates_to!(p, cell_partitions[src_idx])
         end
         apply_partition_update!(p, 1, Δt / 2, 1)
@@ -659,7 +669,7 @@ function step_cell_simulation_with_strang_splitting!(
         compute_partition_update_and_max_Δt!(cell_partition, 2, 1, boundary_conditions, gas)
     end
     tforeach(cell_partitions) do p
-        for src_idx ∈ partition_neighboring[p.id]
+        for src_idx in partition_neighboring[p.id]
             propagate_updates_to!(p, cell_partitions[src_idx])
         end
         apply_partition_update!(p, 2, Δt, 1)
@@ -669,7 +679,7 @@ function step_cell_simulation_with_strang_splitting!(
         compute_partition_update_and_max_Δt!(cell_partition, 1, 2, boundary_conditions, gas)
     end
     tforeach(cell_partitions) do p
-        for src_idx ∈ partition_neighboring[p.id]
+        for src_idx in partition_neighboring[p.id]
             propagate_updates_to!(p, cell_partitions[src_idx])
         end
         apply_partition_update!(p, 1, Δt / 2, 2)
@@ -688,10 +698,10 @@ function active_cell_mask(cell_centers_x, cell_centers_y, obstacles)
     end
 end
 
-function active_cell_ids_from_mask(active_mask)::Array{Int,2}
+function active_cell_ids_from_mask(active_mask)::Array{Int, 2}
     cell_ids = zeros(Int, size(active_mask))
     live_count = 0
-    for i ∈ eachindex(IndexLinear(), active_mask, cell_ids)
+    for i in eachindex(IndexLinear(), active_mask, cell_ids)
         live_count += active_mask[i]
         if active_mask[i]
             cell_ids[i] = live_count
@@ -708,7 +718,7 @@ function cell_neighbor_status(i, cell_ids)
         east = CartesianIndex(1, 0),
         west = CartesianIndex(-1, 0),
     )
-    map(_cell_neighbor_offsets) do offset
+    return map(_cell_neighbor_offsets) do offset
         neighbor = idx + offset
         if neighbor[1] < 1
             return (BOUNDARY_CONDITION, Int(WEST_BOUNDARY))
@@ -735,7 +745,7 @@ Computes a collection of active cells and their locations in a grid determined b
 function primal_cell_list_and_id_grid(u0, params, bounds, ncells, scaling, obstacles)
     centers = map(zip(bounds, ncells)) do (b, n)
         v = range(b...; length = n + 1)
-        return v[1:end-1] .+ step(v) / 2
+        return v[1:(end - 1)] .+ step(v) / 2
     end
     extent = SVector{2}(step.(centers)...)
     pts = Iterators.product(centers...)
@@ -747,9 +757,9 @@ function primal_cell_list_and_id_grid(u0, params, bounds, ncells, scaling, obsta
     active_mask = active_cell_mask(centers..., obstacles)
     active_ids = active_cell_ids_from_mask(active_mask)
     @assert sum(active_mask) == last(active_ids)
-    cell_list = Dict{Int,PrimalQuadCell{eltype(eltype(u0_grid))}}()
+    cell_list = Dict{Int, PrimalQuadCell{eltype(eltype(u0_grid))}}()
     sizehint!(cell_list, sum(active_mask))
-    for i ∈ eachindex(IndexCartesian(), active_ids, active_mask)
+    for i in eachindex(IndexCartesian(), active_ids, active_mask)
         active_mask[i] || continue
         j = active_ids[i]
         (m, n) = Tuple(i)
@@ -771,7 +781,7 @@ Computes a collection of active cells and their locations in a grid determined b
 function tangent_cell_list_and_id_grid(u0, params, bounds, ncells, scaling, obstacles)
     centers = map(zip(bounds, ncells)) do (b, n)
         v = range(b...; length = n + 1)
-        return v[1:end-1] .+ step(v) / 2
+        return v[1:(end - 1)] .+ step(v) / 2
     end
     pts = Iterators.product(centers...)
     extent = SVector{2}(step.(centers)...)
@@ -797,9 +807,9 @@ function tangent_cell_list_and_id_grid(u0, params, bounds, ncells, scaling, obst
     active_ids = active_cell_ids_from_mask(active_mask)
     @assert sum(active_mask) == last(active_ids)
 
-    cell_list = Dict{Int,TangentQuadCell{T,NSEEDS,4 * NSEEDS}}()
+    cell_list = Dict{Int, TangentQuadCell{T, NSEEDS, 4 * NSEEDS}}()
     sizehint!(cell_list, sum(active_mask))
-    for i ∈ eachindex(IndexCartesian(), active_ids, active_mask)
+    for i in eachindex(IndexCartesian(), active_ids, active_mask)
         active_mask[i] || continue
         cell_id = active_ids[i]
         (m, n) = Tuple(i)

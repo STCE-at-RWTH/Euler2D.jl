@@ -28,7 +28,7 @@ Get the numeric data type of this `FVMCell` type. (It's `T`).
 """
 numeric_dtype(::Type{<:FVMCell{T}}) where {T} = T
 
-update_dtype(::T) where {T<:FVMCell} = update_dtype(T)
+update_dtype(::T) where {T <: FVMCell} = update_dtype(T)
 
 """
     cell_volume(cell::FVMCell)
@@ -37,6 +37,16 @@ Compute the total volume of `cell`. Defaults to computing the area of the cell's
 boundary polygon, but there may be smarter ways for certain subtypes.
 """
 cell_volume(cell::FVMCell) = poly_area(cell_boundary_polygon(cell))
+
+"""
+    cell_center(cell::FVMCell)
+
+Compute the geometric center of `cell`.
+"""
+function cell_center(cell::FVMCell)
+    p = cell_boundary_polygon(cell)
+    return inv(num_vertices(p)) * sum(edge_starts(p))
+end
 
 """
     is_cell_contained_by(cell1, poly)
@@ -95,12 +105,13 @@ end
 """
     RectangularFVMCell{T}
 
-An FVM cell that is a rectangle.
+An FVM cell that is a rectangle with sides aligned to the `x` and `y` axes.
 Has fields `center` and `extent`.
 """
 abstract type RectangularFVMCell{T} <: FVMCell{T} end
 
 cell_volume(cell::RectangularFVMCell) = *(cell.extent...)
+cell_center(cell::RectangularFVMCell) = cell.center
 
 function cell_boundary_polygon(cell::RectangularFVMCell)
     c = cell.center
@@ -133,7 +144,7 @@ Return the appropriate "zero update" for the update type.
 
 This is not `Base.zero`, since the updates are not applied via addition.
 """
-function zero_cell_update(::T) where {T<:FVMCellUpdate}
+function zero_cell_update(::T) where {T <: FVMCellUpdate}
     return zero_cell_update(T)
 end
 
@@ -182,12 +193,12 @@ Fields
 struct PrimalQuadCell{T} <: RectangularFVMCell{T}
     id::Int
     idx::CartesianIndex{2}
-    center::SVector{2,T}
-    extent::SVector{2,T}
-    u::SVector{4,T}
+    center::SVector{2, T}
+    extent::SVector{2, T}
+    u::SVector{4, T}
     neighbors::NamedTuple{
         (:north, :south, :east, :west),
-        NTuple{4,Tuple{CellNeighboring,Int}},
+        NTuple{4, Tuple{CellNeighboring, Int}},
     }
 end
 
@@ -197,12 +208,12 @@ end
 Update data for Strang splitting.
 """
 struct PrimalQuadCellStrangUpdate{T} <: FVMCellUpdate{T}
-    Δu_x::NTuple{2,SVector{4,T}}
-    Δu_y::SVector{4,T}
+    Δu_x::NTuple{2, SVector{4, T}}
+    Δu_y::SVector{4, T}
 end
 
 function zero_cell_update(::Type{<:PrimalQuadCellStrangUpdate{T}}) where {T}
-    U = SVector{4,T}
+    U = SVector{4, T}
     return PrimalQuadCellStrangUpdate((zero(U), zero(U)), zero(U))
 end
 
@@ -229,16 +240,16 @@ Fields
  - `u̇`: What are the cell-averaged pushforwards in this cell?
  - `neighbors`: What are IDs of this cell's neighbors?
 """
-struct TangentQuadCell{T,NSEEDS,PARAMCOUNT} <: RectangularFVMCell{T}
+struct TangentQuadCell{T, NSEEDS, PARAMCOUNT} <: RectangularFVMCell{T}
     id::Int
     idx::CartesianIndex{2}
-    center::SVector{2,T}
-    extent::SVector{2,T}
-    u::SVector{4,T}
-    u̇::SMatrix{4,NSEEDS,T,PARAMCOUNT}
+    center::SVector{2, T}
+    extent::SVector{2, T}
+    u::SVector{4, T}
+    u̇::SMatrix{4, NSEEDS, T, PARAMCOUNT}
     neighbors::NamedTuple{
         (:north, :south, :east, :west),
-        NTuple{4,Tuple{CellNeighboring,Int}},
+        NTuple{4, Tuple{CellNeighboring, Int}},
     }
 end
 
@@ -247,16 +258,16 @@ end
 
 Update data for Strang splitting.
 """
-struct TangentQuadCellStrangUpdate{T,NSEEDS,NPARAMS} <: FVMCellUpdate{T}
-    Δu_x::NTuple{2,SVector{4,T}}
-    Δu_y::SVector{4,T}
-    Δu̇_x::NTuple{2,SMatrix{4,NSEEDS,T,NPARAMS}}
-    Δu̇_y::SMatrix{4,NSEEDS,T,NPARAMS}
+struct TangentQuadCellStrangUpdate{T, NSEEDS, NPARAMS} <: FVMCellUpdate{T}
+    Δu_x::NTuple{2, SVector{4, T}}
+    Δu_y::SVector{4, T}
+    Δu̇_x::NTuple{2, SMatrix{4, NSEEDS, T, NPARAMS}}
+    Δu̇_y::SMatrix{4, NSEEDS, T, NPARAMS}
 end
 
-function zero_cell_update(::Type{<:TangentQuadCellStrangUpdate{T,NS,NP}}) where {T,NS,NP}
-    U = SVector{4,T}
-    V = SMatrix{4,NS,T,NP}
+function zero_cell_update(::Type{<:TangentQuadCellStrangUpdate{T, NS, NP}}) where {T, NS, NP}
+    U = SVector{4, T}
+    V = SMatrix{4, NS, T, NP}
     return TangentQuadCellStrangUpdate(
         (zero(U), zero(U)),
         zero(U),
@@ -274,22 +285,22 @@ function partial_cell_update(previous_Δu::TangentQuadCellStrangUpdate, partial_
     return @set previous_Δu.Δu̇_y = partial_Δu[2]
 end
 
-n_seeds(::TangentQuadCell{T,N,P}) where {T,N,P} = N
-n_seeds(::Type{TangentQuadCell{T,N,P}}) where {T,N,P} = N
+n_seeds(::TangentQuadCell{T, N, P}) where {T, N, P} = N
+n_seeds(::Type{TangentQuadCell{T, N, P}}) where {T, N, P} = N
 
 @doc """
-        numeric_dtype(cell)
-        numeric_dtype(::Type{CELL_TYPE})
+    numeric_dtype(cell)
+    numeric_dtype(::Type{CELL_TYPE})
 
-    Get the numeric data type associated with this cell.
-    """ numeric_dtype
+Get the numeric data type associated with this cell.
+""" numeric_dtype
 
 function update_dtype(::Type{PrimalQuadCell{T}}) where {T}
     return PrimalQuadCellStrangUpdate{T}
 end
 
-function update_dtype(::Type{TangentQuadCell{T,N,P}}) where {T,N,P}
-    return TangentQuadCellStrangUpdate{T,N,P}
+function update_dtype(::Type{TangentQuadCell{T, N, P}}) where {T, N, P}
+    return TangentQuadCellStrangUpdate{T, N, P}
 end
 
 @doc """
@@ -376,11 +387,11 @@ function phantom_neighbor(cell::PrimalQuadCell, dir, bc, gas)
 end
 
 function phantom_neighbor(
-    cell::TangentQuadCell{T,NSEEDS,PARAMCOUNT},
-    dir,
-    bc,
-    gas,
-) where {T,NSEEDS,PARAMCOUNT}
+        cell::TangentQuadCell{T, NSEEDS, PARAMCOUNT},
+        dir,
+        bc,
+        gas,
+    ) where {T, NSEEDS, PARAMCOUNT}
     # HACK use nneighbors as intended.
     @assert dir ∈ (:north, :south, :east, :west) "dir is not a cardinal direction..."
     @assert nneighbors(bc) == 1 "dirty hack alert, this function needs to be extended for bcs with more neighbors"
@@ -393,7 +404,7 @@ function phantom_neighbor(
             NamedTuple{(:north, :south, :east, :west)}(ntuple(Returns((IS_PHANTOM, 0)), 4))
 
         # TODO there must be a way to do this with Accessors.jl and "lenses" that makes sense
-        # HACK is this utter nonsense????? I do not know. 
+        # HACK is this utter nonsense????? I do not know.
         dim = _dirs_dim[dir]
         u = _dirs_bc_is_reversed[dir] ? flip_velocity(cell.u, dim) : cell.u
         u̇ = _dirs_bc_is_reversed[dir] ? flip_velocity(cell.u̇, dim) : cell.u̇
@@ -413,14 +424,14 @@ function phantom_neighbor(
     return phantom
 end
 
-function _iface_speed(iface::Tuple{Int,T,T}, gas) where {T<:FVMCell}
+function _iface_speed(iface::Tuple{Int, T, T}, gas) where {T <: FVMCell}
     return max(abs.(interface_signal_speeds(iface[2].u, iface[3].u, iface[1], gas))...)
 end
 
 function maximum_cell_signal_speeds(
-    interfaces::NamedTuple{(:north, :south, :east, :west)},
-    gas::CaloricallyPerfectGas,
-)
+        interfaces::NamedTuple{(:north, :south, :east, :west)},
+        gas::CaloricallyPerfectGas,
+    )
     # doing this with map allocated?!
     return (
         max(_iface_speed(interfaces.north, gas), _iface_speed(interfaces.south, gas)),
@@ -466,11 +477,11 @@ function compute_cell_update_and_max_Δt(cell::PrimalQuadCell, dim, neighbors, g
 end
 
 function compute_cell_update_and_max_Δt(
-    cell::TangentQuadCell{T,N,P},
-    dim,
-    neighbors,
-    gas,
-) where {T,N,P}
+        cell::TangentQuadCell{T, N, P},
+        dim,
+        neighbors,
+        gas,
+    ) where {T, N, P}
     ifaces = (
         north = (2, cell, neighbors.north),
         south = (2, neighbors.south, cell),

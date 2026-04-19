@@ -1,46 +1,4 @@
 """
-    roe_parameter_vector(u, gas)
-
-Switch from conservation properties `u` to ``[√ρ, √ρ ⋅ v..., √ρ ⋅ H ]``.
-We compute enthalphy density `ρH` as the sum of internal energy density and pressure.
-
-See Equations 10 and 11 in Roe.
-"""
-function roe_parameter_vector(u::ConservedProps, gas::CaloricallyPerfectGas)
-    ρH = ustrip(u"J/m^3", total_enthalpy_density(u, gas))
-    return SVector{n_space_dims(u) + 2}(
-        ustrip(ShockwaveProperties._units_ρ, density(u)),
-        ustrip.(ShockwaveProperties._units_ρv, momentum_density(u))...,
-        ρH,
-    ) / sqrt(ustrip(ShockwaveProperties._units_ρ, density(u)))
-end
-
-function roe_parameter_vector(u::SVector{N,T}, gas::CaloricallyPerfectGas) where {N,T}
-    ρH = dimensionless_total_enthalpy_density(u, gas)
-    w = setindex(u, ρH, N) / sqrt(u[1])
-    return w
-end
-
-"""
-    roe_matrix_eigenvalues(uL, uR, dims, gas)
-
-Find the eigenvalues of the Roe matrix at the boundary determined by ``uL`` and ``uR``. 
-"""
-function roe_matrix_eigenvalues(uL, uR, dim, gas::CaloricallyPerfectGas)
-    wL = roe_parameter_vector(uL, gas)
-    wR = roe_parameter_vector(uR, gas)
-    w̄ = (wL + wR) / 2
-    v̄ = select_middle(w̄) / w̄[1]
-    H̄ = w̄[end] / w̄[1]
-    a = sqrt((gas.γ - 1) * (H̄ - (v̄ ⋅ v̄) / 2))
-    return if v̄ isa SVector
-        vcat(SVector(v̄[dim] - a), v̄[dim] * ones(typeof(v̄)), SVector(v̄[dim] + a))
-    else
-        vcat(v̄[dim] - a, fill(v̄[dim], length(v̄)), v̄[dim] + a)
-    end
-end
-
-"""
     interface_signal_speeds(uL, uR, dim, gas)
 
 Compute the left and right signal speeds at the interface between `uL` and `uR` in dimension `dim`.
@@ -50,13 +8,13 @@ These compare the eigenvalues of the Jacobian of the flux function to the
 eigenvalues of the Roe matrix and pick the "faster" speed.
 """
 function interface_signal_speeds(uL, uR, dim, gas::CaloricallyPerfectGas)
-    λ_roe = roe_matrix_eigenvalues(uL, uR, dim, gas)
+    λ_roe = roe_average_eigenvalues(uL, uR, dim, gas)
     λ_L = eigenvalues_∇F_euler(uL, dim, gas)
     λ_R = eigenvalues_∇F_euler(uR, dim, gas)
     # @assert length(λ_L) == length(λ_R) == length(λ_roe)
     # 2.24 from Vides, et al.
-    s_L = min((min(λ...) for λ ∈ zip(λ_L, λ_roe))...)
-    s_R = max((max(λ...) for λ ∈ zip(λ_roe, λ_R))...)
+    s_L = min((min(λ...) for λ in zip(λ_L, λ_roe))...)
+    s_R = max((max(λ...) for λ in zip(λ_roe, λ_R))...)
     return s_L, s_R
 end
 
@@ -68,10 +26,10 @@ Compute the HLL numerical flux across the L-R boundary.
 - `dim` : Direction to calculate F_hll
 """
 function ϕ_hll(uL, uR, dim::Int, gas::CaloricallyPerfectGas)
-    fL = select_space_dim(F_euler(uL, gas), dim)
-    fR = select_space_dim(F_euler(uR, gas), dim)
+    fL = F_euler(uL, gas)[:, dim]
+    fR = F_euler(uR, gas)[:, dim]
     sL, sR = interface_signal_speeds(uL, uR, dim, gas)
-    return ϕ_hll(uL, uR, @view(fL[:, dim]), @view(fR[:, dim]), sL, sR)
+    return ϕ_hll(uL, uR, fL, fR, sL, sR)
 end
 
 """
@@ -79,7 +37,7 @@ end
 
 Compute the HLL numerical flux across the L-R boundary.
 - `uL`, `uR`: States on either side of the boundary
-- `n` : Direction normal to the boundary, assumed that it points towards uR
+- `n` : Direction normal to the boundary, assumed that it points towards `uR`
 """
 function ϕ_hll(uL, uR, n, gas)
     qL = change_space_coordinates(uL, n)
@@ -91,7 +49,7 @@ function ϕ_hll(uL, uR, n, gas)
 end
 
 """
-    ϕ_hll(uL, u̇L, uR, u̇R, dim, gas)
+    ϕ_hll_and_jvp(uL, u̇L, uR, u̇R, dim, gas)
 
 Compute the Jacobian-vector product of `ϕ_hll` given seeds `u̇L` and `u̇R`.
 

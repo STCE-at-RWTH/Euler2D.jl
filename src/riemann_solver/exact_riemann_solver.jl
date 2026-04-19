@@ -1,24 +1,36 @@
+module ExactRiemannSolver
 # Method skeleton for the exact Riemann solver.
 # following the derviations in Smoller 1994
 # Shock Waves and Reaction-Diffisuion Equations
-
-module ExactRiemannSolverInternal
-
 using LinearAlgebra
 using SimpleNonlinearSolve
 using StaticArrays
-
-using PlanePolygons: change_of_basis_matrix, orthonormal_basis
-using Euler2D: dimensionless_pressure, dimensionless_speed_of_sound, F_euler
+using Euler2D: Euler2D
+using Euler2D: dimensionless_pressure, dimensionless_speed_of_sound, dimensionless_velocity
+using Euler2D: F_euler
 using Euler2D: select_middle, change_space_coordinates
 
-"""Pressure ratio ``P_r/P_l`` abbreviated pi"""
-function _π(uL, uR, gas)
-    return dimensionless_pressure(uR, gas) / dimensionless_pressure(uL, gas)
+# SMOLLER IS EVIL
+# THE SITUATION GETS FLIPPED FOR 3-SHOCKS
+
+"""
+    _π(u1, u2, gas)
+
+Pressure ratio ``P_2/P_1`` abbreviated ``π``. `u1` is the pre-shock state, `u2` is the post-shock state,
+considering that particles cross 1- and 3-shocks in opposite directions.
+"""
+function _π(u1, u2, gas)
+    return dimensionless_pressure(u2, gas) / dimensionless_pressure(u1, gas)
 end
 
-"""Density ratio ``ρ_r/ρ_l`` abbreviated z"""
-_z(uL, uR) = uR[1] / uL[1]
+"""
+    _z(u1, u2)
+
+Density ratio ``ρ_2/ρ_1`` abbreviated ``z``.
+
+See [`_π`](@ref).
+"""
+_z(u1, u2) = first(u2) / first(u1)
 
 """Common coefficient computed from ``γ``"""
 _β(gas) = (gas.γ + 1) / (gas.γ - 1)
@@ -26,47 +38,94 @@ _β(gas) = (gas.γ + 1) / (gas.γ - 1)
 """Common coefficient computed from ``γ``"""
 _τ(gas) = (gas.γ - 1) / (2 * gas.γ)
 
-"""The parametrizations in Smoller rely on ``-\\log\\pi``"""
+"""The parametrizations in Smoller rely on ``-log π``"""
 _x(uL, uR, gas) = -log(_π(uL, uR, gas))
 
 """
-  density_bound_uR(uL, gas)
-
+    density_bound_uR(uL, gas)
 Compute and upper bound for the density of a post-shock state. I think.
 """
 density_bound_uR(uL, gas) = (uL[1], _β(gas) * uL[1])
 
-# TODO does the 1d theory work 1-1 here? as in, can I just ignore the shear wave...? Obviously I can just project down to a 1-d problem and work it out there.
-# that might be the best plan.
-
 """
-  jump_ratios(uL, uR, gas)
+    JumpRatios{T}
 
-Compute the jump ratios:
-```math
-  A = ρ_r/ρ_l \\quad B = P_r/P_l \\quad C = (v_r - v_l) / c_l
-```
+# Fields
+
+- `Q_density` = ``ρ_R / ρ_L``
+- `Q_pressure` = ``P_R / P_L``
+- `Q_Δv_c` = ``(v_R - v_L) / c_L`` (where ``c_L`` is the speed of sound on the *LEFT*)
+
+# Methods
+These three are defined in **18.60** in Smoller.
+- [`smoller_riemann_A(::JumpRatios)`](@ref)
+- [`smoller_riemann_B(::JumpRatios)`](@ref)
+- [`smoller_riemann_C(::JumpRatios)`](@ref)
 """
-function jump_ratios(uL, uR, gas)
+struct JumpRatios{T}
+    # Q for Quotient!
+    Q_density::T
+    Q_pressure::T
+    Q_Δv_c::T
+end
+
+# 18.60 from Smoller
+smoller_riemann_A(ratios) = ratios.Q_density
+smoller_riemann_B(ratios) = ratios.Q_pressure
+smoller_riemann_C(ratios) = ratios.Q_Δv_c
+
+function JumpRatios(uL::AbstractVector, uR::AbstractVector, gas)
     A = _z(uL, uR)
     B = _π(uL, uR, gas)
-    cL = dimensionless_speed_of_sound(uL, gas)
-    C = (uR[2] / uR[1] - uL[2] / uL[1]) / cL
-    return (A, B, C)
+    Δv1 = first(dimensionless_velocity(uR)) - first(dimensionless_velocity(uL))
+    C = Δv1 / dimensionless_speed_of_sound(uL, gas)
+    return JumpRatios(A, B, C)
 end
 
 """
-  test_for_vacuum_in_solution(uL, uR, gas)
+    riemann_problem_has_solution(qL, qR, gas)
 
-Theorem 18.6 in Smoller. Test if the Riemann problem between states ``u_L`` and ``u_R`` will yield a vacuum state, 
+Theorem 18.6 in Smoller. Test if the Riemann problem between states ``q_L`` and ``q_R`` will yield a vacuum state, 
 or if the solution will yield a solution composed of shocks, simple waves / rarefaction waves, and contact discontinuities.
+
+See also: [`test_for_vacuum_in_solution`](@ref)
 """
-function test_for_vacuum_in_solution(uL, uR, gas)
-    cL = dimensionless_speed_of_sound(uL, gas)
-    cR = dimensionless_speed_of_sound(uR, gas)
-    vL = uL[2] / uL[1]
-    vR = uR[2] / uR[1]
-    return vR - vL ≥ 2 / (gas.γ - 1) * (cL + cR)
+function riemann_problem_has_solution(qL, qR, gas)
+    cL = dimensionless_speed_of_sound(qL, gas)
+    cR = dimensionless_speed_of_sound(qR, gas)
+    vL = qL[2] / qL[1]
+    vR = qR[2] / qR[1]
+    return vR - vL < 2 / (gas.γ - 1) * (cL + cR)
+end
+
+"""
+    riemann_problem_has_solution(uL, uR, e1, gas)
+
+Test if the normal-oriented Riemann problem between ``u_L`` and ``u_R`` has a solution.
+``e_1`` is the normal axis written in the standard basis `I`.
+
+See also: [`test_for_vacuum_in_solution`](@ref)
+"""
+function riemann_problem_has_solution(uL, uR, e1, gas)
+    qL = change_space_coordinates(uL, e1)
+    qR = change_space_coordinates(uR, e1)
+    return riemann_problem_has_solution(qL, qR, gas)
+end
+
+"""
+    test_for_vacuum_in_solution(qL, qR, gas) 
+    test_for_vacuum_in_solution(uL, uR, e1, gas) 
+
+Test if the Riemann problem yields a vacuum state between ``u_L`` and ``u_R``.
+
+See also: [`riemann_problem_has_solution`](@ref)
+"""
+function test_for_vacuum_in_solution(uL, uR, e1, gas)
+    return !riemann_problem_has_solution(uL, uR, e1, gas)
+end
+
+function test_for_vacuum_in_solution(qL, qR, gas)
+    return !riemann_problem_has_solution(qL, qR, gas)
 end
 
 function f_1(x, gas)
@@ -101,92 +160,117 @@ end
 # Defined below lemma 18.5
 
 function T_1(ρ, P, v, x, gas)
-    return (ρ = f_1(x, gas) * ρ, P = exp(-x) * P, v = v + sqrt(gas.γ * P / ρ) * h_1(x, gas))
+    return (
+        ρ = f_1(x, gas) * ρ,
+        P = exp(-x) * P,
+        v = only(v) + sqrt(gas.γ * P / ρ) * h_1(x, gas),
+    )
 end
+T_1(u_prim::NamedTuple{(:ρ, :P, :v)}, x, gas) = T_1(u_prim.ρ, u_prim.P, u_prim.v, x, gas)
 
-function T_2(ρ, P, v, x, gas)
-    return (ρ = exp(x) * ρ, P = P, v = v)
+function T_2(ρ, P, v, x)
+    return (ρ = exp(x) * ρ, P = P, v = only(v))
 end
+T_2(u_prim::NamedTuple{(:ρ, :P, :v)}, x) = T_2(u_prim.ρ, u_prim.P, u_prim.v, x)
 
 function T_3(ρ, P, v, x, gas)
-    return (ρ = f_3(x, gas) * ρ, P = exp(x) * P, v = v + sqrt(gas.γ * P / ρ) * h_3(x, gas))
+    return (
+        ρ = f_3(x, gas) * ρ,
+        P = exp(x) * P,
+        v = only(v) + sqrt(gas.γ * P / ρ) * h_3(x, gas),
+    )
 end
+T_3(u_prim::NamedTuple{(:ρ, :P, :v)}, x, gas) = T_3(u_prim.ρ, u_prim.P, u_prim.v, x, gas)
 
 """
-  test_1_wave_for_rarefaction(uL, uR, gas)
+    test_1_wave_for_rarefaction(qL, qR, gas)
 
 Corallary 18.7 in Smoller. Test if the 1-wave in the solution to the Riemann problem between ``q_L`` and ``q_R`` is a rarefaction wave.
-The states ``q`` are already projected into interface-normal co-ordinates.
+
+Note: The states ``q_{L, R}`` are already projected into interface-normal co-ordinates.
 """
 function test_1_wave_for_rarefaction(qL, qR, gas)
-    return test_1_wave_for_rarefaction(jump_ratios(qL, qR, gas), gas)
+    return test_1_wave_for_rarefaction(JumpRatios(qL, qR, gas), gas)
 end
 
-function test_1_wave_for_rarefaction(jumps, gas)
-    (A, B, C) = jumps
-    c1 = sqrt(B / A)
-    lhs = c1 * h_1(log(B), gas)
+function test_1_wave_for_rarefaction(jump_ratios, gas)
+    c1 = sqrt(smoller_riemann_B(jump_ratios) / smoller_riemann_A(jump_ratios))
+    lhs = c1 * h_1(log(smoller_riemann_B(jump_ratios)), gas)
     rhs = 2 / (gas.γ - 1) * (1 + c1)
-    return lhs < C < rhs
+    return lhs < smoller_riemann_C(jump_ratios) < rhs
 end
 
 """
-  test_3_wave_for_rarefaction(uL, uR, gas)
+    test_3_wave_for_rarefaction(uL, uR, gas)
 
 Corallary 18.7 in Smoller. Test if the 3-wave in the solution to the Riemann problem between ``q_L`` and ``q_R`` is a rarefaction wave.
 The states ``q`` are already projected into interface-normal co-ordinates.
 """
 function test_3_wave_for_rarefaction(qL, qR, gas)
-    return test_3_wave_for_rarefaction(jump_ratios(qL, qR, gas), gas)
+    return test_3_wave_for_rarefaction(JumpRatios(qR, qL, gas), gas)
 end
 
 function test_3_wave_for_rarefaction(jumps, gas)
-    (A, B, C) = jumps
-    c1 = sqrt(B / A)
-    lhs = h_1(-log(B), gas)
+    c1 = sqrt(smoller_riemann_B(jumps) / smoller_riemann_A(jumps))
+    lhs = h_1(-log(smoller_riemann_B(jumps)), gas)
     rhs = 2 / (gas.γ - 1) * (1 + c1)
-    return lhs < C < rhs
+    return lhs < smoller_riemann_C(jumps) < rhs
 end
 
 """
-  solve_for_jump_parameters(qL, qR, gas)
+    solve_for_jump_parameters(qL, qR, gas)
 
 Solve for the jump parameters ``(x_1, x_2, x_3)`` as outlined in Smoller.
-- `qL` and `qR` are already projected into the interface-normal co-ordinates.
+`qL` and `qR` are already projected into the interface-normal co-ordinates.
 """
 function solve_for_jump_parameters(qL, qR, gas)
-    jump_params = SVector(jump_ratios(qL, qR, gas)...)
+    Q_jump = JumpRatios(qL, qR, gas)
     x0 = @SVector ones(eltype(qL), 3)
-    nonlinear_system = NonlinearProblem(x0, jump_params) do x, params
+    G(x, Q) =
+    let gas = gas
         # 18.62 stuff - A = 0
-        v1 = f_1(x[1], gas) * exp(x[2]) * f_3(x[3], gas) - params[1]
-        # 18.61: stuff - B = 0 
-        v2 = exp(x[3] - x[1]) - params[2]
+        v1 = f_1(x[1], gas) * exp(x[2]) * f_3(x[3], gas) - smoller_riemann_A(Q)
+        # 18.61: stuff - B = 0
+        v2 = exp(x[3] - x[1]) - smoller_riemann_B(Q)
         # 18.63: stuff - C = 0
-        v3 = (
+        v3 =
             h_1(x[1], gas) +
-            sqrt(jump_params[2] / jump_params[1]) * h_1(x[1] + log(jump_params[2]), gas) - params[3]
-        )
+            sqrt(smoller_riemann_B(Q) / smoller_riemann_A(Q)) *
+            h_1(x[1] + log(smoller_riemann_B(Q)), gas) - smoller_riemann_C(Q)
         return SVector(v1, v2, v3)
     end
+    nonlinear_system = NonlinearProblem(G, x0, Q_jump)
     solution = solve(nonlinear_system, SimpleNewtonRaphson())
+    @assert SciMLBase.successful_retcode(solution.retcode)
     return solution.u
 end
 
-function to_ρPv(q, gas)
-    return (ρ = q[1], P = dimensionless_pressure(q, gas), v = select_middle(q) ./ q[1])
+function to_primitive_drop_shear(q, gas)
+    return (
+        ρ = first(q),
+        P = dimensionless_pressure(q, gas),
+        v = first(select_middle(q)) / first(q),
+    )
 end
 
-sound_speed(state_prim, gas) = sqrt(gas.γ * state_prim.P / state_prim.ρ)
+function Euler2D.dimensionless_speed_of_sound(u_prim::NamedTuple{(:ρ, :P, :v)}, gas)
+    return sqrt(gas.γ * u_prim.P / u_prim.ρ)
+end
 
 function to_conserved(ρ, P, v, v_shear, gas)
     v_all = pushfirst(v_shear, v)
     ρv_all = ρ * v_all
-    ρE = P / (gas.γ - 1) + 0.5 * (ρv_all ⋅ v_all)
+    ρE = P / (gas.γ - 1) + (ρv_all ⋅ v_all) / 2
     return SVector(ρ, ρv_all..., ρE)
 end
 
+function to_conserved(u_prim::NamedTuple{(:ρ, :P, :v)}, v_shear, gas)
+    return to_conserved(u_prim.ρ, u_prim.P, u_prim.v, v_shear, gas)
+end
+
 """
+    shock_speed_via_RH(uL, uR, gas)
+
 Find shock speed for two states `uL`, `uR` connected by a shock.
 """
 function shock_speed_via_RH(uL, uR, gas)
@@ -200,6 +284,8 @@ function shock_speed_via_RH(uL, uR, gas)
 end
 
 """
+    rarefaction_1(ray, prim_L, cL, gas)
+
 Find rarefaction structure for states connected to state `L` by a 1-rarefaction. 
 """
 function rarefaction_1(ray, prim_L, cL, gas)
@@ -210,6 +296,8 @@ function rarefaction_1(ray, prim_L, cL, gas)
 end
 
 """
+    rarefaction_3(ray, prim_R, cR, gas)
+
 Find rarefaction structure for states connected to state `R` by a 3-rarefaction. 
 """
 function rarefaction_3(ray, prim_R, cR, gas)
@@ -219,39 +307,53 @@ function rarefaction_3(ray, prim_R, cR, gas)
     return (ρ = ρ, P = P, v = u)
 end
 
+"""
+    riemann_states_and_speeds(qL, qR, gas)
+
+Find the information necessary to solve the Riemann problem between `qL` and `qR`.
+
+1. Solve for the jump parameters `[x1, x2, x3]` ([`solve_for_jump_parameters`](@ref)).
+2. Strip the shear velocity from `qL` and `qR`; The shear velocity is constant across the contact wave.
+3. Apply the transformations to the primitive variables to find the intermediate states.
+4. Compute wave speeds and states.
+
+Return a big tuple of relevant values. (shameless rip from the CLAWPACK implementation)
+"""
 function riemann_states_and_speeds(qL, qR, gas)
     x1, x2, x3 = solve_for_jump_parameters(qL, qR, gas)
     one_shock = x1 < 0
     three_shock = x3 < 0
 
     # switch to ρ, P, v
-    qL_prim = to_ρPv(qL, gas)
-    qR_prim = to_ρPv(qR, gas)
+    qL_prim = to_primitive_drop_shear(qL, gas)
+    qR_prim = to_primitive_drop_shear(qR, gas)
     # apply the transformation functions to find the states between qL and qR
     # that are separated by a contact wave
-    qL_prim_★ = T_1(qL_prim.ρ, qL_prim.P, first(qL_prim.v), x1, gas)
-    qR_prim_★ = T_2(values(qL_prim_★)..., x2, gas)
-    @assert isapprox(qL_prim_★[3], qR_prim_★[3]; atol = 1.0e-8) # assert velocity constant across contact wave!
+    qL_prim_★ = T_1(qL_prim, x1, gas)
+    qR_prim_★ = T_2(qL_prim_★, x2)
+    @assert isapprox(qL_prim_★.v, qR_prim_★.v; atol = 1.0e-8) # assert velocity constant across contact wave!
     # contact discontinuitity propagates at this speed
     contact_speed = qL_prim_★.v
-    @assert isapprox(qL_prim_★[2], qR_prim_★[2]; atol = 1.0e-8) # assert pressure constant across contact wave!
+    @assert isapprox(qL_prim_★.P, qR_prim_★.P; atol = 1.0e-8) # assert pressure constant across contact wave!
     # qR_prim_appx = T_3(qR_prim_★..., x3, gas)
 
     cL = dimensionless_speed_of_sound(qL, gas)
     cR = dimensionless_speed_of_sound(qR, gas)
-    cL_★ = sound_speed(qL_prim_★, gas)
-    cR_★ = sound_speed(qR_prim_★, gas)
+    cL_★ = dimensionless_speed_of_sound(qL_prim_★, gas)
+    cR_★ = dimensionless_speed_of_sound(qR_prim_★, gas)
 
     speeds_1 = if one_shock
         # solve just the first component of RH
-        s = (qL_prim_★.ρ * qL_prim_★.v - qL[2]) / (qL_prim_★.ρ - qL[1])
+        ρv_L = qL_prim_★.ρ * qL_prim_★.v
+        s = (ρv_L - first(select_middle(qL))) / (qL_prim_★.ρ - first(qL))
         (s, s)
     else
         (first(qL_prim.v) - cL, contact_speed - cL_★)
     end
 
     speeds_3 = if three_shock
-        s = (qR[2] - qR_prim_★.ρ * qR_prim_★.v) / (qR[2] - qR_prim_★.ρ)
+        ρv_R = qR_prim_★.ρ * qR_prim_★.v
+        s = (first(select_middle(qR)) - ρv_R) / (first(qR) - qR_prim_★.ρ)
         (s, s)
     else
         (contact_speed + cR_★, first(qR_prim.v) + cR)
@@ -269,10 +371,7 @@ function riemann_states_and_speeds(qL, qR, gas)
     )
 end
 
-function solve_riemann_problem(ray, uL, uR, gas, new_coords)
-    to_normal_coords = change_of_basis_matrix(I, new_coords)
-    qL = change_space_coordinates(uL, to_normal_coords)
-    qR = change_space_coordinates(uR, to_normal_coords)
+function solve_riemann_problem(ray, qL, qR, gas)
     (
         has_one_shock,
         (sL_1, sL_2),
@@ -285,51 +384,69 @@ function solve_riemann_problem(ray, uL, uR, gas, new_coords)
         qR_prim,
     ) = riemann_states_and_speeds(qL, qR, gas)
 
-    shear_v_L = popfirst(qL_prim.v)
-    shear_v_R = popfirst(qR_prim.v)
-    if ray < contact_speed
+    shear_v_L = popfirst(dimensionless_velocity(qL))
+    shear_v_R = popfirst(dimensionless_velocity(qR))
+    return if ray < contact_speed
         # 1-family
         if has_one_shock
             if ray < sL_1
-                return uL
+                return qL
             end
-            state = to_conserved(values(qL_prim_★)..., shear_v_L, gas)
-            return change_space_coordinates(state, new_coords)
+            state = to_conserved(qL_prim_★, shear_v_L, gas)
+            return state
         else
             if ray < sL_1
-                return uL
+                return qL
             elseif ray < sL_2
-                raref_state = rarefaction_1(ray, qL_prim, sound_speed(qL_prim, gas), gas)
-                state = to_conserved(values(raref_state)..., shear_v_L, gas)
-                return change_space_coordinates(state, new_coords)
+                raref_state = rarefaction_1(
+                    ray,
+                    qL_prim,
+                    dimensionless_speed_of_sound(qL_prim, gas),
+                    gas,
+                )
+                state = to_conserved(raref_state, shear_v_L, gas)
+                return state
             else
-                state = to_conserved(values(qL_prim_★)..., shear_v_L, gas)
-                return change_space_coordinates(state, new_coords)
+                state = to_conserved(qL_prim_★, shear_v_L, gas)
+                return state
             end
         end
     else
         # 3-family
         if has_three_shock
             if ray > sR_2
-                return uR
+                return qR
             end
-            state = to_conserved(values(qR_prim_★)..., shear_v_R, gas)
-            return change_space_coordinates(state, new_coords)
+            state = to_conserved(qR_prim_★, shear_v_R, gas)
+            return state
         else
             if ray < sR_1
-                state = to_conserved(values(qR_prim_★)..., shear_v_R, gas)
-                return change_space_coordinates(state, new_coords)
+                state = to_conserved(qR_prim_★, shear_v_R, gas)
+                return state
             elseif ray < sR_2
-                raref_state = rarefaction_3(ray, qR_prim, sound_speed(qR_prim, gas), gas)
-                state = to_conserved(values(raref_state)..., shear_v_R, gas)
-                return change_space_coordinates(state, new_coords)
+                raref_state = rarefaction_3(
+                    ray,
+                    qR_prim,
+                    dimensionless_speed_of_sound(qR_prim, gas),
+                    gas,
+                )
+                state = to_conserved(raref_state, shear_v_R, gas)
+                return state
             else
-                return uR
+                return qR
             end
         end
     end
 end
 
+export u_riemann, ϕ_exact
+
+function u_riemann(uL, uR, n, gas)
+    qL = change_space_coordinates(uL, n)
+    qR = change_space_coordinates(uR, n)
+    q_riemann = solve_riemann_problem(0, qL, qR, gas)
+    u_riemann = change_space_coordinates(q_riemann, n, SVector(1.0, 0.0))
+    return u_riemann
 end
 
 """
@@ -339,7 +456,6 @@ Compute the value of ``F(u)\\cdot n`` on a boundary with unit normal ``n`` using
 
 """
 function ϕ_exact(uL, uR, n, gas)
-    coords = orthonormal_basis(n)
-    u_riemann = ExactRiemannSolverInternal.solve_riemann_problem(0, uL, uR, coords, gas)
-    return F_euler(u_riemann, gas) * n
+    return F_euler(u_riemann(uL, uR, n, gas), gas) * n
+end
 end

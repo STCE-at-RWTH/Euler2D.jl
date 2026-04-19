@@ -14,21 +14,20 @@ using Statistics
 # Load before Tullio
 using LoopVectorization
 
-using Accessors: @set, @reset
+using Accessors: @reset, @set
 using DifferentiationInterface
 using ForwardDiff: ForwardDiff
-using OhMyThreads: tforeach, tmap, tmapreduce, treduce
+using OhMyThreads: tforeach, tmap, tmapreduce
+using Integrals, Optimization, OptimizationOptimJL
 using StaticArrays
-using Tullio
-using Unitful
-using Unitful: 𝐋, 𝐓, 𝐌, 𝚯, 𝐍
-using Unitful: @derived_dimension, Density, Pressure, Velocity
+using StaticArrays: sacollect
+using Tullio, Unitful
 
 # STCE packages
 using PlanePolygons
 using ShockwaveProperties
-using ShockwaveProperties: MomentumDensity, EnergyDensity
 using SimpleIntegration
+
 
 const fdiff_backend = AutoForwardDiff()
 
@@ -36,22 +35,29 @@ const fdiff_backend = AutoForwardDiff()
 export ShockwaveProperties
 export DRY_AIR
 
+# modules
+export BowShockInterpolation, CannyShockSensor
+export FullPseudoinversion, LocalPseudoinversion
+
 # methods
-export F_euler
+export F_euler, ∇F_euler
 export interface_signal_speeds
-export eigenvectors_∇F_euler, eigenvectors_∇G_euler
+export eigenvalues_∇F_euler, eigenvalues_∇G_euler
+export left_eigenvectors_∇F_euler, right_eigenvectors_∇F_euler
+export left_eigenvectors_∇G_euler, right_eigenvectors_∇G_euler
 
 # dimension stuff
 export EulerEqnsScaling
 export nondimensionalize, redimensionalize
-export length_scale, time_scale, mass_scale
-export velocity_scale, density_scale, pressure_scale
-export energy_density_scale, body_force_scale, specific_heat_capacity_scale
-export dimensionless_velocity, dimensionless_pressure, dimensionless_ΔS_density
+export change_space_coordinates, change_space_coordinates_and_shift_v
+export length_scale, mass_scale, time_scale
+export density_scale, pressure_scale, velocity_scale
+export body_force_scale, energy_density_scale, specific_heat_capacity_scale
+export dimensionless_pressure, dimensionless_velocity, dimensionless_ΔS_density
 export dimensionless_mach_number, dimensionless_speed_of_sound
-export dimensionless_internal_energy_density, dimensionless_internal_energy
-export dimensionless_total_enthalpy_density, dimensionless_total_enthalpy
-export dimensionless_enthalpy_density, dimensionless_enthalpy
+export dimensionless_internal_energy, dimensionless_internal_energy_density
+export dimensionless_total_enthalpy, dimensionless_total_enthalpy_density
+export dimensionless_enthalpy, dimensionless_enthalpy_density
 
 # boundary condition types
 export BoundaryCondition, PeriodicAxis, EdgeBoundary
@@ -64,24 +70,26 @@ export numeric_dtype
 
 # CellSim methods
 export CellBasedEulerSim, FVMCell, PrimalQuadCell, TangentQuadCell
-export cell_boundaries, cell_centers, nth_step, eachstep
-export grid_size, n_space_dims, n_tsteps
-export cell_volume, cell_boundary_polygon, minimum_cell_size, maximum_cell_size
+export cell_boundaries, cell_centers, eachstep, nth_step
+export grid_size, n_cells, n_space_dims, n_tsteps
+export cell_boundary_polygon, cell_center, cell_volume, maximum_cell_size, minimum_cell_size
 export Obstacle, TriangularObstacle, RectangularObstacle, CircularObstacle
 export load_cell_sim
 export cell_simulation_config
 export resume_simulation_from_file, start_simulation_from_initial_conditions
 
 # All sim methods
-export pressure_field, density_field, velocity_field
-export mach_number_field, total_internal_energy_density_field
-export ∇u_at
+export density_field, pressure_field, velocity_field
+export mach_number_field, norm_mach_number_field, total_internal_energy_density_field
+export estimate_∇u_at, u_and_u̇_at, u_at
 
 include("utils.jl")
 include("nondimensionalization.jl")
 include("transport.jl")
 include("boundary_conditions.jl")
+include("weno.jl")
 
+include("riemann_solver/roe_matrices.jl")
 include("riemann_solver/approximate_riemann_solver.jl")
 include("riemann_solver/exact_riemann_solver.jl")
 
@@ -89,9 +97,17 @@ include("cell_simulations/cells.jl")
 include("cell_simulations/obstacle.jl")
 include("cell_simulations/grid.jl")
 include("cell_simulations/simulations.jl")
+include("cell_simulations/fields.jl")
 
 include("postprocessing/canny_rh_filter.jl")
+include("postprocessing/shock_interpolation.jl")
+include("postprocessing/shock_sensitivity.jl")
 include("postprocessing/local_pseudoinversion.jl")
+include("postprocessing/full_pseudoinversion.jl")
+include("postprocessing/bressan.jl")
+
+# internal modules
+using .WENOReconstruction
 
 const _SI_DEFAULT_SCALE = EulerEqnsScaling(1.0u"m", 1.0u"kg/m^3", 1.0u"m/s")
 
@@ -104,12 +120,12 @@ function _interpolate_field(fieldfn, sim, t, args...)
         )
     end
     idx_after = findfirst(>(t), sim.tsteps)
-    t1 = sim.tsteps[idx_after-1]
+    t1 = sim.tsteps[idx_after - 1]
     t2 = sim.tsteps[idx_after]
     α = (t - t1) / (t2 - t1)
     res = fieldfn(sim, idx_after - 1, args...)
     temp = fieldfn(sim, idx_after, args...)
-    for i ∈ eachindex(res, temp)
+    for i in eachindex(res, temp)
         if isnothing(res[i])
             continue
         end
@@ -122,7 +138,7 @@ const _field_methods_nogas =
     (:density_field, :velocity_field, :total_internal_energy_density_field)
 const _field_methods_gas = (:pressure_field, :mach_number_field)
 
-for f ∈ _field_methods_gas
+for f in _field_methods_gas
     @eval $(f)(sim::CellBasedEulerSim, t, gas::CaloricallyPerfectGas) = begin
         return _interpolate_field($f, sim, t, gas)
     end
@@ -135,7 +151,7 @@ for f ∈ _field_methods_gas
         return _interpolate_field($f, sim, t, gas, scale)
     end
 end
-for f ∈ _field_methods_nogas
+for f in _field_methods_nogas
     @eval $(f)(sim::CellBasedEulerSim, t) = begin
         return _interpolate_field($f, sim, t)
     end
