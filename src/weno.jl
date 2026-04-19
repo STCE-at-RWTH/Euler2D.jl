@@ -68,7 +68,7 @@ function weno_reconstruct_at(rc::WENOReconstructor, u::AbstractVector{UT}) where
     return acc
 end
 
-function swap_inner_vector(v_of_v)
+function _swap_inner_vector(v_of_v)
     L = eachindex(first(v_of_v))
     return map(L isa SOneTo ? SVector(L...) : L) do i
         getindex.(v_of_v, i)
@@ -77,7 +77,7 @@ end
 
 function weno_reconstruct_at(rc_plus::WENOReconstructor{ORDER}, rc_minus::WENOReconstructor{ORDER}, u, L, Λ, R) where {ORDER}
     w = map(_u -> L * _u, u)
-    characteristic_fields = swap_inner_vector(w)
+    characteristic_fields = _swap_inner_vector(w)
     w_weno = map(Λ, characteristic_fields) do λ_i, w_i
         if λ_i > 0
             return weno_reconstruct_at(rc_plus, @view w_i[begin:(end - 1)])

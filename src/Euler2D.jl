@@ -80,7 +80,7 @@ export resume_simulation_from_file, start_simulation_from_initial_conditions
 
 # All sim methods
 export density_field, pressure_field, velocity_field
-export mach_number_field, total_internal_energy_density_field
+export mach_number_field, norm_mach_number_field, total_internal_energy_density_field
 export estimate_∇u_at, u_and_u̇_at, u_at
 
 include("utils.jl")

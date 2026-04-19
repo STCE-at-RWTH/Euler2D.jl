@@ -295,8 +295,11 @@ function weno_approximate_u_at(x, y, sim::CellBasedEulerSim, tstep, gas, weno_or
     id = cell_id_at(x, y, sim)
     _, cells = nth_step(sim, tstep)
     idx = cells[id].idx
-    # we look at an 2R x 2R box so that we can choose an upwind stencil each time
     # TODO do we want to shift these stencils if the point (x, y) is closer to one edge of the cell?
+    # Δi = x > cell_center(cells[id])[1] ? 0 : -1
+    # Δj = y > cell_center(cells[id])[2] ? 0 : -1
+    # Δidx = CartesianIndex(Δi,Δj)
+    # we look at an 2R x 2R box so that we can choose an upwind stencil each time
     stencil_range = (idx - CartesianIndex(R - 1, R - 1)):(idx + CartesianIndex(R, R))
     ids_view = @view sim.cell_ids[stencil_range]
     i_min = Tuple(cells[ids_view[begin, R]].idx)[1]
@@ -310,7 +313,7 @@ function weno_approximate_u_at(x, y, sim::CellBasedEulerSim, tstep, gas, weno_or
         u_x_slice = ntuple(2 * R) do i
             cells[ids_slice[i]].u
         end |> SVector
-        local local_wind = roe_matrix_eigendecomposition(u_x_slice[R], u_x_slice[R + 1], gas)
+        local local_wind = roe_average_eigendecomposition(u_x_slice[R], u_x_slice[R + 1], gas)
         local u = weno_reconstruct_at(rc_x_plus, rc_x_minus, u_x_slice, local_wind...)
         return change_space_coordinates(u, SVector(0, 1))
     end
@@ -319,7 +322,7 @@ function weno_approximate_u_at(x, y, sim::CellBasedEulerSim, tstep, gas, weno_or
     j_max = Tuple(cells[ids_view[R, end]].idx)[2]
     rc_y_plus = WENOReconstructor{R}(y, cell_boundaries(sim, 2)[j_min:j_max])
     rc_y_minus = WENOReconstructor{R}(y, cell_boundaries(sim, 2)[(j_min + 1):(j_max + 1)])
-    local_wind = roe_matrix_eigendecomposition(u_appx_xs[R], u_appx_xs[R + 1], gas)
+    local_wind = roe_average_eigendecomposition(u_appx_xs[R], u_appx_xs[R + 1], gas)
     u = weno_reconstruct_at(rc_y_plus, rc_y_minus, u_appx_xs, local_wind...)
     return change_space_coordinates(u, SVector(0, -1))
 end
@@ -327,7 +330,7 @@ end
 function _weno_u_from_marshal(u_flat, rc_plus, rc_minus, gas, dir)
     u = reinterpret(SVector{4, eltype(u_flat)}, u_flat)
     r = WENOReconstruction.reconstruction_order(rc_plus)
-    local_wind = roe_matrix_eigendecomposition(u[r], u[r + 1], gas)
+    local_wind = roe_average_eigendecomposition(u[r], u[r + 1], gas)
     return change_space_coordinates(weno_reconstruct_at(rc_plus, rc_minus, u, local_wind...), dir)
 end
 

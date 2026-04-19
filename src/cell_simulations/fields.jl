@@ -167,7 +167,7 @@ function pressure_field(
         gas::CaloricallyPerfectGas,
         scale::EulerEqnsScaling,
     ) where {T}
-    return map(pressure_field(csim, n, gas)) do P
+    return map!(pressure_field(csim, n, gas)) do P
         isnothing(P) && return nothing
         return P * pressure_scale(scale)
     end
@@ -204,3 +204,11 @@ mach_number_field(
     gas::CaloricallyPerfectGas,
     ::EulerEqnsScaling,
 ) = mach_number_field(csim, n, gas)
+
+function norm_mach_number_field(csim::CellBasedEulerSim{T}, n::Integer, gas, args...) where {T}
+    M = mach_number_field(csim, n, gas, args...)
+    return map(eachslice(M; dims = (2, 3))) do m
+        any(isnothing, m) && return nothing
+        return norm(m)
+    end
+end

@@ -8,7 +8,7 @@ These compare the eigenvalues of the Jacobian of the flux function to the
 eigenvalues of the Roe matrix and pick the "faster" speed.
 """
 function interface_signal_speeds(uL, uR, dim, gas::CaloricallyPerfectGas)
-    λ_roe = roe_matrix_eigenvalues(uL, uR, dim, gas)
+    λ_roe = roe_average_eigenvalues(uL, uR, dim, gas)
     λ_L = eigenvalues_∇F_euler(uL, dim, gas)
     λ_R = eigenvalues_∇F_euler(uR, dim, gas)
     # @assert length(λ_L) == length(λ_R) == length(λ_roe)

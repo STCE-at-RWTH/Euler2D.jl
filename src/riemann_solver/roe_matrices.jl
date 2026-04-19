@@ -91,14 +91,6 @@ function roe_Cx_tilde(w_roe, gas)
     return hcat(c1, c2, c3, c4)
 end
 
-function roe_average_F_euler(uL, uR, gas)
-    w̄ = roe_parameter_mean(uL, uR, gas)
-    return roe_average_F_euler(w̄, gas)
-end
-
-function roe_average_F_euler(w_roe, gas)
-    return roe_Cx_tilde(w_roe, gas) * inv(roe_B_tilde(w_roe, gas))
-end
 
 function right_eigenvectors_roe_average_F_euler_fleischmann(w_roe, gas)
     @assert length(w_roe) == 4 "Only implemented for 2-d systems"
@@ -186,15 +178,32 @@ roe_average_eigenvalues(uL, uR, gas) = roe_average_eigenvalues(roe_parameter_mea
 roe_average_eigenvalues(w_roe, gas) = roe_average_eigenvalues(w_roe, 1, gas)
 
 """
-    roe_matrix_eigendecomposition(w_roe, gas)
+    roe_average_eigendecomposition(w_roe, gas)
 """
-function roe_matrix_eigendecomposition(w_roe, gas)
+function roe_average_eigendecomposition(w_roe, gas)
     L = left_eigenvectors_roe_average_F_euler(w_roe, gas)
     Λ = roe_average_eigenvalues(w_roe, gas)
     R = right_eigenvectors_roe_average_F_euler(w_roe, gas)
     return L, Λ, R
 end
 
-function roe_matrix_eigendecomposition(uL, uR, gas)
-    return roe_matrix_eigendecomposition(roe_parameter_mean(uL, uR, gas), gas)
+function roe_average_eigendecomposition(uL, uR, gas)
+    return roe_average_eigendecomposition(roe_parameter_mean(uL, uR, gas), gas)
+end
+
+function roe_average_F_euler(uL, uR, gas)
+    w̄ = roe_parameter_mean(uL, uR, gas)
+    return roe_average_F_euler(w̄, gas)
+end
+
+function roe_average_F_euler(w_roe, gas)
+    L, Λ, R = roe_average_eigendecomposition(w_roe, gas)
+    return R * Diagonal(Λ) * L
+end
+
+function roe_average_F_euler_by_inv(uL, uR, gas)
+    w = roe_parameter_mean(uL, uR, gas)
+    B = roe_B_tilde(w, gas)
+    C = roe_Cx_tilde(w, gas)
+    return C * inv(B)
 end
