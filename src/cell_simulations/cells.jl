@@ -425,7 +425,7 @@ function phantom_neighbor(
 end
 
 function _iface_speed(iface::Tuple{Int, T, T}, gas) where {T <: FVMCell}
-    return max(abs.(interface_signal_speeds(iface[2].u, iface[3].u, iface[1], gas))...)
+    return max(abs.(shock_and_rarefaction_speeds(iface[2].u, iface[3].u, iface[1], gas))...)
 end
 
 function maximum_cell_signal_speeds(
@@ -464,7 +464,7 @@ function compute_cell_update_and_max_Δt(cell::PrimalQuadCell, dim, neighbors, g
     a = maximum_cell_signal_speeds(ifaces, gas)
     Δt_max = min((cell.extent ./ a)...)
     ϕ = map(ifaces) do (dim, cell_L, cell_R)
-        return ϕ_hll(cell_L.u, cell_R.u, dim, gas)
+        return ϕ_hllc(cell_L.u, cell_R.u, dim, gas)
     end
     Δx = map(ifaces) do (dim, cell_L, cell_R)
         (cell_L.extent[dim] + cell_R.extent[dim]) / 2
@@ -491,7 +491,7 @@ function compute_cell_update_and_max_Δt(
     a = maximum_cell_signal_speeds(ifaces, gas)
     Δt_max = min((cell.extent ./ a)...)
     ϕ_jvp = map(ifaces) do (dim, cell_L, cell_R)
-        value, jvp = ϕ_hll_and_jvp(cell_L.u, cell_L.u̇, cell_R.u, cell_R.u̇, dim, gas)
+        value, jvp = ϕ_hllc_and_jvp(cell_L.u, cell_L.u̇, cell_R.u, cell_R.u̇, dim, gas)
         return value, hcat(jvp...)
     end
     Δx = map(ifaces) do (dim, cell_L, cell_R)
