@@ -173,8 +173,14 @@ function relative_mach_number_change_as_if_shock(θij, u_A, u_B, gas)
     n = normalize(v_shock)
     u_shock_A = change_space_coordinates_and_shift_v(u_A, n, v_shock)
     u_shock_B = change_space_coordinates_and_shift_v(u_B, n, v_shock)
-    Mn_A = first(dimensionless_mach_number(u_shock_A, gas))
-    Mn_B = first(dimensionless_mach_number(u_shock_B, gas))
+    Mn_A, Mn_B = try
+        (
+            first(dimensionless_mach_number(u_shock_A, gas)),
+            first(dimensionless_mach_number(u_shock_B, gas)),
+        )
+    catch
+        (1.0, 1.0)
+    end
     return abs((Mn_A - Mn_B) / Mn_A)
 end
 

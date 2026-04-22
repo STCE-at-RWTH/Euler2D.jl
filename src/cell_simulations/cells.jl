@@ -409,8 +409,8 @@ function phantom_neighbor(
         u = _dirs_bc_is_reversed[dir] ? flip_velocity(cell.u, dim) : cell.u
         u̇ = _dirs_bc_is_reversed[dir] ? flip_velocity(cell.u̇, dim) : cell.u̇
         phantom_u = phantom_cell(bc, u, _dirs_dim[dir], gas)
-        J_phantom = ForwardDiff.jacobian(u) do u
-            phantom_cell(bc, u, _dirs_dim[dir], gas)
+        J_phantom = jacobian(fdiff_backend, u, Constant(bc), Constant(_dirs_dim[dir]), Constant(gas)) do _u, _bc, _dim, _gas
+            phantom_cell(_bc, _u, _dim, _gas)
         end
         phantom_u̇ = J_phantom * u̇
         if reverse_phantom

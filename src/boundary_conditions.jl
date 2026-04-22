@@ -100,12 +100,13 @@ Fields
 ---
  - `prescribed_state`: The state prescribed outside the boundary.
 """
-struct FixedPhantomOutside <: PhantomEdge{1}
-    prescribed_state::ConservedProps
+struct FixedPhantomOutside{U, DU} <: PhantomEdge{1}
+    prescribed_state::U
+    prescribed_tangent::DU
 end
 
-function FixedPhantomOutside(s::PrimitiveProps, gas::CaloricallyPerfectGas)
-    return FixedPhantomOutside(ConservedProps(s; gas))
+function FixedPhantomOutside(state, scale::EulerEqnsScaling)
+    return FixedPhantomOutside(nondimensionalize(state, scale))
 end
 
 """
@@ -115,16 +116,7 @@ This BC does not require velocity vector reversal at the right edge.
 """
 reverse_right_edge(::FixedPhantomOutside) = false
 
-function phantom_cell(
-        bc::FixedPhantomOutside,
-        u::AbstractArray{T, 2},
-        dim,
-        gas::CaloricallyPerfectGas,
-    ) where {T}
-    return state_to_vector(bc.prescribed_state)
-end
-
-function phantom_cell(bc::FixedPhantomOutside, u::ConservedProps, dim, gas)
+function phantom_cell(bc::FixedPhantomOutside, args...)
     return bc.prescribed_state
 end
 

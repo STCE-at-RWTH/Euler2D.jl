@@ -1134,7 +1134,7 @@ function _simulate(initial_state::CellBasedEulerSim{T, C}, config) where {T, C}
             )
             n_written_tsteps += 1
             if config[:show_info]
-                @info "Saving simulation state at " k = n_computed_tsteps total_saved =
+                @info "Saving simulation state at $(tape_file)" k = n_computed_tsteps total_saved =
                     n_written_tsteps
             end
         end
